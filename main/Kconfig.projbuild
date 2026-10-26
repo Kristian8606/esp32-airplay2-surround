@@ -1,3 +1,21 @@
+menu "Surround Build Role"
+    choice AIRPLAY_BUILD_ROLE
+        prompt "Firmware role"
+        default AIRPLAY_ROLE_SPEAKER
+        help
+            Speaker: today's AirPlay receiver with I2S output.
+            Gateway: the AirPlay front end the Apple TV talks to. It keeps
+            mDNS, pairing, RTSP and PTP, but has no decoder or I2S output;
+            the audio_receiver API is served by a proxy that will forward
+            every call and the raw audio stream to the speakers.
+            Build with sdkconfig.defaults.gateway (see README).
+        config AIRPLAY_ROLE_SPEAKER
+            bool "Speaker (AirPlay receiver with I2S output)"
+        config AIRPLAY_ROLE_GATEWAY
+            bool "Gateway (AirPlay front end, no audio output)"
+    endchoice
+endmenu
+
 menu "AirPlay Receiver"
     config DEFAULT_AP_SSID
         string "Setup AP SSID"

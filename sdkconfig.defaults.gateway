@@ -1,0 +1,10 @@
+# Surround Gateway build: applied after sdkconfig.defaults (see README).
+#   idf.py -B build_gateway -D SDKCONFIG=build_gateway/sdkconfig \
+#     -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.gateway" build
+CONFIG_AIRPLAY_ROLE_GATEWAY=y
+
+# No amplifier on the Gateway.
+CONFIG_AIRPLAY_AMP_CONTROL=n
+
+# Step 1 checks the forwarded calls in the log: keep the runtime event logs.
+CONFIG_AIRPLAY_LOG_RUNTIME=y

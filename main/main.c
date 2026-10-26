@@ -1,9 +1,11 @@
 #include "audio_receiver.h"
-#include "aac_decoder.h"
 #include "audio_diag.h"
 #include "amp_control.h"
+#if !(defined(CONFIG_AIRPLAY_ROLE_GATEWAY) && CONFIG_AIRPLAY_ROLE_GATEWAY)
+#include "aac_decoder.h"
 #include "audio_eq.h"
 #include "audio_loudness.h"
+#endif
 #include "dns_server.h"
 #include "hap.h"
 #include "log_stream.h"
@@ -44,11 +46,16 @@ static void print_firmware_banner(void) {
   ESP_LOGI(TAG, "VERSION: %s", app ? app->version : "unknown");
   ESP_LOGI(TAG, "BUILD: %s %s", __DATE__, __TIME__);
   ESP_LOGI(TAG, "IDF: %s", app ? app->idf_ver : "unknown");
+#if defined(CONFIG_AIRPLAY_ROLE_GATEWAY) && CONFIG_AIRPLAY_ROLE_GATEWAY
+  ESP_LOGI(TAG, "ROLE: Surround Gateway (no decoder, no I2S output)");
+  ESP_LOGI(TAG, "CORE PLAN: Core0=RTSP/PTP; Core1=WiFi/LwIP + buffered audio relay + status/LED/log");
+#else
 #if defined(CONFIG_AIRPLAY_MULTICHANNEL) && CONFIG_AIRPLAY_MULTICHANNEL
   ESP_LOGI(TAG, "CORE PLAN: multichannel: Core0=FDK AAC decode + RTSP/PTP; Core1=WiFi/LwIP + AAC TCP reader + I2S playout + status/LED/log");
 #endif
   ESP_LOGI(TAG, "CORE PLAN: Core0=WiFi/RTSP/PTP + AAC decode/EQ + ALAC UDP/decrypt/decode");
   ESP_LOGI(TAG, "CORE PLAN: Core1=I2S playout + ALAC ordered staging/EQ + AAC TCP reader");
+#endif
   ESP_LOGI(TAG, "============================================================");
 }
 
@@ -64,6 +71,9 @@ void app_main(void) {
   }
   ESP_ERROR_CHECK(e);
   ESP_ERROR_CHECK(settings_init());
+#if defined(CONFIG_AIRPLAY_ROLE_GATEWAY) && CONFIG_AIRPLAY_ROLE_GATEWAY
+  ESP_ERROR_CHECK(log_stream_init());
+#else
   ESP_ERROR_CHECK(audio_eq_init());
   (void)audio_loudness_init();
   ESP_ERROR_CHECK(log_stream_init());
@@ -74,6 +84,7 @@ void app_main(void) {
       aac_decoder_set_speaker((int)speaker);
     }
   }
+#endif
 
   const bool provisioning_only = !settings_has_wifi_credentials();
 

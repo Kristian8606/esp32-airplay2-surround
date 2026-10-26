@@ -1,8 +1,10 @@
 #include "web_server.h"
 #include "audio_receiver.h"
+#if !(defined(CONFIG_AIRPLAY_ROLE_GATEWAY) && CONFIG_AIRPLAY_ROLE_GATEWAY)
 #include "aac_decoder.h"
 #include "audio_eq.h"
 #include "audio_loudness.h"
+#endif
 #include "ota.h"
 #include "wifi.h"
 #include "settings.h"
@@ -27,6 +29,14 @@
 #include <string.h>
 #include <math.h>
 #include "airplay_log.h"
+
+/* The Gateway build has no decoder, EQ or I2S output: its pages and APIs for
+ * those (EQ, loudness, speaker, output latency, output mute) are not built. */
+#if defined(CONFIG_AIRPLAY_ROLE_GATEWAY) && CONFIG_AIRPLAY_ROLE_GATEWAY
+#define WEB_AUDIO_PAGES 0
+#else
+#define WEB_AUDIO_PAGES 1
+#endif
 
 static const char *TAG = "web_server";
 static httpd_handle_t s_server = NULL;
@@ -123,9 +133,11 @@ static esp_err_t logs_handler(httpd_req_t *req) {
 static esp_err_t speedtest_handler(httpd_req_t *req) {
   return serve_embedded_page(req, web_speedtest_start, web_speedtest_end);
 }
+#if WEB_AUDIO_PAGES
 static esp_err_t eq_page_handler(httpd_req_t *req) {
   return serve_embedded_page(req, web_eq_start, web_eq_end);
 }
+#endif
 static esp_err_t favicon_handler(httpd_req_t *req){ httpd_resp_set_status(req,"204 No Content"); return httpd_resp_send(req,NULL,0); }
 static esp_err_t captive_redirect(httpd_req_t *req){ httpd_resp_set_status(req,"302 Found"); httpd_resp_set_hdr(req,"Location","http://192.168.4.1/"); return httpd_resp_send(req,NULL,0); }
 static esp_err_t captive_404_handler(httpd_req_t *req, httpd_err_code_t error){
@@ -339,6 +351,7 @@ static void send_json_obj(httpd_req_t *req, cJSON *r) {
   free(out);
   cJSON_Delete(r);
 }
+#if WEB_AUDIO_PAGES
 static void add_latency_state(cJSON *r) {
   cJSON_AddNumberToObject(r, "latency_us", audio_receiver_get_output_latency_us());
   cJSON_AddNumberToObject(r, "default_us", CONFIG_AIRPLAY_OUTPUT_LATENCY_US);
@@ -569,6 +582,7 @@ static esp_err_t latency_measure_handler(httpd_req_t *req) {
   send_json_obj(req, r);
   return ESP_OK;
 }
+#endif
 
 static esp_err_t device_name_handler(httpd_req_t *req){
   if(!admin_ok(req)) return ESP_OK;
@@ -577,6 +591,7 @@ static esp_err_t device_name_handler(httpd_req_t *req){
   char *out=cJSON_PrintUnformatted(r); httpd_resp_set_type(req,"application/json"); httpd_resp_sendstr(req,out); free(out); cJSON_Delete(r); if(j)cJSON_Delete(j); return ESP_OK;
 }
 
+#if WEB_AUDIO_PAGES
 static void eq_output_to_json(const audio_eq_output_config_t *output,
                               cJSON *array) {
   for (uint8_t i = 0; i < output->filter_count; ++i) {
@@ -605,6 +620,7 @@ static void eq_config_to_json(const audio_eq_config_t *cfg, cJSON *root) {
   eq_output_to_json(&cfg->left, left);
   eq_output_to_json(&cfg->right, right);
 }
+#endif
 
 static void remote_to_json(cJSON *root, const rtsp_remote_status_t *status) {
   cJSON_AddBoolToObject(root, "connected", status->connected);
@@ -657,6 +673,7 @@ static esp_err_t remote_post_handler(httpd_req_t *req) {
   return ESP_OK;
 }
 
+#if WEB_AUDIO_PAGES
 static void output_mute_to_json(cJSON *root) {
   const uint32_t mask = audio_receiver_get_output_mute_mask();
   cJSON_AddBoolToObject(root, "left_muted", (mask & 1U) != 0U);
@@ -829,6 +846,7 @@ static esp_err_t eq_post_handler(httpd_req_t *req) {
            do_apply ? "true" : "false", do_save ? "true" : "false");
   return httpd_resp_sendstr(req, response);
 }
+#endif
 
 static esp_err_t ota_handler(httpd_req_t *req){ if(!admin_ok(req)) return ESP_OK; if(req->content_len==0){httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"No firmware uploaded");return ESP_FAIL;} AP_LOGI(TAG,"Stopping RTSP for OTA"); rtsp_server_stop(); if(!rtsp_server_is_idle()) return airplay_still_stopping(req); esp_err_t e=ota_start_from_http(req); if(e!=ESP_OK){ ESP_LOGE(TAG,"OTA failed (%s); restarting RTSP",esp_err_to_name(e)); esp_err_t re=rtsp_server_start(); if(re!=ESP_OK){ESP_LOGE(TAG,"RTSP restart after OTA failure failed: %s",esp_err_to_name(re));} httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,esp_err_to_name(e));return e;} httpd_resp_sendstr(req,"Firmware update complete, rebooting now!\n"); vTaskDelay(pdMS_TO_TICKS(500)); esp_restart(); return ESP_OK; }
 static const char *reset_reason_str(esp_reset_reason_t r){switch(r){case ESP_RST_POWERON:return"poweron";case ESP_RST_EXT:return"external";case ESP_RST_SW:return"software";case ESP_RST_PANIC:return"panic";case ESP_RST_INT_WDT:return"int_wdt";case ESP_RST_TASK_WDT:return"task_wdt";case ESP_RST_WDT:return"other_wdt";case ESP_RST_DEEPSLEEP:return"deepsleep";case ESP_RST_BROWNOUT:return"brownout";case ESP_RST_SDIO:return"sdio";default:return"unknown";}}
@@ -861,7 +879,10 @@ static esp_err_t speed_upload(httpd_req_t *req){
 
 esp_err_t web_server_start(uint16_t port){ if(s_server)return ESP_OK; httpd_config_t c=HTTPD_DEFAULT_CONFIG();c.server_port=port;c.max_uri_handlers=32;c.stack_size=8192;c.lru_purge_enable=true;c.task_priority=HTTP_SERVER_TASK_PRIORITY;esp_err_t e=httpd_start(&s_server,&c);if(e!=ESP_OK)return e;
 #define REG(U,M,H) do{httpd_uri_t x={.uri=U,.method=M,.handler=H};ESP_ERROR_CHECK(httpd_register_uri_handler(s_server,&x));}while(0)
-  REG("/",HTTP_GET,root_handler);REG("/favicon.ico",HTTP_GET,favicon_handler);REG("/logs",HTTP_GET,logs_handler);REG("/speedtest",HTTP_GET,speedtest_handler);REG("/eq",HTTP_GET,eq_page_handler);REG("/api/eq",HTTP_GET,eq_get_handler);REG("/api/eq",HTTP_POST,eq_post_handler);REG("/api/audio/mute",HTTP_POST,output_mute_post_handler);REG("/api/audio/remote",HTTP_GET,remote_get_handler);REG("/api/audio/remote",HTTP_POST,remote_post_handler);REG("/api/wifi/scan",HTTP_GET,wifi_scan_handler);REG("/api/wifi/config",HTTP_POST,wifi_config_handler);REG("/api/device/name",HTTP_POST,device_name_handler);REG("/api/ota/update",HTTP_POST,ota_handler);REG("/api/system/info",HTTP_GET,system_info_handler);REG("/api/system/restart",HTTP_POST,restart_handler);REG("/api/speedtest/ping",HTTP_GET,speed_ping);REG("/api/speedtest/download",HTTP_GET,speed_download);REG("/api/speedtest/upload",HTTP_POST,speed_upload);REG("/hotspot-detect.html",HTTP_GET,captive_redirect);REG("/library/test/success.html",HTTP_GET,captive_redirect);REG("/generate_204",HTTP_GET,captive_redirect);REG("/connecttest.txt",HTTP_GET,captive_redirect);REG("/api/audio/latency",HTTP_GET,latency_get_handler);REG("/api/audio/latency",HTTP_POST,latency_post_handler);REG("/api/audio/latency/measure",HTTP_POST,latency_measure_handler);REG("/api/audio/loudness",HTTP_GET,loudness_get_handler);REG("/api/audio/loudness",HTTP_POST,loudness_post_handler);REG("/api/audio/speaker",HTTP_GET,speaker_get_handler);REG("/api/audio/speaker",HTTP_POST,speaker_post_handler);
+  REG("/",HTTP_GET,root_handler);REG("/favicon.ico",HTTP_GET,favicon_handler);REG("/logs",HTTP_GET,logs_handler);REG("/speedtest",HTTP_GET,speedtest_handler);REG("/api/audio/remote",HTTP_GET,remote_get_handler);REG("/api/audio/remote",HTTP_POST,remote_post_handler);REG("/api/wifi/scan",HTTP_GET,wifi_scan_handler);REG("/api/wifi/config",HTTP_POST,wifi_config_handler);REG("/api/device/name",HTTP_POST,device_name_handler);REG("/api/ota/update",HTTP_POST,ota_handler);REG("/api/system/info",HTTP_GET,system_info_handler);REG("/api/system/restart",HTTP_POST,restart_handler);REG("/api/speedtest/ping",HTTP_GET,speed_ping);REG("/api/speedtest/download",HTTP_GET,speed_download);REG("/api/speedtest/upload",HTTP_POST,speed_upload);REG("/hotspot-detect.html",HTTP_GET,captive_redirect);REG("/library/test/success.html",HTTP_GET,captive_redirect);REG("/generate_204",HTTP_GET,captive_redirect);REG("/connecttest.txt",HTTP_GET,captive_redirect);
+#if WEB_AUDIO_PAGES
+  REG("/eq",HTTP_GET,eq_page_handler);REG("/api/eq",HTTP_GET,eq_get_handler);REG("/api/eq",HTTP_POST,eq_post_handler);REG("/api/audio/mute",HTTP_POST,output_mute_post_handler);REG("/api/audio/latency",HTTP_GET,latency_get_handler);REG("/api/audio/latency",HTTP_POST,latency_post_handler);REG("/api/audio/latency/measure",HTTP_POST,latency_measure_handler);REG("/api/audio/loudness",HTTP_GET,loudness_get_handler);REG("/api/audio/loudness",HTTP_POST,loudness_post_handler);REG("/api/audio/speaker",HTTP_GET,speaker_get_handler);REG("/api/audio/speaker",HTTP_POST,speaker_post_handler);
+#endif
   ESP_ERROR_CHECK(httpd_register_err_handler(s_server, HTTPD_404_NOT_FOUND, captive_404_handler));
 #undef REG
   e=log_stream_register(s_server);if(e!=ESP_OK)ESP_LOGW(TAG,"log stream register failed: %s",esp_err_to_name(e));ESP_LOGI(TAG,"Web UI started on port %u",port);return ESP_OK; }

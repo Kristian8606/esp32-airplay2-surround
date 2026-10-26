@@ -162,6 +162,27 @@ To build the plain stereo receiver from this tree, turn off
 remove the two "Multichannel experiment" lines at the end of
 `sdkconfig.defaults` (they move Wi-Fi and LwIP to Core 1).
 
+### Surround Gateway build (work in progress)
+
+The same tree builds a second firmware: the **Gateway**, the single AirPlay
+receiver the Apple TV talks to. It keeps mDNS, pairing, RTSP and PTP, but has
+no decoder and no I2S output: `main/surround/gw_proxy.c` implements the
+`audio_receiver.h` API that RTSP calls, and `gw_relay.c` accepts the buffered
+audio stream. For now both only log (`FWD …` and `RELAY …` lines); forwarding
+to the speakers comes next. The role is chosen in **Surround Build Role**;
+`sdkconfig.defaults.gateway` selects it. Keep each role in its own build
+directory:
+
+```bash
+idf.py -B build_gateway -D SDKCONFIG=build_gateway/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.gateway" build
+```
+
+```bash
+idf.py -B build_gateway -p /dev/cu.usbmodem* flash monitor
+```
+
+The speaker build is the default and unchanged (`idf.py build` above).
+
 ### Where the work runs
 
 | Core 0 | Core 1 |
