@@ -1,10 +1,13 @@
 #include "audio_receiver.h"
 #include "audio_diag.h"
 #include "amp_control.h"
-#if !(defined(CONFIG_AIRPLAY_ROLE_GATEWAY) && CONFIG_AIRPLAY_ROLE_GATEWAY)
+#if defined(CONFIG_AIRPLAY_ROLE_GATEWAY) && CONFIG_AIRPLAY_ROLE_GATEWAY
+#include "gw_speakers.h"
+#else
 #include "aac_decoder.h"
 #include "audio_eq.h"
 #include "audio_loudness.h"
+#include "spk_link.h"
 #endif
 #include "dns_server.h"
 #include "hap.h"
@@ -16,6 +19,7 @@
 #include "rtsp_server.h"
 #include "playback_buttons.h"
 #include "settings.h"
+#include "sync_pulse.h"
 #include "web_server.h"
 #include "wifi.h"
 #include "esp_app_desc.h"
@@ -118,11 +122,33 @@ void app_main(void) {
   } else {
     ESP_ERROR_CHECK(audio_receiver_init());
     log_memory_state("post-audio-init");
-    mdns_airplay_init();
-    ESP_ERROR_CHECK(rtsp_server_start());
-    esp_err_t buttons_err = playback_buttons_init();
-    if (buttons_err != ESP_OK) {
-      ESP_LOGW(TAG, "Playback buttons unavailable: %s", esp_err_to_name(buttons_err));
+    /* Sync test pulse (off unless enabled in menuconfig). */
+    esp_err_t pulse_err = sync_pulse_start();
+    if (pulse_err != ESP_OK) {
+      ESP_LOGW(TAG, "Sync test pulse unavailable: %s", esp_err_to_name(pulse_err));
+    }
+#if !(defined(CONFIG_AIRPLAY_ROLE_GATEWAY) && CONFIG_AIRPLAY_ROLE_GATEWAY)
+    if (settings_get_surround_mode()) {
+      /* Surround mode: the Gateway is the AirPlay receiver; this speaker is
+       * not advertised and runs no RTSP. The playback buttons act through
+       * RTSP, so they are not started either. */
+      ESP_ERROR_CHECK(spk_link_start());
+    } else
+#endif
+    {
+      mdns_airplay_init();
+      ESP_ERROR_CHECK(rtsp_server_start());
+#if defined(CONFIG_AIRPLAY_ROLE_GATEWAY) && CONFIG_AIRPLAY_ROLE_GATEWAY
+      /* Without the listener AirPlay still works; speakers just cannot join. */
+      esp_err_t gw_err = gw_speakers_start();
+      if (gw_err != ESP_OK) {
+        ESP_LOGE(TAG, "Speaker control link unavailable: %s", esp_err_to_name(gw_err));
+      }
+#endif
+      esp_err_t buttons_err = playback_buttons_init();
+      if (buttons_err != ESP_OK) {
+        ESP_LOGW(TAG, "Playback buttons unavailable: %s", esp_err_to_name(buttons_err));
+      }
     }
   }
 

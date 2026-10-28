@@ -4,8 +4,12 @@
 #include "aac_decoder.h"
 #include "audio_eq.h"
 #include "audio_loudness.h"
+#include "spk_link.h"
 #endif
 #include "ota.h"
+#if defined(CONFIG_AIRPLAY_ROLE_GATEWAY) && CONFIG_AIRPLAY_ROLE_GATEWAY
+#include "gw_speakers.h"
+#endif
 #include "wifi.h"
 #include "settings.h"
 #include "log_stream.h"
@@ -60,11 +64,26 @@ static void log_wifi_scan_memory(const char *where) {
                       1024U));
 }
 
+/* Before the audio engine is released: a Surround speaker drops its link to
+ * the Gateway first, so no forwarded call reaches the released engine. */
+static void suspend_surround_link(void) {
+#if WEB_AUDIO_PAGES
+  if (settings_get_surround_mode()) spk_link_suspend();
+#endif
+}
+
 static esp_err_t restore_airplay_after_wifi_scan(void) {
   esp_err_t last_err = ESP_FAIL;
 
   for (int attempt = 1; attempt <= 2; ++attempt) {
     last_err = audio_receiver_init();
+#if WEB_AUDIO_PAGES
+    /* A speaker in Surround mode runs no RTSP: its link reconnects. */
+    if (last_err == ESP_OK && settings_get_surround_mode()) {
+      spk_link_resume();
+      return ESP_OK;
+    }
+#endif
     if (last_err == ESP_OK) {
       last_err = rtsp_server_start();
       if (last_err == ESP_OK) {
@@ -107,6 +126,10 @@ extern const uint8_t web_speedtest_start[] asm("_binary_web_speedtest_html_start
 extern const uint8_t web_speedtest_end[] asm("_binary_web_speedtest_html_end");
 extern const uint8_t web_eq_start[] asm("_binary_web_eq_html_start");
 extern const uint8_t web_eq_end[] asm("_binary_web_eq_html_end");
+#if !WEB_AUDIO_PAGES
+extern const uint8_t web_speakers_start[] asm("_binary_web_speakers_html_start");
+extern const uint8_t web_speakers_end[] asm("_binary_web_speakers_html_end");
+#endif
 
 static esp_err_t serve_embedded_page(httpd_req_t *req, const uint8_t *start,
                                       const uint8_t *end) {
@@ -136,6 +159,10 @@ static esp_err_t speedtest_handler(httpd_req_t *req) {
 #if WEB_AUDIO_PAGES
 static esp_err_t eq_page_handler(httpd_req_t *req) {
   return serve_embedded_page(req, web_eq_start, web_eq_end);
+}
+#else
+static esp_err_t speakers_page_handler(httpd_req_t *req) {
+  return serve_embedded_page(req, web_speakers_start, web_speakers_end);
 }
 #endif
 static esp_err_t favicon_handler(httpd_req_t *req){ httpd_resp_set_status(req,"204 No Content"); return httpd_resp_send(req,NULL,0); }
@@ -194,6 +221,7 @@ static esp_err_t wifi_scan_handler(httpd_req_t *req) {
     if (!rtsp_server_is_idle()) {
       return airplay_still_stopping(req);
     }
+    suspend_surround_link();
     esp_err_t release_err = audio_receiver_release_for_wifi_scan();
     if (release_err != ESP_OK) {
       ESP_LOGE(TAG, "WiFi scan: audio memory release failed: %s",
@@ -351,6 +379,132 @@ static void send_json_obj(httpd_req_t *req, cJSON *r) {
   free(out);
   cJSON_Delete(r);
 }
+#if !WEB_AUDIO_PAGES
+/* ---- Gateway: the Surround speakers and their own settings ---- */
+static esp_err_t speakers_get_handler(httpd_req_t *req) {
+  static gw_speaker_info_t list[SURROUND_MAX_SPEAKERS]; /* httpd task only */
+  const size_t n = gw_speakers_list(list);
+  cJSON *r = cJSON_CreateObject();
+  cJSON_AddBoolToObject(r, "success", true);
+  cJSON *arr = cJSON_AddArrayToObject(r, "speakers");
+  for (size_t i = 0; arr && i < n; ++i) {
+    const gw_speaker_info_t *sp = &list[i];
+    cJSON *o = cJSON_CreateObject();
+    char mac[18];
+    snprintf(mac, sizeof(mac), "%02x:%02x:%02x:%02x:%02x:%02x", sp->mac[0],
+             sp->mac[1], sp->mac[2], sp->mac[3], sp->mac[4], sp->mac[5]);
+    cJSON_AddStringToObject(o, "name", sp->name);
+    cJSON_AddStringToObject(o, "ip", sp->ip);
+    cJSON_AddStringToObject(o, "mac", mac);
+    cJSON_AddStringToObject(o, "firmware", sp->firmware);
+    cJSON_AddStringToObject(o, "state", sp->state);
+    cJSON_AddBoolToObject(o, "audio", sp->audio);
+    if (sp->config_valid) {
+      cJSON_AddNumberToObject(o, "channel", sp->config.channel);
+      cJSON_AddNumberToObject(o, "trim_db", sp->config.trim_db10 / 10.0);
+      cJSON_AddNumberToObject(o, "delay_ms", sp->config.delay_us / 1000.0);
+      cJSON_AddBoolToObject(o, "multichannel", sp->config.multichannel != 0U);
+    }
+    if (sp->status_valid) {
+      const surround_status_t *st = &sp->status;
+      cJSON *pb = cJSON_AddObjectToObject(o, "playback");
+      cJSON_AddBoolToObject(pb, "active", (st->flags & SURROUND_STATUS_ACTIVE) != 0U);
+      cJSON_AddBoolToObject(pb, "playing", (st->flags & SURROUND_STATUS_PLAYING) != 0U);
+      cJSON_AddBoolToObject(pb, "time", (st->flags & SURROUND_STATUS_TIME) != 0U);
+      cJSON_AddStringToObject(pb, "stream",
+                              st->stream_type == SURROUND_STREAM_REALTIME ? "realtime"
+                              : st->stream_type == SURROUND_STREAM_BUFFERED ? "buffered"
+                                                                            : "none");
+      cJSON_AddStringToObject(pb, "codec", st->codec);
+      cJSON_AddNumberToObject(pb, "sample_rate", st->sample_rate);
+      cJSON_AddNumberToObject(pb, "bits", st->bits);
+      cJSON_AddNumberToObject(pb, "channels", st->stream_channels);
+      if (st->flags & SURROUND_STATUS_MC) {
+        cJSON_AddNumberToObject(pb, "output_channel", st->output_channel);
+        cJSON_AddStringToObject(pb, "label", st->label);
+      }
+      if (st->flags & SURROUND_STATUS_SYNC) {
+        cJSON_AddNumberToObject(pb, "sync_ms", st->sync_us / 1000.0);
+        cJSON_AddNumberToObject(pb, "i2s_ppm", st->servo_ppm);
+      }
+      if (st->fifo_capacity_kib) {
+        cJSON_AddNumberToObject(pb, "fifo_kib", st->fifo_used_kib);
+        cJSON_AddNumberToObject(pb, "fifo_capacity_kib", st->fifo_capacity_kib);
+      }
+      cJSON_AddNumberToObject(pb, "tsf_rms_us", st->tsf_rms_ns10 / 100.0);
+    }
+    cJSON_AddItemToArray(arr, o);
+  }
+  send_json_obj(req, r);
+  return ESP_OK;
+}
+static bool parse_mac(const char *s, uint8_t mac[6]) {
+  unsigned v[6];
+  if (!s || sscanf(s, "%2x:%2x:%2x:%2x:%2x:%2x", &v[0], &v[1], &v[2], &v[3],
+                   &v[4], &v[5]) != 6)
+    return false;
+  for (int i = 0; i < 6; ++i) mac[i] = (uint8_t)v[i];
+  return true;
+}
+static esp_err_t speakers_post_handler(httpd_req_t *req) {
+  if (!admin_ok(req)) return ESP_OK;
+  char b[192];
+  if (recv_json(req, b, sizeof(b)) != ESP_OK) {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid body");
+    return ESP_FAIL;
+  }
+  cJSON *j = cJSON_Parse(b);
+  cJSON *mac_j = j ? cJSON_GetObjectItem(j, "mac") : NULL;
+  cJSON *ch = j ? cJSON_GetObjectItem(j, "channel") : NULL;
+  cJSON *trim = j ? cJSON_GetObjectItem(j, "trim_db") : NULL;
+  cJSON *delay = j ? cJSON_GetObjectItem(j, "delay_ms") : NULL;
+  surround_set_config_t cfg = {0};
+  uint8_t mac[6];
+  const char *error = NULL;
+  if (!cJSON_IsString(mac_j) || !parse_mac(mac_j->valuestring, mac)) {
+    error = "expected \"mac\": \"aa:bb:cc:dd:ee:ff\"";
+  }
+  if (!error && ch) {
+    if (cJSON_IsNumber(ch) && ch->valueint >= -1 && ch->valueint <= 7) {
+      cfg.fields |= SURROUND_SET_CHANNEL;
+      cfg.channel = (int8_t)ch->valueint;
+    } else {
+      error = "channel: -1 (mono mix) .. 7";
+    }
+  }
+  if (!error && trim) {
+    const long v = cJSON_IsNumber(trim) ? lround(trim->valuedouble * 10.0) : 1;
+    if (v >= SURROUND_TRIM_MIN_DB10 && v <= SURROUND_TRIM_MAX_DB10) {
+      cfg.fields |= SURROUND_SET_TRIM;
+      cfg.trim_db10 = (int16_t)v;
+    } else {
+      error = "trim_db: -30 .. 0";
+    }
+  }
+  if (!error && delay) {
+    const long v = cJSON_IsNumber(delay) ? lround(delay->valuedouble * 1000.0) : -1;
+    if (v >= SURROUND_DELAY_MIN_US && v <= SURROUND_DELAY_MAX_US) {
+      cfg.fields |= SURROUND_SET_DELAY;
+      cfg.delay_us = (int32_t)v;
+    } else {
+      error = "delay_ms: 0 .. 50";
+    }
+  }
+  if (!error && cfg.fields == 0U) error = "nothing to set";
+  esp_err_t e = ESP_ERR_INVALID_ARG;
+  if (!error) {
+    e = gw_speakers_set_config(mac, &cfg);
+    if (e == ESP_ERR_NOT_FOUND) error = "speaker not connected";
+    else if (e != ESP_OK) error = esp_err_to_name(e);
+  }
+  if (j) cJSON_Delete(j);
+  cJSON *r = cJSON_CreateObject();
+  cJSON_AddBoolToObject(r, "success", e == ESP_OK);
+  if (error) cJSON_AddStringToObject(r, "error", error);
+  send_json_obj(req, r);
+  return ESP_OK;
+}
+#endif
 #if WEB_AUDIO_PAGES
 static void add_latency_state(cJSON *r) {
   cJSON_AddNumberToObject(r, "latency_us", audio_receiver_get_output_latency_us());
@@ -502,6 +656,7 @@ static esp_err_t speaker_post_handler(httpd_req_t *req) {
       sp->valueint < AAC_SPEAKER_COUNT) {
     aac_decoder_set_speaker(sp->valueint);
     e = settings_set_mc_speaker(sp->valueint);
+    if (settings_get_surround_mode()) spk_link_config_changed();
   }
   if (j) cJSON_Delete(j);
   cJSON *r = cJSON_CreateObject();
@@ -512,6 +667,49 @@ static esp_err_t speaker_post_handler(httpd_req_t *req) {
                                             : esp_err_to_name(e));
   add_speaker_state(r);
   send_json_obj(req, r);
+  return ESP_OK;
+}
+/* Speaker: Surround mode on/off. {"enabled", "gateway_host"}; a change is
+ * saved and the speaker restarts into the new mode. */
+static esp_err_t surround_get_handler(httpd_req_t *req) {
+  cJSON *r = cJSON_CreateObject();
+  cJSON_AddBoolToObject(r, "success", true);
+  cJSON_AddBoolToObject(r, "enabled", settings_get_surround_mode());
+  cJSON_AddStringToObject(r, "gateway_host", CONFIG_AIRPLAY_SURROUND_GATEWAY_HOST);
+  send_json_obj(req, r);
+  return ESP_OK;
+}
+static esp_err_t surround_post_handler(httpd_req_t *req) {
+  if (!admin_ok(req)) return ESP_OK;
+  char b[64];
+  if (recv_json(req, b, sizeof(b)) != ESP_OK) {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid body");
+    return ESP_FAIL;
+  }
+  cJSON *j = cJSON_Parse(b);
+  cJSON *en = j ? cJSON_GetObjectItem(j, "enabled") : NULL;
+  esp_err_t e = ESP_ERR_INVALID_ARG;
+  bool restart = false;
+  if (cJSON_IsBool(en)) {
+    const bool want = cJSON_IsTrue(en);
+    restart = want != settings_get_surround_mode();
+    e = restart ? settings_set_surround_mode(want) : ESP_OK;
+    restart = restart && e == ESP_OK;
+  }
+  if (j) cJSON_Delete(j);
+  cJSON *r = cJSON_CreateObject();
+  cJSON_AddBoolToObject(r, "success", e == ESP_OK);
+  if (e != ESP_OK)
+    cJSON_AddStringToObject(r, "error", e == ESP_ERR_INVALID_ARG
+                                            ? "expected {\"enabled\": true|false}"
+                                            : esp_err_to_name(e));
+  cJSON_AddBoolToObject(r, "enabled", settings_get_surround_mode());
+  cJSON_AddBoolToObject(r, "restarting", restart);
+  send_json_obj(req, r);
+  if (restart) {
+    vTaskDelay(pdMS_TO_TICKS(500));
+    esp_restart();
+  }
   return ESP_OK;
 }
 static esp_err_t latency_measure_handler(httpd_req_t *req) {
@@ -536,6 +734,7 @@ static esp_err_t latency_measure_handler(httpd_req_t *req) {
     if (!rtsp_server_is_idle()) {
       return airplay_still_stopping(req);
     }
+    suspend_surround_link();
     const esp_err_t rel = audio_receiver_release_for_wifi_scan();
     if (rel != ESP_OK) {
       ESP_LOGE(TAG, "Latency test: audio release failed: %s", esp_err_to_name(rel));
@@ -851,7 +1050,7 @@ static esp_err_t eq_post_handler(httpd_req_t *req) {
 static esp_err_t ota_handler(httpd_req_t *req){ if(!admin_ok(req)) return ESP_OK; if(req->content_len==0){httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"No firmware uploaded");return ESP_FAIL;} AP_LOGI(TAG,"Stopping RTSP for OTA"); rtsp_server_stop(); if(!rtsp_server_is_idle()) return airplay_still_stopping(req); esp_err_t e=ota_start_from_http(req); if(e!=ESP_OK){ ESP_LOGE(TAG,"OTA failed (%s); restarting RTSP",esp_err_to_name(e)); esp_err_t re=rtsp_server_start(); if(re!=ESP_OK){ESP_LOGE(TAG,"RTSP restart after OTA failure failed: %s",esp_err_to_name(re));} httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,esp_err_to_name(e));return e;} httpd_resp_sendstr(req,"Firmware update complete, rebooting now!\n"); vTaskDelay(pdMS_TO_TICKS(500)); esp_restart(); return ESP_OK; }
 static const char *reset_reason_str(esp_reset_reason_t r){switch(r){case ESP_RST_POWERON:return"poweron";case ESP_RST_EXT:return"external";case ESP_RST_SW:return"software";case ESP_RST_PANIC:return"panic";case ESP_RST_INT_WDT:return"int_wdt";case ESP_RST_TASK_WDT:return"task_wdt";case ESP_RST_WDT:return"other_wdt";case ESP_RST_DEEPSLEEP:return"deepsleep";case ESP_RST_BROWNOUT:return"brownout";case ESP_RST_SDIO:return"sdio";default:return"unknown";}}
 static esp_err_t system_info_handler(httpd_req_t *req){
-  cJSON *root=cJSON_CreateObject(),*i=cJSON_CreateObject(); char ip[16]={0},mac[18]={0},name[65]={0}; bool connected=wifi_is_connected(); wifi_get_ip_str(ip,sizeof(ip)); wifi_get_mac_str(mac,sizeof(mac)); settings_get_device_name(name,sizeof(name)); cJSON_AddStringToObject(i,"ip",ip);cJSON_AddStringToObject(i,"mac",mac);cJSON_AddStringToObject(i,"device_name",name);cJSON_AddBoolToObject(i,"wifi_connected",connected);cJSON_AddNumberToObject(i,"free_heap",esp_get_free_heap_size());
+  cJSON *root=cJSON_CreateObject(),*i=cJSON_CreateObject(); char ip[16]={0},mac[18]={0},name[65]={0}; bool connected=wifi_is_connected(); wifi_get_ip_str(ip,sizeof(ip)); wifi_get_mac_str(mac,sizeof(mac)); settings_get_device_name(name,sizeof(name)); cJSON_AddStringToObject(i,"ip",ip);cJSON_AddStringToObject(i,"mac",mac);cJSON_AddStringToObject(i,"device_name",name);cJSON_AddBoolToObject(i,"wifi_connected",connected);cJSON_AddStringToObject(i,"role",!WEB_AUDIO_PAGES?"gateway":settings_get_surround_mode()?"surround-speaker":"speaker");cJSON_AddNumberToObject(i,"free_heap",esp_get_free_heap_size());
   if(connected){wifi_ap_record_t ap;if(esp_wifi_sta_get_ap_info(&ap)==ESP_OK){char ssid[33]={0},bssid[18];memcpy(ssid,ap.ssid,32);snprintf(bssid,sizeof(bssid),"%02x:%02x:%02x:%02x:%02x:%02x",ap.bssid[0],ap.bssid[1],ap.bssid[2],ap.bssid[3],ap.bssid[4],ap.bssid[5]);const char *phy=ap.phy_11n?"11n":ap.phy_11g?"11g":ap.phy_11b?"11b":ap.phy_lr?"LR":"?";cJSON_AddStringToObject(i,"wifi_ssid",ssid);cJSON_AddStringToObject(i,"wifi_bssid",bssid);cJSON_AddNumberToObject(i,"wifi_rssi",ap.rssi);cJSON_AddNumberToObject(i,"wifi_channel",ap.primary);cJSON_AddStringToObject(i,"wifi_phy",phy);}}
   const esp_app_desc_t *d=esp_app_get_description();cJSON_AddStringToObject(i,"firmware_version",d->version);cJSON_AddStringToObject(i,"reset_reason",reset_reason_str(esp_reset_reason()));cJSON_AddNumberToObject(i,"uptime_s",(double)(esp_timer_get_time()/1000000));cJSON_AddItemToObject(root,"info",i);cJSON_AddBoolToObject(root,"success",true);char *out=cJSON_PrintUnformatted(root);httpd_resp_set_type(req,"application/json");httpd_resp_sendstr(req,out);free(out);cJSON_Delete(root);return ESP_OK;
 }
@@ -877,11 +1076,13 @@ static esp_err_t speed_upload(httpd_req_t *req){
   httpd_resp_set_type(req,"text/plain");return httpd_resp_sendstr(req,out);
 }
 
-esp_err_t web_server_start(uint16_t port){ if(s_server)return ESP_OK; httpd_config_t c=HTTPD_DEFAULT_CONFIG();c.server_port=port;c.max_uri_handlers=32;c.stack_size=8192;c.lru_purge_enable=true;c.task_priority=HTTP_SERVER_TASK_PRIORITY;esp_err_t e=httpd_start(&s_server,&c);if(e!=ESP_OK)return e;
+esp_err_t web_server_start(uint16_t port){ if(s_server)return ESP_OK; httpd_config_t c=HTTPD_DEFAULT_CONFIG();c.server_port=port;c.max_uri_handlers=40;c.stack_size=8192;c.lru_purge_enable=true;c.task_priority=HTTP_SERVER_TASK_PRIORITY;esp_err_t e=httpd_start(&s_server,&c);if(e!=ESP_OK)return e;
 #define REG(U,M,H) do{httpd_uri_t x={.uri=U,.method=M,.handler=H};ESP_ERROR_CHECK(httpd_register_uri_handler(s_server,&x));}while(0)
   REG("/",HTTP_GET,root_handler);REG("/favicon.ico",HTTP_GET,favicon_handler);REG("/logs",HTTP_GET,logs_handler);REG("/speedtest",HTTP_GET,speedtest_handler);REG("/api/audio/remote",HTTP_GET,remote_get_handler);REG("/api/audio/remote",HTTP_POST,remote_post_handler);REG("/api/wifi/scan",HTTP_GET,wifi_scan_handler);REG("/api/wifi/config",HTTP_POST,wifi_config_handler);REG("/api/device/name",HTTP_POST,device_name_handler);REG("/api/ota/update",HTTP_POST,ota_handler);REG("/api/system/info",HTTP_GET,system_info_handler);REG("/api/system/restart",HTTP_POST,restart_handler);REG("/api/speedtest/ping",HTTP_GET,speed_ping);REG("/api/speedtest/download",HTTP_GET,speed_download);REG("/api/speedtest/upload",HTTP_POST,speed_upload);REG("/hotspot-detect.html",HTTP_GET,captive_redirect);REG("/library/test/success.html",HTTP_GET,captive_redirect);REG("/generate_204",HTTP_GET,captive_redirect);REG("/connecttest.txt",HTTP_GET,captive_redirect);
 #if WEB_AUDIO_PAGES
-  REG("/eq",HTTP_GET,eq_page_handler);REG("/api/eq",HTTP_GET,eq_get_handler);REG("/api/eq",HTTP_POST,eq_post_handler);REG("/api/audio/mute",HTTP_POST,output_mute_post_handler);REG("/api/audio/latency",HTTP_GET,latency_get_handler);REG("/api/audio/latency",HTTP_POST,latency_post_handler);REG("/api/audio/latency/measure",HTTP_POST,latency_measure_handler);REG("/api/audio/loudness",HTTP_GET,loudness_get_handler);REG("/api/audio/loudness",HTTP_POST,loudness_post_handler);REG("/api/audio/speaker",HTTP_GET,speaker_get_handler);REG("/api/audio/speaker",HTTP_POST,speaker_post_handler);
+  REG("/eq",HTTP_GET,eq_page_handler);REG("/api/eq",HTTP_GET,eq_get_handler);REG("/api/eq",HTTP_POST,eq_post_handler);REG("/api/audio/mute",HTTP_POST,output_mute_post_handler);REG("/api/audio/latency",HTTP_GET,latency_get_handler);REG("/api/audio/latency",HTTP_POST,latency_post_handler);REG("/api/audio/latency/measure",HTTP_POST,latency_measure_handler);REG("/api/audio/loudness",HTTP_GET,loudness_get_handler);REG("/api/audio/loudness",HTTP_POST,loudness_post_handler);REG("/api/audio/speaker",HTTP_GET,speaker_get_handler);REG("/api/audio/speaker",HTTP_POST,speaker_post_handler);REG("/api/surround",HTTP_GET,surround_get_handler);REG("/api/surround",HTTP_POST,surround_post_handler);
+#else
+  REG("/speakers",HTTP_GET,speakers_page_handler);REG("/api/speakers",HTTP_GET,speakers_get_handler);REG("/api/speakers",HTTP_POST,speakers_post_handler);
 #endif
   ESP_ERROR_CHECK(httpd_register_err_handler(s_server, HTTPD_404_NOT_FOUND, captive_404_handler));
 #undef REG

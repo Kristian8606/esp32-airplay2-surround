@@ -89,6 +89,27 @@ bool ptp_clock_realtime_snapshot_to_local(
 
 void ptp_clock_get_realtime_snapshot(ptp_realtime_snapshot_t *snapshot);
 
+/* Surround speaker: the Gateway's estimate of the sender clock, already
+ * mapped to this ESP's clock (spk_time.c), replaces the PTP estimator. Audio
+ * reads it through ptp_clock_get_snapshot() exactly like a PTP estimate.
+ * No PTP sender is selected on such a speaker (no RTSP, so no
+ * ptp_clock_start_timing()), so received PTP packets never mix in. */
+typedef struct {
+  uint64_t source_clock_id;
+  uint64_t grandmaster_clock_id;
+  int64_t offset_ns;      /* sender PTP - local */
+  int64_t sample_time_ns; /* local time the offset was measured for */
+  uint32_t mastership_age_ms;
+  uint32_t sample_count;
+  bool locked;
+  /* Realtime (type 96) estimate: served by ptp_clock_get_realtime_snapshot()
+   * like a realtime PTP session, with its own GM-change epochs. */
+  bool realtime;
+} ptp_clock_external_t;
+
+/* NULL withdraws the estimate (the snapshot becomes invalid). */
+void ptp_clock_set_external(const ptp_clock_external_t *ext);
+
 /* Media-anchor hint for diagnostics only. Source selection belongs to
  * ptp_clock_start_timing(); changing this hint never resets the estimator. */
 void ptp_clock_set_master_clock_id(uint64_t clock_id);

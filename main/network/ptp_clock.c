@@ -856,6 +856,44 @@ bool ptp_clock_realtime_snapshot_to_local(
   return true;
 }
 
+void ptp_clock_set_external(const ptp_clock_external_t *ext) {
+  taskENTER_CRITICAL(&ptp_state_mux);
+  if (!ext) {
+    ptp_clear_estimators_locked();
+    taskEXIT_CRITICAL(&ptp_state_mux);
+    return;
+  }
+  ptp_clock_engine_t *e = &ptp.engine;
+  if (ptp.realtime_mode != ext->realtime) {
+    /* Like ptp_clock_start_timing() switching modes: a fresh record. */
+    ptp_clear_estimators_locked();
+    ptp.gm_changes = 0;
+  }
+  if (!e->valid || e->source_clock_id != ext->source_clock_id ||
+      e->grandmaster_clock_id != ext->grandmaster_clock_id) {
+    /* A new timing domain, as a GM change would start on a PTP receiver. */
+    if (ext->realtime && e->grandmaster_clock_id != 0 &&
+        e->grandmaster_clock_id != ext->grandmaster_clock_id)
+      ptp.gm_changes++;
+    e->epoch = e->epoch + 1U ? e->epoch + 1U : 1U;
+    e->source_clock_id = ext->source_clock_id;
+    e->grandmaster_clock_id = ext->grandmaster_clock_id;
+  }
+  e->valid = true;
+  e->raw_offset_ns = ext->offset_ns;
+  e->filtered_offset_ns = ext->offset_ns;
+  e->output_offset_ns = ext->offset_ns;
+  e->last_accepted_time_ns = ext->sample_time_ns;
+  e->mastership_start_time_ns =
+      ext->sample_time_ns - (int64_t)ext->mastership_age_ms * 1000000LL;
+  e->accepted_samples = ext->sample_count;
+  ptp.realtime_mode = ext->realtime;
+  ptp.locked = ext->locked;
+  ptp.lock_candidate_start_ms = 0;
+  ptp.last_sync_ms = (uint32_t)(ext->sample_time_ns / 1000000LL);
+  taskEXIT_CRITICAL(&ptp_state_mux);
+}
+
 void ptp_clock_set_master_clock_id(uint64_t clock_id) {
   /* Shairport set_ptp_anchor_info only stores the media anchor. It never
    * resets NQPTP or selects packets by the anchor's grandmaster identity.

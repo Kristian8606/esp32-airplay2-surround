@@ -31,6 +31,8 @@ set(SRC_FILES
     "network/ota.c"
     "network/dns_server.c"
     "network/log_stream.c"
+    "surround/tsf_fit.c"
+    "surround/sync_pulse.c"
 )
 
 set(ROLE_REQUIRES)
@@ -40,6 +42,8 @@ if(CONFIG_AIRPLAY_ROLE_GATEWAY)
     list(APPEND SRC_FILES
         "surround/gw_proxy.c"
         "surround/gw_relay.c"
+        "surround/gw_rt_relay.c"
+        "surround/gw_speakers.c"
     )
 else()
     list(APPEND SRC_FILES
@@ -54,6 +58,8 @@ else()
         "audio/pcm_rtp_ring.c"
         "audio/audio_playout.c"
         "audio/audio_crypto.c"
+        "surround/spk_link.c"
+        "surround/spk_time.c"
     )
     # Output latency: the pure analysis is always built (tiny), the ADC
     # capture only with the wired measurement option.
@@ -93,7 +99,11 @@ idf_component_register(
 
 # Embed the UI into the OTA application image. File changes automatically
 # regenerate the embedded data; no separate filesystem upload is needed.
-foreach(page index logs speedtest eq)
+set(WEB_PAGES index logs speedtest eq)
+if(CONFIG_AIRPLAY_ROLE_GATEWAY)
+    list(APPEND WEB_PAGES speakers)
+endif()
+foreach(page ${WEB_PAGES})
     target_add_binary_data(${COMPONENT_LIB}
         "${CMAKE_CURRENT_SOURCE_DIR}/../data/www/${page}.html" BINARY
         RENAME_TO "web_${page}_html")

@@ -42,3 +42,12 @@ esp_err_t settings_set_loudness(bool enabled, int32_t reference_db);
  * CONFIG_AIRPLAY_MULTICHANNEL_DEFAULT_SPEAKER when nothing was saved. */
 esp_err_t settings_get_mc_speaker(int32_t *speaker);
 esp_err_t settings_set_mc_speaker(int32_t speaker);
+/* Speaker build: Surround mode (follow the Surround Gateway, no AirPlay
+ * advertisement or RTSP) instead of a standalone AirPlay receiver. Off when
+ * nothing was saved; takes effect after a restart. */
+bool settings_get_surround_mode(void);
+esp_err_t settings_set_surround_mode(bool enabled);
+/* Surround speaker tuning set from the Gateway web page: level trim in
+ * tenths of a dB (<= 0) and extra delay in us. 0 and 0 when nothing saved. */
+esp_err_t settings_get_surround_tuning(int32_t *trim_db10, int32_t *delay_us);
+esp_err_t settings_set_surround_tuning(int32_t trim_db10, int32_t delay_us);

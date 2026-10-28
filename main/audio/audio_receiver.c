@@ -939,11 +939,15 @@ static uint64_t presentation_now_ns(const timing_snapshot_t *snap) {
 #define AP2_OUTPUT_LATENCY_MIN_US  (-100000)
 #define AP2_OUTPUT_LATENCY_MAX_US  150000
 static volatile int32_t s_output_latency_us = 0;
+/* Surround speaker delay: the opposite sign, the speaker plays later. */
+#define AP2_EXTRA_DELAY_MAX_US     100000
+static volatile int32_t s_extra_delay_us = 0;
 
 static uint64_t presentation_anchor_ns(const timing_snapshot_t *snap) {
   if (!snap) return 0;
   const int64_t off_ns =
-      (int64_t)__atomic_load_n(&s_output_latency_us, __ATOMIC_RELAXED) * 1000LL;
+      ((int64_t)__atomic_load_n(&s_output_latency_us, __ATOMIC_RELAXED) -
+       (int64_t)__atomic_load_n(&s_extra_delay_us, __ATOMIC_RELAXED)) * 1000LL;
   return (uint64_t)((int64_t)snap->anchor_local_ns - off_ns);
 }
 
@@ -2850,9 +2854,34 @@ static void fade_in_apply(float *pcm, uint32_t frames) {
  * exactly the audio that was heard: PCM replaced in the FIFO (AutoMix
  * re-send, FLUSH) never passed through it, and EQ changes are heard within
  * the DMA queue (~87 ms) instead of the whole PCM window. */
+static uint32_t s_stereo_route = AUDIO_STEREO_ROUTE_STEREO;
+
+void audio_receiver_set_stereo_route(audio_stereo_route_t route) {
+  __atomic_store_n(&s_stereo_route, (uint32_t)route, __ATOMIC_RELEASE);
+}
+
+/* Surround speaker with a stereo source: keep only its side of it. */
+static void apply_stereo_route(float *block, uint32_t frames) {
+  const audio_stereo_route_t route = (audio_stereo_route_t)__atomic_load_n(
+      &s_stereo_route, __ATOMIC_ACQUIRE);
+  if (route == AUDIO_STEREO_ROUTE_STEREO) return;
+  /* A multichannel stream is already this speaker's channel. */
+  if (aac_decoder_get_mc_status(NULL, NULL, NULL, 0)) return;
+  for (uint32_t i = 0; i < frames; ++i) {
+    float *f = block + (size_t)i * 2U;
+    const float v = route == AUDIO_STEREO_ROUTE_LEFT    ? f[0]
+                    : route == AUDIO_STEREO_ROUTE_RIGHT ? f[1]
+                    : route == AUDIO_STEREO_ROUTE_MONO  ? 0.5f * (f[0] + f[1])
+                                                        : 0.0f;
+    f[0] = v;
+    f[1] = v;
+  }
+}
+
 static const audio_out_sample_t *output_stage(float *block, uint32_t frames,
                                               int sample_rate,
                                               int32_t current_q15[2]) {
+  apply_stereo_route(block, frames);
   audio_eq_process(block, frames, 2, sample_rate > 0 ? sample_rate : 44100);
   apply_output_volume_f32(block, frames, current_q15);
   /* Loudness follows the volume just applied (current_q15 = its target). */
@@ -4904,6 +4933,49 @@ esp_err_t audio_receiver_set_output_latency_us(int32_t us, bool persist) {
   AP_LOGI(TAG, "OUTPUT LATENCY %+ld us (was %+ld us)%s", (long)us, (long)old,
            persist ? ", saved" : "");
   return persist ? settings_set_output_latency_us(us) : ESP_OK;
+}
+
+void audio_receiver_get_playback_info(audio_receiver_playback_info_t *out) {
+  if (!out) return;
+  memset(out, 0, sizeof(*out));
+  timing_snapshot_t snap;
+  snapshot_state(&snap);
+  out->stream_type = snap.stream_type;
+  out->format = snap.format;
+  out->playing = snap.playing;
+  out->active = __atomic_load_n(&s.rx_running, __ATOMIC_ACQUIRE) ||
+                realtime_receiver_is_running();
+  out->sync_valid =
+      __atomic_load_n(&s.status_sync_valid, __ATOMIC_ACQUIRE) &&
+      __atomic_load_n(&s.status_sync_generation, __ATOMIC_RELAXED) ==
+          snap.generation;
+  out->sync_us = __atomic_load_n(&s.status_sync_us, __ATOMIC_RELAXED);
+  out->servo_ppm = __atomic_load_n(&s.status_servo_ppm, __ATOMIC_RELAXED);
+  if (snap.stream_type == AUDIO_STREAM_BUFFERED && s.transport) {
+    ap2_buffered_fifo_usage_t usage = {0};
+    ap2_buffered_fifo_get_usage(s.transport, &usage);
+    out->fifo_used_kib = (uint32_t)(usage.used_bytes / 1024U);
+    out->fifo_capacity_kib = (uint32_t)(usage.capacity_bytes / 1024U);
+  }
+}
+
+int32_t audio_receiver_get_extra_delay_us(void) {
+  return __atomic_load_n(&s_extra_delay_us, __ATOMIC_RELAXED);
+}
+
+esp_err_t audio_receiver_set_extra_delay_us(int32_t us) {
+  if (us < 0 || us > AP2_EXTRA_DELAY_MAX_US) return ESP_ERR_INVALID_ARG;
+  const int32_t old = __atomic_exchange_n(&s_extra_delay_us, us, __ATOMIC_ACQ_REL);
+  const int32_t delta = us > old ? us - old : old - us;
+  if (delta >= 500 && __atomic_load_n(&s.engine_running, __ATOMIC_ACQUIRE)) {
+    /* As for the output latency: a larger shift re-primes at the new point. */
+    __atomic_store_n(&s.i2s_flush_requested, true, __ATOMIC_RELEASE);
+    media_control_wake();
+  }
+  if (us != old) {
+    AP_LOGI(TAG, "EXTRA DELAY %ld us (was %ld us)", (long)us, (long)old);
+  }
+  return ESP_OK;
 }
 
 esp_err_t audio_receiver_measure_output_latency(latency_cal_result_t *res,

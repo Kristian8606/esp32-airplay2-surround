@@ -132,6 +132,38 @@ void audio_receiver_set_playout_latency_samples(uint32_t latency_samples);
 #include "latency_cal.h"
 int32_t audio_receiver_get_output_latency_us(void);
 esp_err_t audio_receiver_set_output_latency_us(int32_t us, bool persist);
+/* Surround speaker: play this much later than the anchor says (distance to
+ * the listener), on top of the output latency. Not saved here. */
+int32_t audio_receiver_get_extra_delay_us(void);
+esp_err_t audio_receiver_set_extra_delay_us(int32_t us);
+/* Surround speaker: which part of a stereo source it plays, from its role
+ * and the Gateway's stereo mode (spk_link.c). A 5.1/7.1 stream is not
+ * affected: it already arrives as the speaker's own channel. Applied before
+ * the EQ, so the EQ's own source selection still works on top. A standalone
+ * receiver keeps AUDIO_STEREO_ROUTE_STEREO. Runtime only, no NVS. */
+typedef enum {
+  AUDIO_STEREO_ROUTE_STEREO = 0, /* left and right unchanged */
+  AUDIO_STEREO_ROUTE_LEFT,       /* left channel on both outputs */
+  AUDIO_STEREO_ROUTE_RIGHT,
+  AUDIO_STEREO_ROUTE_MONO,       /* (L+R)/2 on both outputs */
+  AUDIO_STEREO_ROUTE_MUTE,
+} audio_stereo_route_t;
+void audio_receiver_set_stereo_route(audio_stereo_route_t route);
+
+/* What the receiver is playing, for status pages (Surround Gateway list). */
+typedef struct {
+  bool active;  /* a stream is started */
+  bool playing;
+  audio_stream_type_t stream_type;
+  audio_format_t format;
+  bool sync_valid; /* sync_us/servo_ppm belong to the running output */
+  int32_t sync_us;    /* output phase error, + = early */
+  int32_t servo_ppm;  /* I2S clock correction */
+  uint32_t fifo_used_kib; /* buffered only */
+  uint32_t fifo_capacity_kib;
+} audio_receiver_playback_info_t;
+void audio_receiver_get_playback_info(audio_receiver_playback_info_t *out);
+
 /* Wired ADC loopback measurement. The caller must first stop RTSP and call
  * audio_receiver_release_for_wifi_scan() (exactly like the Wi-Fi scan) and
  * restore AirPlay afterwards. Blocks ~2-3 s. Does NOT apply the result. */

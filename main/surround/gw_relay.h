@@ -9,8 +9,16 @@
  *
  * The sender connects to the listener and streams frames of
  * [2-byte big-endian length incl. itself][12-byte RTP header][encrypted body].
- * Step 1 walks the frames, counts them and discards the bytes; later steps
- * copy every frame unchanged to each speaker's buffered port. */
+ * The relay walks the frames for its statistics and copies every byte
+ * unchanged to each speaker's buffered listener (gw_speakers_audio_targets()).
+ *
+ * Each speaker connection mirrors the sender connection: opened when the
+ * sender connects, closed when it closes. A speaker that connects mid-stream
+ * starts at the next frame boundary. The next chunk is read from the sender
+ * only after every connected speaker took the current one, so the slowest
+ * speaker paces the sender through TCP and the Gateway buffers nothing. While
+ * a speaker is starting its listener or being connected, the sender is not
+ * read for up to ~1 s so the speaker does not miss the start. */
 
 /* Idempotent while running: returns the port already bound. */
 esp_err_t gw_relay_start(uint16_t requested_port, uint16_t *bound_port);

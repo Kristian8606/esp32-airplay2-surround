@@ -14,6 +14,38 @@ menu "Surround Build Role"
         config AIRPLAY_ROLE_GATEWAY
             bool "Gateway (AirPlay front end, no audio output)"
     endchoice
+
+    config AIRPLAY_SURROUND_GATEWAY_HOST
+        string "Gateway IPv4 address for Surround mode (empty = mDNS)"
+        default ""
+        depends on AIRPLAY_ROLE_SPEAKER
+        help
+            A speaker in Surround mode finds the Gateway by mDNS
+            (_apsurround._tcp). Set an IPv4 address here to skip the search,
+            for example when mDNS is filtered on the network.
+
+    config AIRPLAY_SURROUND_SYNC_PULSE
+        bool "Sync test pulse at every second of sender time"
+        default n
+        select ESP_TIMER_SUPPORTS_ISR_DISPATCH_METHOD
+        help
+            For measuring synchronisation with an oscilloscope. The Gateway
+            and every Surround speaker raise a GPIO at each whole second of
+            the sender's clock, as each of them sees it (the Gateway from
+            PTP, a speaker from the Gateway's TIME messages). The distance
+            between the rising edges of two boards is their clock error.
+            The edge comes from a hardware timer interrupt; the log reports
+            how late each interrupt ran.
+
+    config AIRPLAY_SURROUND_SYNC_PULSE_GPIO
+        int "Sync test pulse GPIO"
+        default 9
+        range 0 48
+        depends on AIRPLAY_SURROUND_SYNC_PULSE
+        help
+            Pick a free pin (default 9: not used by the default I2S 4/5/6,
+            amplifier 21, LED 38 or latency loopback 7; avoid the strapping
+            pins 0, 3, 45, 46, USB 19/20 and the flash/PSRAM pins 26-37).
 endmenu
 
 menu "AirPlay Receiver"
