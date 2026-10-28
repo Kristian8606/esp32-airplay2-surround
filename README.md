@@ -309,9 +309,9 @@ with it.
    *AAC-LC · 48 kHz · 7.1 · Front Left*.
 
 > [!TIP]
-> Keep only these boards in the group. If a stereo-only speaker (a HomePod,
-> another AirPlay speaker) is added, the Apple TV sends **stereo to the whole
-> group**.
+> Other AirPlay speakers can stay in the group. In our tests the Apple TV
+> still sends 5.1 / 7.1 to these boards when a HomePod is in the group too;
+> it decides the format for each receiver separately.
 
 ### Speaker positions
 
@@ -381,8 +381,10 @@ stream:
 | Buffered TCP (type 103) | AAC-LC | 44.1 / 48 kHz | 2 | 1024 |
 | Buffered TCP (type 103) | AAC-LC | 48 kHz | **6 (5.1) / 8 (7.1)** | 1024 |
 
-- **The Apple TV decides the format.** It picks the best format **every**
-  speaker of the group supports and, for each track, what the content offers.
+- **The Apple TV decides the format**, for each receiver from the formats
+  it announces and, for each track, from what the content offers. A stereo
+  speaker in the same group (e.g. a HomePod) does not stop these boards from
+  getting 5.1 / 7.1.
   An "Atmos" label in Apple Music does not guarantee a 7.1 stream; some
   tracks arrive as stereo. YouTube sends stereo only.
 - **Format changes mid-stream.** Every audio packet carries its format in the
@@ -471,7 +473,7 @@ are listed in
 
 | Problem | Check |
 |---|---|
-| The Apple TV sends stereo only | Every speaker in the group must be one of these boards; the track or app may only offer stereo. |
+| The Apple TV sends stereo only | The track or app may only offer stereo (YouTube, some "Atmos" tracks); check the format on the `/eq` page or in `NOW PLAYING`. |
 | No sound from a board | Position on `/eq`; the **Mute** buttons; PCM5102A **XSMT** jumper; wiring of BCLK / LRCK / DATA. |
 | Subwoofer silent with music | Normal: most music has no LFE. Try a film. |
 | Dropouts | Wi-Fi signal at that speaker (`/speedtest`, RSSI on the main page). |
