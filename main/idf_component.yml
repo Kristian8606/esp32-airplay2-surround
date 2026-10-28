@@ -1,6 +1,6 @@
 dependencies:
   idf: ">=6.0.2"
-  espressif/mdns: "^1.11.1"
+  espressif/mdns: "^1.14.1"
   espressif/libsodium: "^1.0.21"
   espressif/esp_audio_codec: "^2.5.0"
   espressif/led_strip: "^3.0.3"

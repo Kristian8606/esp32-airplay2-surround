@@ -17,6 +17,12 @@
  */
 esp_err_t ptp_clock_init(void);
 
+/**
+ * Surround speaker: clock state only, no PTP sockets or task. The sender's
+ * clock then comes only from ptp_clock_set_external().
+ */
+esp_err_t ptp_clock_init_external(void);
+
 
 /**
  * Clear PTP clock synchronization state.
@@ -92,8 +98,7 @@ void ptp_clock_get_realtime_snapshot(ptp_realtime_snapshot_t *snapshot);
 /* Surround speaker: the Gateway's estimate of the sender clock, already
  * mapped to this ESP's clock (spk_time.c), replaces the PTP estimator. Audio
  * reads it through ptp_clock_get_snapshot() exactly like a PTP estimate.
- * No PTP sender is selected on such a speaker (no RTSP, so no
- * ptp_clock_start_timing()), so received PTP packets never mix in. */
+ * A speaker starts with ptp_clock_init_external(): it receives no PTP. */
 typedef struct {
   uint64_t source_clock_id;
   uint64_t grandmaster_clock_id;

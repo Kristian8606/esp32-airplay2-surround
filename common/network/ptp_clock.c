@@ -690,6 +690,23 @@ failed:
   return ESP_FAIL;
 }
 
+esp_err_t ptp_clock_init_external(void) {
+  SemaphoreHandle_t lifecycle = ptp_lifecycle_lock();
+  if (ptp_is_running() ||
+      __atomic_load_n(&ptp.task_handle, __ATOMIC_ACQUIRE) != NULL) {
+    xSemaphoreGive(lifecycle);
+    return ESP_ERR_INVALID_STATE;
+  }
+  taskENTER_CRITICAL(&ptp_state_mux);
+  memset(&ptp, 0, sizeof(ptp));
+  ptp.event_socket = -1;
+  ptp.general_socket = -1;
+  ptp_clock_engine_init(&ptp.engine);
+  taskEXIT_CRITICAL(&ptp_state_mux);
+  xSemaphoreGive(lifecycle);
+  return ESP_OK;
+}
+
 /* Estimator reset; caller holds ptp_state_mux. Mode and timing peer stay. */
 static void ptp_clear_estimators_locked(void) {
   ptp_clock_engine_init(&ptp.engine);

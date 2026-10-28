@@ -1,14 +1,8 @@
+/* Surround Gateway firmware: the AirPlay receiver the Apple TV plays to. */
 #include "audio_receiver.h"
 #include "audio_diag.h"
 #include "amp_control.h"
-#if defined(CONFIG_AIRPLAY_ROLE_GATEWAY) && CONFIG_AIRPLAY_ROLE_GATEWAY
 #include "gw_speakers.h"
-#else
-#include "aac_decoder.h"
-#include "audio_eq.h"
-#include "audio_loudness.h"
-#include "spk_link.h"
-#endif
 #include "dns_server.h"
 #include "hap.h"
 #include "log_stream.h"
@@ -50,16 +44,8 @@ static void print_firmware_banner(void) {
   ESP_LOGI(TAG, "VERSION: %s", app ? app->version : "unknown");
   ESP_LOGI(TAG, "BUILD: %s %s", __DATE__, __TIME__);
   ESP_LOGI(TAG, "IDF: %s", app ? app->idf_ver : "unknown");
-#if defined(CONFIG_AIRPLAY_ROLE_GATEWAY) && CONFIG_AIRPLAY_ROLE_GATEWAY
   ESP_LOGI(TAG, "ROLE: Surround Gateway (no decoder, no I2S output)");
   ESP_LOGI(TAG, "CORE PLAN: Core0=RTSP/PTP; Core1=WiFi/LwIP + buffered audio relay + status/LED/log");
-#else
-#if defined(CONFIG_AIRPLAY_MULTICHANNEL) && CONFIG_AIRPLAY_MULTICHANNEL
-  ESP_LOGI(TAG, "CORE PLAN: multichannel: Core0=FDK AAC decode + RTSP/PTP; Core1=WiFi/LwIP + AAC TCP reader + I2S playout + status/LED/log");
-#endif
-  ESP_LOGI(TAG, "CORE PLAN: Core0=WiFi/RTSP/PTP + AAC decode/EQ + ALAC UDP/decrypt/decode");
-  ESP_LOGI(TAG, "CORE PLAN: Core1=I2S playout + ALAC ordered staging/EQ + AAC TCP reader");
-#endif
   ESP_LOGI(TAG, "============================================================");
 }
 
@@ -75,20 +61,7 @@ void app_main(void) {
   }
   ESP_ERROR_CHECK(e);
   ESP_ERROR_CHECK(settings_init());
-#if defined(CONFIG_AIRPLAY_ROLE_GATEWAY) && CONFIG_AIRPLAY_ROLE_GATEWAY
   ESP_ERROR_CHECK(log_stream_init());
-#else
-  ESP_ERROR_CHECK(audio_eq_init());
-  (void)audio_loudness_init();
-  ESP_ERROR_CHECK(log_stream_init());
-  aac_decoder_report_last_run();
-  {
-    int32_t speaker = AAC_SPEAKER_MIX;
-    if (settings_get_mc_speaker(&speaker) == ESP_OK) {
-      aac_decoder_set_speaker((int)speaker);
-    }
-  }
-#endif
 
   const bool provisioning_only = !settings_has_wifi_credentials();
 
@@ -127,28 +100,16 @@ void app_main(void) {
     if (pulse_err != ESP_OK) {
       ESP_LOGW(TAG, "Sync test pulse unavailable: %s", esp_err_to_name(pulse_err));
     }
-#if !(defined(CONFIG_AIRPLAY_ROLE_GATEWAY) && CONFIG_AIRPLAY_ROLE_GATEWAY)
-    if (settings_get_surround_mode()) {
-      /* Surround mode: the Gateway is the AirPlay receiver; this speaker is
-       * not advertised and runs no RTSP. The playback buttons act through
-       * RTSP, so they are not started either. */
-      ESP_ERROR_CHECK(spk_link_start());
-    } else
-#endif
-    {
-      mdns_airplay_init();
-      ESP_ERROR_CHECK(rtsp_server_start());
-#if defined(CONFIG_AIRPLAY_ROLE_GATEWAY) && CONFIG_AIRPLAY_ROLE_GATEWAY
-      /* Without the listener AirPlay still works; speakers just cannot join. */
-      esp_err_t gw_err = gw_speakers_start();
-      if (gw_err != ESP_OK) {
-        ESP_LOGE(TAG, "Speaker control link unavailable: %s", esp_err_to_name(gw_err));
-      }
-#endif
-      esp_err_t buttons_err = playback_buttons_init();
-      if (buttons_err != ESP_OK) {
-        ESP_LOGW(TAG, "Playback buttons unavailable: %s", esp_err_to_name(buttons_err));
-      }
+    mdns_airplay_init();
+    ESP_ERROR_CHECK(rtsp_server_start());
+    /* Without the listener AirPlay still works; speakers just cannot join. */
+    esp_err_t gw_err = gw_speakers_start();
+    if (gw_err != ESP_OK) {
+      ESP_LOGE(TAG, "Speaker control link unavailable: %s", esp_err_to_name(gw_err));
+    }
+    esp_err_t buttons_err = playback_buttons_init();
+    if (buttons_err != ESP_OK) {
+      ESP_LOGW(TAG, "Playback buttons unavailable: %s", esp_err_to_name(buttons_err));
     }
   }
 
@@ -156,10 +117,10 @@ void app_main(void) {
   const char *fw_version = app ? app->version : "unknown";
   char ip[32] = {0};
   if (wifi_get_ip_str(ip, sizeof(ip)) == ESP_OK) {
-    ESP_LOGI(TAG, "airplay-esp32 %s ready; Web UI / WiFi scan / logs / OTA: http://%s/",
+    ESP_LOGI(TAG, "Surround Gateway %s ready; Web UI / WiFi scan / logs / OTA: http://%s/",
              fw_version, ip);
   } else {
-    ESP_LOGI(TAG, "airplay-esp32 %s ready; setup UI: http://192.168.4.1/",
+    ESP_LOGI(TAG, "Surround Gateway %s ready; setup UI: http://192.168.4.1/",
              fw_version);
   }
 

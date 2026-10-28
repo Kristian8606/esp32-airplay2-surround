@@ -8,8 +8,9 @@
  * (_airplay/_raop TXT records), GET /info and the RTSP "Server" header, so
  * all of them always agree. */
 
-/* AudioAccessory6,1 = HomePod (2nd generation). */
-#define AIRPLAY_MODEL          "AudioAccessory6,1"
+/* menuconfig AirPlay Receiver -> AirPlay model identifier; the sender
+ * picks its icon from it (AudioAccessory6,1 = HomePod, 2nd generation). */
+#define AIRPLAY_MODEL          CONFIG_AIRPLAY_MODEL_ID
 #define AIRPLAY_SOURCE_VERSION "377.40.00"
 #define AIRPLAY_SERVER_HEADER  "AirTunes/" AIRPLAY_SOURCE_VERSION
 #define AIRPLAY_PROTOVERS      "1.1"

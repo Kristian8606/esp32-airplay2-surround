@@ -373,23 +373,6 @@ esp_err_t settings_set_mc_speaker(int32_t speaker) {
   nvs_close(h);
   return e;
 }
-bool settings_get_surround_mode(void) {
-  nvs_handle_t h;
-  if (nvs_open(NS, NVS_READONLY, &h) != ESP_OK) return false;
-  uint8_t v = 0;
-  if (nvs_get_u8(h, "surround", &v) != ESP_OK) v = 0;
-  nvs_close(h);
-  return v != 0U;
-}
-esp_err_t settings_set_surround_mode(bool enabled) {
-  nvs_handle_t h;
-  esp_err_t e = nvs_open(NS, NVS_READWRITE, &h);
-  if (e != ESP_OK) return e;
-  e = nvs_set_u8(h, "surround", enabled ? 1U : 0U);
-  if (e == ESP_OK) e = nvs_commit(h);
-  nvs_close(h);
-  return e;
-}
 esp_err_t settings_get_surround_tuning(int32_t *trim_db10, int32_t *delay_us) {
   if (!trim_db10 || !delay_us) return ESP_ERR_INVALID_ARG;
   *trim_db10 = 0;

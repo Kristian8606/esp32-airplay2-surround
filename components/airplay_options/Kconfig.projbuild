@@ -121,6 +121,17 @@ menu "AirPlay Receiver"
                     AirPlay command is logged and dropped, never retried.
         endif
     endmenu
+
+    config AIRPLAY_MODEL_ID
+        string "AirPlay model identifier"
+        default "AudioAccessory6,1"
+        help
+            The model this receiver announces to AirPlay senders (mDNS
+            "model"/"am" and GET /info). The sender picks the icon it
+            shows from it. AudioAccessory6,1 = HomePod (2nd generation),
+            the HomePod icon. A name Apple does not know gives a generic
+            speaker icon. Changing it may change how a sender treats the
+            receiver: check that 5.1 / 7.1 still arrives.
 endmenu
 
 menu "Multichannel Experiment"

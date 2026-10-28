@@ -137,10 +137,10 @@ esp_err_t audio_receiver_set_output_latency_us(int32_t us, bool persist);
 int32_t audio_receiver_get_extra_delay_us(void);
 esp_err_t audio_receiver_set_extra_delay_us(int32_t us);
 /* Surround speaker: which part of a stereo source it plays, from its role
- * and the Gateway's stereo mode (spk_link.c). A 5.1/7.1 stream is not
- * affected: it already arrives as the speaker's own channel. Applied before
- * the EQ, so the EQ's own source selection still works on top. A standalone
- * receiver keeps AUDIO_STEREO_ROUTE_STEREO. Runtime only, no NVS. */
+ * (spk_link.c). A 5.1/7.1 stream is not affected: it already arrives as the
+ * speaker's own channel. Applied before the EQ, so the EQ's own source
+ * selection still works on top. AUDIO_STEREO_ROUTE_STEREO until the link
+ * sets a route. Runtime only, no NVS. */
 typedef enum {
   AUDIO_STEREO_ROUTE_STEREO = 0, /* left and right unchanged */
   AUDIO_STEREO_ROUTE_LEFT,       /* left channel on both outputs */

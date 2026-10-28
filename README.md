@@ -40,8 +40,9 @@ system.
   surround from track to track; the speakers follow without reconnecting.
 - ⚡ About **a third of one CPU core** per speaker for 7.1, thanks to a patched
   Fraunhofer FDK AAC decoder that synthesises just one channel.
-- 🔁 **Every speaker is still a full AirPlay 2 receiver**: switch it back to
-  standalone and it works on its own again.
+- 🔗 **Speakers belong to the system**: a speaker is not an AirPlay
+  receiver of its own and never shows up on an iPhone; it just follows the
+  Gateway. (A board that is its own AirPlay receiver is the `main` branch.)
 
 > [!NOTE]
 > **The project is under active development.** A Gateway and two speakers
@@ -58,7 +59,6 @@ system.
 - [Installation](#installation)
 - [First start](#first-start)
 - [Settings](#settings)
-- [Standalone mode](#standalone-mode)
 - [Technical details](#technical-details)
 - [Measuring sync](#measuring-sync)
 - [Limitations](#limitations)
@@ -86,6 +86,16 @@ Click an image to open it full size.
       <br><sub>One board in every speaker, all fed wirelessly through the Gateway</sub>
     </td>
   </tr>
+  <tr>
+    <td align="center" width="50%">
+      <a href="images/speakers-page-room.png"><img src="images/speakers-page-room.png" alt="Gateway speakers page: room map" width="100%"></a>
+      <br><sub><b>Gateway speakers page:</b> the room map shows which positions play</sub>
+    </td>
+    <td align="center" width="50%">
+      <a href="images/speakers-page-tiles.png"><img src="images/speakers-page-tiles.png" alt="Gateway speakers page: one tile per speaker" width="100%"></a>
+      <br><sub>One tile per speaker: role, level, delay and live sync</sub>
+    </td>
+  </tr>
 </table>
 
 ## How it works
@@ -103,9 +113,9 @@ and shares it with the speakers:
    is copied byte for byte to each speaker. The slowest speaker paces the
    stream through TCP, so the Gateway needs no audio buffer of its own.
 3. **Every speaker decodes only its own channel.** One ESP32-S3 cannot decode
-   all eight channels in real time, and it does not need to. A speaker in
-   Surround mode is invisible to AirPlay senders: it finds the Gateway by
-   mDNS, decrypts the stream with the key it was given and plays its channel
+   all eight channels in real time, and it does not need to. A speaker is
+   not an AirPlay receiver: it finds the Gateway by mDNS, decrypts the stream
+   with the key the Gateway passed on and plays its channel
    on **both outputs** of its DAC or amplifier (L = R), so you can drive one
    speaker, two drivers (woofer + tweeter) or a subwoofer amplifier.
 4. **One clock for all.** Every board on the same Wi-Fi access point keeps a
@@ -292,7 +302,6 @@ from the I2S wires.
 |---|---|---|
 | Amplifier enable / standby | 21 | switches the amplifier on while audio plays; active high or low |
 | WS2812 RGB VU LED | 38 | the on-board LED of many DevKitC boards |
-| Buttons: play/pause, next, previous, volume − / + | disabled | any free GPIO |
 | Wired latency measurement (ADC loopback) | 7 | DAC output → coupling capacitor + bias divider → ADC pin |
 | Sync test pulse (also on the Gateway) | 9 | for an oscilloscope, see [Measuring sync](#measuring-sync) |
 
@@ -316,63 +325,70 @@ git clone -b gateway https://github.com/Kristian8606/esp32-airplay2-surround.git
 cd esp32-airplay2-surround
 ```
 
-### 3. Configure (optional)
+### 3. Two projects, one code
 
-One source tree builds **two firmwares**, each in its own build directory:
-the **speaker** firmware (the default) and the **Gateway** firmware
-(`sdkconfig.defaults.gateway` selects that role). Settings for the speakers:
+| Folder | Builds | Firmware file |
+|---|---|---|
+| the repository folder | the **Gateway** | `build/airplay-gateway_<version>.bin` |
+| `speaker/` | the **speakers** | `speaker/build/airplay-speaker_<version>.bin` |
 
-```bash
-idf.py -B build_speaker -D SDKCONFIG=build_speaker/sdkconfig set-target esp32s3
-idf.py -B build_speaker -D SDKCONFIG=build_speaker/sdkconfig menuconfig
-```
-
-| Menu | What you can set |
+| Code | Where |
 |---|---|
-| **Surround Build Role** | Speaker or Gateway; a fixed Gateway address for networks that filter mDNS; the sync test pulse |
-| **I2S Playout** | BCLK / LRCK / DATA / MCLK GPIOs, output latency of your DAC |
-| **Multichannel Experiment** | surround on/off, default speaker position |
-| **AirPlay Receiver** | setup Wi-Fi name and password, hardware buttons |
-| **Amplifier Power Control** | amplifier enable GPIO and level |
-| **RGB Audio/VU LED** | LED on/off and GPIO |
-| **AirPlay Logs and Diagnostics** | log detail, web admin password |
+| the Gateway's own (AirPlay receiver: mDNS, pairing, RTSP; proxy, relays, speaker registry, speakers page) | `main/` |
+| the speaker's own (audio engine, link to the Gateway, EQ page) and FDK AAC | `speaker/main/`, `speaker/components/` |
+| shared (Wi-Fi, web server, settings, OTA, logs, clock, sync protocol) | `common/`, `data/www/` |
+| menuconfig options of both | `components/airplay_options/` |
+
+Both use the shared settings in `sdkconfig.defaults`; the Gateway adds
+`sdkconfig.defaults.gateway`. Each is an ordinary ESP-IDF project: go into
+its folder and run `idf.py` as usual.
+
+### 4. Configure (optional)
+
+Run `idf.py menuconfig` in the folder of the firmware you configure (the
+repository folder for the Gateway, `speaker/` for the speakers). Both show
+the same menus; some options matter for one firmware only:
+
+| Menu | What you can set | For |
+|---|---|---|
+| **Surround Build Role** | the role (set by the folder: leave it); a fixed Gateway address for networks that filter mDNS; the sync test pulse | both |
+| **AirPlay Receiver** | setup Wi-Fi name and password; playback buttons and AirPlay model (the icon senders show) | Wi-Fi both, the rest Gateway |
+| **Multichannel Experiment** | 5.1 / 7.1 on or off, default speaker position | both |
+| **I2S Playout** | BCLK / LRCK / DATA / MCLK GPIOs, output latency of your DAC, wired latency test; web admin password | speakers (password both) |
+| **Amplifier Power Control** | amplifier enable GPIO and level | speakers |
+| **RGB Audio/VU LED** | LED on/off and GPIO | both |
+| **AirPlay Logs and Diagnostics** | log detail | both |
 
 Every speaker runs the same firmware: its role is set later on the Gateway's
 page.
 
-### 4. Build and flash
+### 5. Build and flash
 
-Connect a board over USB. **Speakers** (repeat the flash step for every
-speaker):
+Connect a board over USB.
+
+**Speakers** (repeat for every speaker):
 
 ```bash
-idf.py -B build_speaker -D SDKCONFIG=build_speaker/sdkconfig build
+cd speaker
+idf.py -p /dev/cu.usbmodem101 build flash monitor
 ```
 
-```bash
-idf.py -B build_speaker -D SDKCONFIG=build_speaker/sdkconfig -p /dev/cu.usbmodem101 flash monitor
-```
-
-**Gateway** (delete an older `build_gateway/sdkconfig` first, so the Gateway
-defaults apply):
+**Gateway**, from the repository folder:
 
 ```bash
-idf.py -B build_gateway -D SDKCONFIG=build_gateway/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.gateway" build
-```
-
-```bash
-idf.py -B build_gateway -D SDKCONFIG=build_gateway/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.gateway" -p /dev/cu.usbmodem101 flash monitor
+idf.py -p /dev/cu.usbmodem101 build flash monitor
 ```
 
 On macOS list the ports with `ls /dev/cu.*`; on Windows the port is `COMx`,
 on Linux usually `/dev/ttyACM0`. The Gateway's log goes to its USB port
-(USB Serial/JTAG).
+(USB Serial/JTAG); a speaker's log goes to UART0 (GPIO 43/44) and to its
+`/logs` page.
 
-### 5. Updates
+### 6. Updates
 
 Later versions can be installed **over Wi-Fi**: on the board's main page,
-**Firmware Update** → choose `build_speaker/airplay-esp32_<version>.bin` for
-a speaker or `build_gateway/airplay-esp32_<version>.bin` for the Gateway →
+**Firmware Update** → choose `speaker/build/airplay-speaker_<version>.bin`
+for a speaker or `build/airplay-gateway_<version>.bin` for the Gateway →
 **Upload Firmware**. The web interface is part of the firmware and is updated
 with it.
 
@@ -388,18 +404,13 @@ with it.
    opens by itself (or go to `http://192.168.4.1/`). Choose your network,
    enter the password, **Connect to WiFi**.
 2. **Name the boards.** Find each IP address in your router (or the serial
-   log), open `http://<board-ip>/` and set **AirPlay Device Name**. The
+   log), open `http://<board-ip>/` and set its name (**AirPlay Device Name**
+   on the Gateway, **Speaker Name** on a speaker). The
    Gateway's name is what the Apple TV shows; clear speaker names
    (*Front Left*, *Centre*, …) make the speakers page easy to read.
-3. **Switch each speaker to Surround mode.** On the speaker's own page press
-   **Switch to Surround mode** in the **Surround Mode** card. The speaker
-   restarts, disappears from AirPlay and connects to the Gateway. The same
-   from a terminal:
-
-   ```bash
-   curl -X POST http://SPEAKER-IP/api/surround -d '{"enabled":true}'
-   ```
-
+3. **Speakers connect by themselves.** A speaker finds the Gateway on the
+   network and shows up on the Gateway's speakers page; there is nothing to
+   switch on.
 4. **Give every speaker its role.** Open the Gateway's page
    `http://<gateway-ip>/speakers` (or **Open Speakers** on its main page),
    pick a role, level and delay for each speaker, **Save**.
@@ -452,7 +463,18 @@ The Gateway has no audio output, so it has no EQ or latency cards.
 
 ### Gateway: speakers page (`/speakers`)
 
-One card per connected speaker:
+<a href="images/speakers-page-room.png"><img src="images/speakers-page-room.png" alt="Speakers page with the room map and three speakers playing a stereo stream" width="100%"></a>
+
+At the top, a **room map** seen from above: the screen at the top, you in
+the middle and all eight positions around you. An empty position is dashed,
+a position with a speaker is outlined, and a speaker that is playing glows.
+Two speakers on the same position are marked orange. Click a position to
+jump to its speaker. Above the map: what is playing now
+(`AAC · 48 kHz · Stereo`) and how many positions are taken.
+
+<a href="images/speakers-page-tiles.png"><img src="images/speakers-page-tiles.png" alt="Speaker tiles with role, level, delay and live status" width="100%"></a>
+
+Below it, one tile per connected speaker, side by side:
 
 | Field | What it does |
 |---|---|
@@ -470,8 +492,8 @@ role.
 
 | Card | What it does |
 |---|---|
-| **Surround Mode** | follow the Gateway (Surround mode) or be a standalone AirPlay receiver; the speaker restarts |
-| **WiFi Network / Device Settings** | network and name |
+| **Surround Speaker** | a reminder that role, level and delay are set on the Gateway's page |
+| **WiFi Network / Device Settings** | network, and the speaker's name shown on the Gateway's page |
 | **Output Latency** | delay of your hardware after the ESP (DAC, DSP), so all speakers stay in sync; *Measure* runs a wired loopback test |
 | **Firmware Update / System** | OTA update, board status, restart |
 | **Audio EQ / System Logs / WiFi Speedtest** | links to the pages below |
@@ -481,7 +503,6 @@ role.
 | Card | What it does |
 |---|---|
 | **Surround speaker (5.1 / 7.1)** | role of this speaker (the same setting as on the Gateway's page; a change here shows there too) |
-| **Source** | stereo / mono / left / right routing in standalone mode (no effect on surround: both outputs carry the chosen speaker) |
 | **Loudness** | ISO 226 loudness compensation: restores bass and treble at low volume |
 | **Left / Right Output Filters** | two independent chains of up to **24 biquad filters** each: peak, low-pass, high-pass, band-pass, notch, low shelf, high shelf; a **preamp** and a **mute** button per output |
 | **Apply & Save** | applies live and stores in flash |
@@ -495,16 +516,6 @@ role.
 **Security:** with a **Web UI admin password** set in `menuconfig`, firmware
 updates, restart, Wi-Fi and name changes and the latency test require the
 user `admin` and that password.
-
-## Standalone mode
-
-Switch a speaker back (**Switch to standalone** in its **Surround Mode** card,
-or `{"enabled":false}`) and it is an ordinary AirPlay 2 receiver again:
-visible to every Apple device, with pairing, EQ, loudness, latency
-compensation and OTA. In this mode it can still play one surround channel on
-its own: set its position on its `/eq` page and add several boards to an
-Apple TV audio group. The Apple TV then drives each one directly over PTP,
-without a Gateway.
 
 ## Technical details
 
@@ -558,8 +569,7 @@ works with 5.1 content.
 With a stereo stream every speaker decodes both channels and takes what its
 role needs: **Front L / R** play left / right, **Subwoofer** and **Mono mix**
 play (L + R) / 2, **Centre, Side and Rear** stay silent. 5.1 and 7.1 streams
-are never touched by this. A speaker in standalone mode plays plain stereo,
-as before.
+are never touched by this.
 
 ### Decoding and signal path (on each speaker)
 
@@ -591,8 +601,8 @@ Apple TV's time through the access point:
 3. A speaker looks up its own local time at that TSF and gets the offset to
    the Apple TV's clock. Because the message names a TSF moment rather than
    "now", its delay over Wi-Fi does not matter.
-4. From there each speaker runs the same playback engine a standalone
-   receiver uses: it plays every sample at the scheduled time, minus its
+4. From there each speaker runs the playback engine of an AirPlay 2
+   receiver: it plays every sample at the scheduled time, minus its
    **output latency**, plus its **delay** from the speakers page, and tunes
    its I2S clock live to follow the Apple TV.
 
@@ -617,6 +627,7 @@ once.
 | Audio buffer | none (TCP backpressure) | 6 MB compressed stream buffer in PSRAM |
 | Decode task stack | — | 20 KiB in PSRAM (deepest use ~11 KiB) |
 | Free PSRAM during 7.1 | — | ~400 KiB |
+| Firmware image | ~1.26 MB | ~1.79 MB (no AirPlay receiver code) |
 
 | Board | Core 0 | Core 1 |
 |---|---|---|
@@ -626,21 +637,23 @@ once.
 The FDK changes (single-channel synthesis, 32-bit output, hardware bit
 counting on the ESP32-S3, element skipping, smaller buffers, lazy limiter)
 are listed in
-[`components/fdk_aac/MODIFICATIONS.md`](components/fdk_aac/MODIFICATIONS.md).
+[`speaker/components/fdk_aac/MODIFICATIONS.md`](speaker/components/fdk_aac/MODIFICATIONS.md).
 
 ### Under the hood
 
 | Part | Where | What it does |
 |---|---|---|
-| AirPlay front end | `main/rtsp`, `main/hap`, `main/network` | mDNS, pairing, RTSP, PTP; the same code in both firmwares |
-| Gateway proxy | `main/surround/gw_proxy.c` | implements the audio engine API on the Gateway and forwards each call (`FWD …` in the log) |
-| Speaker registry | `main/surround/gw_speakers.c` | control link on port 7100 (`_apsurround._tcp`), late joins, settings, status, TIME messages |
-| Buffered relay | `main/surround/gw_relay.c` | copies the TCP audio stream to every speaker, paced by the slowest (`RELAY …`) |
-| Realtime relay | `main/surround/gw_rt_relay.c` | copies UDP audio and sync packets, passes retransmit requests on (`RT RELAY …`) |
-| Time | `main/surround/tsf_fit.c`, `spk_time.c` | TSF line fits on both sides; feeds the speaker's clock (`TIME …`) |
-| Speaker link | `main/surround/spk_link.c` | finds the Gateway, runs every forwarded call locally (`CMD …`) |
-| Protocol | `main/surround/surround_proto.h` | message types and payloads, versioned |
-| Audio engine | `main/audio` | FIFO, FDK AAC / ALAC decode, PCM store, I2S playout and servo |
+| AirPlay receiver | `main/rtsp`, `main/hap`, `main/plist`, `main/mdns_airplay.c` | mDNS, pairing, RTSP; Gateway only (a speaker is not an AirPlay receiver) |
+| Shared services | `common/network` | Wi-Fi, web server core, OTA, logs, the PTP clock (full on the Gateway, fed by the Gateway on a speaker) |
+| Web pages | `main/web_gateway.c`, `speaker/main/web_speaker.c` | each firmware's own pages and APIs on top of the shared web server |
+| Gateway proxy | `main/gw_proxy.c` | implements the audio engine API on the Gateway and forwards each call (`FWD …` in the log) |
+| Speaker registry | `main/gw_speakers.c` | control link on port 7100 (`_apsurround._tcp`), late joins, settings, status, TIME messages |
+| Buffered relay | `main/gw_relay.c` | copies the TCP audio stream to every speaker, paced by the slowest (`RELAY …`) |
+| Realtime relay | `main/gw_rt_relay.c` | copies UDP audio and sync packets, passes retransmit requests on (`RT RELAY …`) |
+| Time | `common/surround/tsf_fit.c`, `speaker/main/spk_time.c` | TSF line fits on both sides; feeds the speaker's clock (`TIME …`) |
+| Speaker link | `speaker/main/spk_link.c` | finds the Gateway, runs every forwarded call locally (`CMD …`) |
+| Protocol | `common/surround/surround_proto.h` | message types and payloads, versioned |
+| Audio engine | `speaker/main/audio` | FIFO, FDK AAC / ALAC decode, PCM store, I2S playout and servo |
 
 ## Measuring sync
 
@@ -689,7 +702,8 @@ are listed in
 
 | Problem | Check |
 |---|---|
-| A speaker does not appear on `/speakers` | It is in **Surround mode**; same Wi-Fi as the Gateway; its log says `connected to Gateway …`. If mDNS is filtered, set **Surround Build Role → Gateway IPv4 address** on the speaker. |
+| A speaker does not appear on `/speakers` | Same Wi-Fi as the Gateway; its log says `connected to Gateway …`. If mDNS is filtered, set **Surround Build Role → Gateway IPv4 address** on the speaker. |
+| A speaker still shows up as an AirPlay speaker on an iPhone | It runs an old firmware from before the Gateway design: update it. |
 | A speaker connects and drops again | `protocol version …, Gateway speaks …` in the Gateway log: update both to the same firmware. |
 | A speaker is silent after joining | Wait for the next skip or seek (`speaker … joins at this FLUSH`). Then its role on `/speakers`, the **Mute** buttons on its EQ page, the PCM5102A **XSMT** jumper, the BCLK / LRCK / DATA wiring. |
 | `no common TSF, no sender time` on a speaker | It is on another access point (or mesh node) than the Gateway. |
@@ -708,6 +722,7 @@ Every board streams its log to `http://<board-ip>/logs`. Useful lines:
 | `RT RELAY data … pkts -> N speakers \| NACK …` | Gateway | realtime audio and retransmit requests |
 | `control connection from …` / `speaker … joins at this FLUSH` | Gateway | a speaker connected / started playing |
 | `TIME tsf fit 64 samples -31.0 ppm rms 4.5 us … locked=1` | both | TSF fit quality and the Apple TV clock's state |
+| `ROLE: Surround speaker (follows the Gateway)` | speaker | boot banner of the speaker firmware |
 | `connected to Gateway …` | speaker | the control link is up |
 | `CMD start_buffered: ESP_OK, audio port …` | speaker | a forwarded instruction run locally |
 | `sender time from the Gateway: gm=…` | speaker | the speaker has the Apple TV's clock |
@@ -722,11 +737,11 @@ afterwards).
 
 ## Licenses and credits
 
-- **Fraunhofer FDK AAC** (`components/fdk_aac/fdk-aac`) is under the
-  Fraunhofer FDK license, [`NOTICE`](components/fdk_aac/fdk-aac/NOTICE). The
+- **Fraunhofer FDK AAC** (`speaker/components/fdk_aac/fdk-aac`) is under the
+  Fraunhofer FDK license, [`NOTICE`](speaker/components/fdk_aac/fdk-aac/NOTICE). The
   copy here is a **Third-Party Modified Version of the Fraunhofer FDK AAC
   Codec Library for Android**; the changes and their dates are listed in
-  [`MODIFICATIONS.md`](components/fdk_aac/MODIFICATIONS.md). The license
+  [`MODIFICATIONS.md`](speaker/components/fdk_aac/MODIFICATIONS.md). The license
   allows redistribution in source and binary form without copyright fees but
   **grants no patent rights**: AAC patent licenses are available through Via
   Licensing or the patent owners.

@@ -632,8 +632,8 @@ esp_err_t spk_link_start(void) {
   ESP_LOGI(TAG, "Surround tuning: trim %.1f dB, delay %" PRId32 " us",
            s_trim_db10 / 10.0, s_delay_us);
 
-  /* mDNS is only a client here: mdns_airplay_init() does not run in
-   * Surround mode, so the speaker is not advertised to AirPlay senders. */
+  /* mDNS is only a client here: a speaker is not an AirPlay receiver and is
+   * not advertised to AirPlay senders. */
   esp_err_t err = mdns_init();
   if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
     ESP_LOGE(TAG, "mdns_init failed: %s", esp_err_to_name(err));

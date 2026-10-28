@@ -9,21 +9,21 @@ body{font-family:-apple-system,system-ui,sans-serif;background:linear-gradient(1
 h1{font-size:24px;margin-bottom:8px}
 .sub{color:#888;font-size:13px;margin-bottom:20px}
 .card{background:rgba(255,255,255,0.05);border-radius:12px;padding:18px;margin-bottom:14px;border:1px solid rgba(255,255,255,0.1)}
-.card h2{font-size:15px;color:#e94560;margin-bottom:12px}
+.card h2{font-size:15px;color:#8b7bff;margin-bottom:12px}
 .row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13px}
 .row .lbl{color:#888}
 .row .val{font-weight:600;font-family:ui-monospace,monospace}
-.btn{padding:10px 16px;border:none;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;background:#e94560;color:#fff;width:100%;margin-top:10px}
+.btn{padding:10px 16px;border:none;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;background:#8b7bff;color:#fff;width:100%;margin-top:10px}
 .btn:disabled{opacity:0.5;cursor:not-allowed}
 .btn.sec{background:rgba(255,255,255,0.1)}
 select,input{width:100%;padding:10px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#fff;font-size:13px;margin-bottom:8px}
 .bar{height:6px;background:rgba(0,0,0,0.3);border-radius:3px;overflow:hidden;margin-top:8px}
-.bar>div{height:100%;background:#e94560;width:0%;transition:width 0.1s}
-.big{font-size:28px;font-weight:700;color:#e94560}
+.bar>div{height:100%;background:#8b7bff;width:0%;transition:width 0.1s}
+.big{font-size:28px;font-weight:700;color:#8b7bff}
 .unit{font-size:14px;color:#888;margin-left:4px}
 .log{font-family:ui-monospace,monospace;font-size:11px;color:#888;max-height:140px;overflow-y:auto;padding:8px;background:rgba(0,0,0,0.3);border-radius:6px;white-space:pre-wrap}
-a{color:#e94560}
-</style></head><body>
+a{color:#8b7bff}
+</style><style>/* theme */:root{--bg:#000;--panel:#0f0f10;--panel2:#17171a;--line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.16);--text:#f4f4f5;--muted:#8d8d93;--accent:#8b7bff;--glow:linear-gradient(90deg,#3b5bff,#8b5cff 50%,#ff3d7f)}body{font-family:-apple-system,'SF Pro Display','Helvetica Neue',system-ui,sans-serif;-webkit-font-smoothing:antialiased;background:var(--bg) radial-gradient(1200px 500px at 50% -200px,rgba(110,90,255,.16),transparent 70%) no-repeat;color:var(--text)}a{color:var(--accent)}.header h1,h1{font-weight:300;letter-spacing:.5px}.header::after{content:'';display:block;width:56px;height:3px;margin:14px auto 0;border-radius:2px;background:var(--glow)}.header p,.hint,.sub{color:var(--muted)}.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;backdrop-filter:none}.card h2{color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1.6px}.btn{border-radius:999px;font-weight:600;letter-spacing:.3px;font-family:inherit}.btn-primary,.btn:not(.btn-secondary):not(.btn-danger):not(.sec){background:#fff;color:#000}.btn-primary:hover,.btn:not(.btn-secondary):not(.btn-danger):not(.sec):hover{background:#dcdcdc}.btn-secondary,.btn.sec{background:transparent;color:var(--text);border:1px solid var(--line2)}.btn-secondary:hover,.btn.sec:hover{border-color:#fff}.btn-danger{background:transparent;color:#ff8a80;border:1px solid rgba(255,69,58,.5)}input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]),select{background:#0a0a0b;border:1px solid var(--line2);border-radius:10px;color:var(--text);font-family:inherit}input:focus,select:focus{border-color:var(--accent)}input[type=checkbox],input[type=range]{accent-color:var(--accent)}.msg.ok{background:rgba(48,209,88,.12);color:#7ee2a0}.msg.err{background:rgba(255,69,58,.14);color:#ff8a80}.msg.info{background:rgba(139,123,255,.12);color:#c4b2ff}.big{color:#fff;font-weight:300}.bar>div{background:var(--glow)}.row .lbl,.unit{color:var(--muted)}.log{background:var(--panel2)}</style></head><body>
 <div class='wrap'>
 <h1>WiFi Speedtest</h1>
 <p class='sub'>Measure latency and throughput between this browser and the device.</p>

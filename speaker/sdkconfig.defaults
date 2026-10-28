@@ -1,0 +1,4 @@
+# Speaker build: applied after ../sdkconfig.defaults (and its .esp32s3 file).
+# The Speaker role is the Kconfig default; only the paths that are relative
+# to the project folder need the folder above.
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../partitions.csv"

@@ -1,6 +1,6 @@
-# Surround Gateway build: applied after sdkconfig.defaults (see README).
-#   idf.py -B build_gateway -D SDKCONFIG=build_gateway/sdkconfig \
-#     -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.gateway" build
+# Surround Gateway build: applied after sdkconfig.defaults by the project in
+# this folder (CMakeLists.txt), so a plain `idf.py build flash` here builds
+# the Gateway. The speakers are built in speaker/.
 CONFIG_AIRPLAY_ROLE_GATEWAY=y
 
 # No amplifier on the Gateway.

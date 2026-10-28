@@ -14,8 +14,10 @@ Fraunhofer FDK AAC Codec Library for Android**, not the original library.
 
 All changes are in `libAACdec`, each one marked in the source with the comment
 `airplay-esp32 patch`, and each changed file carries a dated notice under its
-header. The unmodified import is git commit `8667b02`; `git diff 8667b02 --
-components/fdk_aac/fdk-aac` shows every change.
+header. The unmodified import is git commit `8667b02`, in
+`components/fdk_aac/fdk-aac` (moved to `speaker/components/fdk_aac` later);
+`git diff -M 8667b02 -- components/fdk_aac/fdk-aac speaker/components/fdk_aac/fdk-aac`
+shows every change.
 
 | File | Change |
 |---|---|

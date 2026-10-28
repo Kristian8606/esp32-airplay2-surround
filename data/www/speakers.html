@@ -2,23 +2,115 @@
 <meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
 <title>Surround Speakers</title>
 <style>
-*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,system-ui,sans-serif;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);min-height:100vh;padding:20px;color:#fff}.wrap{max-width:560px;margin:0 auto}.header{text-align:center;padding:24px 0}.header h1{font-size:26px;font-weight:600;margin-bottom:8px}.header p{color:#888;font-size:14px}.header a{color:#e94560;text-decoration:none}.card{background:rgba(255,255,255,.05);border-radius:16px;padding:18px;margin-bottom:14px;border:1px solid rgba(255,255,255,.1)}.card.warn{border-color:#e9a645}.top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:6px}.top h2{font-size:16px;font-weight:600;color:#e94560;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.badge{font-size:11px;padding:3px 8px;border-radius:10px;background:rgba(255,255,255,.1);white-space:nowrap}.badge.on{background:#1b4332}.badge.wait{background:#5c4a1a}.meta{font-size:12px;color:#888;margin-bottom:14px}.meta a{color:#aaa}.row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}.fg label{display:block;font-size:11px;color:#888;margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px}select,input{width:100%;padding:10px;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#fff;font-size:14px}select:focus,input:focus{outline:none;border-color:#e94560}.btn{padding:10px 18px;border:none;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;background:#e94560;color:#fff}.btn:disabled{opacity:.5;cursor:not-allowed}.actions{display:flex;gap:10px;align-items:center;margin-top:12px}.note{font-size:12px;color:#e9a645;margin-top:10px}.msg{font-size:13px;color:#888}.msg.ok{color:#6c6}.msg.err{color:#e66}.play{display:flex;flex-wrap:wrap;gap:6px;margin:-4px 0 14px}.chip{font-size:11px;padding:3px 9px;border-radius:10px;color:#fff;white-space:nowrap}.c-fmt{background:#2b6cb0}.c-71{background:#c05621}.c-51{background:#b7791f}.c-st{background:#2c7a7b}.c-mono{background:#4a5568}.c-ch{background:#276749}.c-rt{background:#553c9a}.c-buf{background:#3c366b}.c-dim{background:rgba(255,255,255,.1);color:#ccc}.c-ok{background:rgba(39,103,73,.35);color:#9ae6b4}.c-warn{background:rgba(183,121,31,.35);color:#fbd38d}.c-bad{background:rgba(155,44,44,.45);color:#feb2b2}.empty{text-align:center;color:#888;font-size:14px;line-height:1.6}@media(max-width:420px){.row{grid-template-columns:1fr}}
+:root{--bg:#000;--panel:#0f0f10;--panel2:#17171a;--line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.16);--text:#f4f4f5;--muted:#8d8d93;--accent:#8b7bff;--glow:linear-gradient(90deg,#3b5bff,#8b5cff 50%,#ff3d7f)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,'SF Pro Display','Helvetica Neue',system-ui,sans-serif;-webkit-font-smoothing:antialiased;background:var(--bg) radial-gradient(1200px 500px at 50% -200px,rgba(110,90,255,.16),transparent 70%) no-repeat;min-height:100vh;padding:20px 16px 40px;color:var(--text)}
+a{color:var(--accent);text-decoration:none}
+.wrap{max-width:1180px;margin:0 auto}
+.header{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;padding:18px 0 22px}
+.header h1{font-size:30px;font-weight:300;letter-spacing:.5px}
+.header h1 b{font-weight:600}
+.header .bar{width:56px;height:3px;border-radius:2px;background:var(--glow);margin-top:12px}
+.header p{color:var(--muted);font-size:13px;margin-top:10px}
+.now{display:flex;gap:22px;flex-wrap:wrap}
+.stat label{display:block;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1.6px;margin-bottom:4px}
+.stat span{font-size:18px;font-weight:500}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px}
+.ptitle{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:1.6px;margin-bottom:12px}
+/* Room: a top view, screen at the top, the listener in the middle. */
+.room{position:relative;width:100%;max-width:560px;margin:0 auto;aspect-ratio:16/10}
+.room .floor{position:absolute;inset:6% 4% 2%;border:1px solid var(--line);border-radius:18px;background:radial-gradient(circle at 50% 58%,rgba(139,123,255,.10),transparent 55%)}
+.room .screen{position:absolute;left:32%;right:32%;top:1.5%;height:5px;border-radius:3px;background:var(--glow);box-shadow:0 0 18px rgba(139,92,255,.6)}
+.room .seat{position:absolute;left:50%;top:60%;transform:translate(-50%,-50%);width:46px;height:30px;border-radius:10px 10px 6px 6px;border:1px solid var(--line2);color:var(--muted);font-size:9px;display:flex;align-items:center;justify-content:center;letter-spacing:1px}
+.node{position:absolute;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:5px;cursor:default;width:96px}
+.node .dot{width:44px;height:44px;border-radius:50%;border:1px dashed rgba(255,255,255,.22);color:#5d5d63;font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:center;background:#08080a;transition:all .25s;position:relative}
+.node .who{font-size:10px;color:var(--muted);max-width:96px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:12px}
+.node.on{cursor:pointer}
+.node.on .dot{border:1px solid rgba(255,255,255,.75);color:#fff}
+.node.live .dot{border:none;color:#fff;background:#141418;box-shadow:0 0 0 2px #8b5cff,0 0 22px rgba(139,92,255,.55)}
+.node.dup .dot{box-shadow:0 0 0 2px #f5a524}
+.node .n{position:absolute;top:-4px;right:-6px;background:#f5a524;color:#000;border-radius:8px;font-size:9px;padding:1px 5px}
+.mixlist{text-align:center;color:var(--muted);font-size:12px;margin-top:6px;min-height:15px}
+/* Speaker tiles */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;margin-top:14px}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;position:relative;overflow:hidden;transition:border-color .3s,box-shadow .3s}
+.tile.live::before{content:'';position:absolute;left:0;right:0;top:0;height:2px;background:var(--glow)}
+.tile.warn{border-color:rgba(245,165,36,.55)}
+.tile.flash{box-shadow:0 0 0 2px var(--accent)}
+.t-head{display:flex;gap:12px;align-items:center;margin-bottom:12px}
+.rb{flex:none;width:46px;height:46px;border-radius:12px;background:var(--panel2);border:1px solid var(--line2);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;letter-spacing:.5px}
+.tile.live .rb{background:#fff;color:#000;border-color:#fff}
+.t-name{min-width:0;flex:1}
+.t-name h2{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.t-name .meta{font-size:11px;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.badge{flex:none;font-size:10px;padding:4px 9px;border-radius:999px;border:1px solid var(--line2);color:var(--muted);text-transform:uppercase;letter-spacing:1px;white-space:nowrap}
+.badge.on{border-color:rgba(48,209,88,.5);color:#7ee2a0}
+.badge.wait{border-color:rgba(245,165,36,.55);color:#f7c46c}
+.play{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:14px;min-height:22px}
+.chip{font-size:11px;padding:3px 9px;border-radius:999px;white-space:nowrap;border:1px solid transparent}
+.c-fmt{background:rgba(64,120,255,.14);color:#9dbaff}
+.c-71{background:rgba(255,61,127,.14);color:#ff8fb5}
+.c-51{background:rgba(255,150,60,.14);color:#ffbd85}
+.c-st{background:rgba(40,200,200,.12);color:#7fe0e0}
+.c-mono{background:rgba(255,255,255,.07);color:#c8c8cc}
+.c-ch{background:#fff;color:#000;font-weight:600}
+.c-rt{background:rgba(139,92,255,.16);color:#c4b2ff}
+.c-buf{background:rgba(255,255,255,.06);color:#c8c8cc}
+.c-dim{background:transparent;border-color:var(--line2);color:var(--muted)}
+.c-ok{background:rgba(48,209,88,.12);color:#7ee2a0}
+.c-warn{background:rgba(245,165,36,.14);color:#f7c46c}
+.c-bad{background:rgba(255,69,58,.16);color:#ff8a80}
+.ctl{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ctl .full{grid-column:1/-1}
+.fg label{display:block;font-size:10px;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:1.2px}
+select,input{width:100%;padding:10px 12px;background:#0a0a0b;border:1px solid var(--line2);border-radius:10px;color:var(--text);font-size:14px;font-family:inherit}
+select:focus,input:focus{outline:none;border-color:var(--accent)}
+select:disabled,input:disabled{opacity:.45}
+.actions{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap}
+.btn{padding:9px 22px;border:none;border-radius:999px;font-size:13px;font-weight:600;letter-spacing:.3px;cursor:pointer;background:#fff;color:#000;font-family:inherit}
+.btn:hover{background:#dcdcdc}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.links{margin-left:auto;display:flex;gap:6px}
+.links a{font-size:12px;color:var(--text);border:1px solid var(--line2);border-radius:999px;padding:6px 12px}
+.links a:hover{border-color:#fff}
+.note{font-size:12px;color:#f7c46c;margin-top:10px}
+.msg{font-size:12px;color:var(--muted)}
+.msg.ok{color:#7ee2a0}.msg.err{color:#ff8a80}
+.empty{grid-column:1/-1;text-align:center;color:var(--muted);font-size:14px;line-height:1.7;padding:34px 18px}
+.help{margin-top:14px;color:var(--muted);font-size:12px;line-height:1.7}
+.help b{color:var(--text);font-weight:500}
+@media(max-width:560px){.header h1{font-size:24px}.node{width:70px}.node .dot{width:36px;height:36px;font-size:11px}.node .who{font-size:9px;max-width:70px}.room{aspect-ratio:1/1}.room .seat{top:58%}}
 </style></head><body><div class='wrap'>
-<div class='header'><h1>Surround Speakers</h1><p>Role, level and delay of each speaker. <a href='/'>Back</a></p></div>
-<div id='list'><div class='card empty'>Loading...</div></div>
-<div class='card'><p class='msg'>A stereo song plays on the front pair and the subwoofer only; centre and surrounds stay silent (5.1 and 7.1 play every role). Level: lower the louder speakers, 0 dB is the loudest. Delay: play later; 1 m of extra distance to the listener is about 2.9 ms, so delay the closer speakers. The EQ is set on each speaker's own page. A speaker shows up here after it is switched to Surround mode.</p></div>
+<div class='header'>
+ <div><h1><b>Surround</b> Speakers</h1><div class='bar'></div><p>Role, level and delay of every speaker. <a href='/'>&larr; Back</a></p></div>
+ <div class='now'><div class='stat'><label>Now playing</label><span id='now-fmt'>&mdash;</span></div><div class='stat'><label>Speakers</label><span id='now-count'>&mdash;</span></div></div>
+</div>
+<div class='panel'><div class='ptitle'>Room</div><div class='room' id='room'><div class='floor'></div><div class='screen'></div><div class='seat'>YOU</div></div><div class='mixlist' id='mixlist'></div></div>
+<div class='grid' id='list'><div class='panel empty'>Loading...</div></div>
+<div class='panel help'><b>Stereo</b> plays on the front pair and the subwoofer only; centre and surrounds stay silent (5.1 and 7.1 play every role). <b>Level:</b> lower the louder speakers, 0 dB is the loudest. <b>Delay:</b> play later; 1 m of extra distance to the listener is about 2.9 ms, so delay the closer speakers. The <b>EQ</b> is set on each speaker's own page. A speaker shows up here after it is switched to Surround mode.</div>
 </div><script>
 const ROLES=[[-1,'Mono mix'],[0,'Front Left (L)'],[1,'Front Right (R)'],[2,'Centre (C)'],[3,'Subwoofer (LFE)'],[4,'Side Left (Ls)'],[5,'Side Right (Rs)'],[6,'Rear Left (Lrs)'],[7,'Rear Right (Rrs)']];
-const cards={};
+const SHORT={'-1':'MIX',0:'FL',1:'FR',2:'C',3:'SUB',4:'SL',5:'SR',6:'RL',7:'RR'};
+/* Room positions in % of the room box (top view, screen at the top). */
+const SPOTS=[[0,30,15],[2,50,13],[1,70,15],[3,11,17],[4,8,56],[5,92,56],[6,24,90],[7,76,90]];
+const cards={},nodes={};
 function esc(t){return String(t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function key(mac){return mac.replace(/:/g,'');}
+function short(ch){return ch===undefined?'?':SHORT[ch]||'?';}
+function buildRoom(){
+ const room=document.getElementById('room');
+ SPOTS.forEach(([ch,x,y])=>{const n=document.createElement('div');n.className='node';n.style.left=x+'%';n.style.top=y+'%';
+  n.innerHTML="<div class='dot'>"+short(ch)+"</div><div class='who'></div>";room.appendChild(n);nodes[ch]={el:n,who:n.querySelector('.who'),dot:n.querySelector('.dot'),keys:[]};
+  n.onclick=()=>{const k=nodes[ch].keys[0];if(k)focusCard(k);};});
+}
+function focusCard(k){const c=cards[k];if(!c)return;c.el.scrollIntoView({behavior:'smooth',block:'center'});c.el.classList.add('flash');setTimeout(()=>c.el.classList.remove('flash'),1200);}
 function makeCard(s){
- const k=key(s.mac),d=document.createElement('div');d.className='card';d.id='c'+k;
- d.innerHTML="<div class='top'><h2></h2><span class='badge'></span></div><div class='meta'></div><div class='play'></div>"+
-  "<div class='row'><div class='fg'><label>Role</label><select>"+ROLES.map(r=>"<option value='"+r[0]+"'>"+r[1]+"</option>").join('')+"</select></div>"+
+ const k=key(s.mac),d=document.createElement('div');d.className='tile';d.id='c'+k;
+ d.innerHTML="<div class='t-head'><div class='rb'></div><div class='t-name'><h2></h2><div class='meta'></div></div><span class='badge'></span></div><div class='play'></div>"+
+  "<div class='ctl'><div class='fg full'><label>Role</label><select>"+ROLES.map(r=>"<option value='"+r[0]+"'>"+r[1]+"</option>").join('')+"</select></div>"+
   "<div class='fg'><label>Level (dB)</label><input type='number' class='trim' min='-30' max='0' step='0.5'></div>"+
   "<div class='fg'><label>Delay (ms)</label><input type='number' class='delay' min='0' max='50' step='0.1'></div></div>"+
-  "<div class='actions'><button class='btn'>Save</button><span class='msg'></span></div><div class='note' style='display:none'></div>";
+  "<div class='actions'><button class='btn'>Save</button><span class='msg'></span><span class='links'></span></div><div class='note' style='display:none'></div>";
  const c={el:d,dirty:false,mac:s.mac,sel:d.querySelector('select'),trim:d.querySelector('.trim'),delay:d.querySelector('.delay'),btn:d.querySelector('.btn'),msg:d.querySelector('.msg'),note:d.querySelector('.note')};
  [c.sel,c.trim,c.delay].forEach(x=>x.addEventListener('input',()=>{c.dirty=true;c.msg.textContent='';}));
  c.btn.onclick=()=>save(c);
@@ -34,17 +126,22 @@ function stereoRoute(role){
  if(role===3||role===-1||role===undefined)return 'mono mix';
  return 'silent';
 }
+/* True while the speaker actually makes sound. */
+function audible(p,role){
+ if(!p||!p.active||!p.playing)return false;
+ return !(p.label===undefined&&p.channels<=2&&stereoRoute(role)==='silent');
+}
 function playHtml(p,role){
  if(!p)return chip('c-dim','no status yet');
  if(!p.active)return chip('c-dim','idle')+(p.time?'':chip('c-dim','no sender time'));
  let h='';
+ if(p.label!==undefined)h+=chip('c-ch',p.output_channel<0?'plays: mono mix':'plays: '+p.label);
+ else if(p.channels>2)h+=chip('c-ch','plays: mix');
+ else{const r=stereoRoute(role);h+=chip(r==='silent'?'c-dim':'c-ch','plays: '+r);}
  const fmt=[p.codec||'?',p.sample_rate?rate(p.sample_rate):''];
  if(p.bits)fmt.push(p.bits+'-bit');
  h+=chip('c-fmt',fmt.filter(Boolean).join(' · '));
  const l=layout(p.channels);h+=chip(l[1],l[0]);
- if(p.label!==undefined)h+=chip('c-ch',p.output_channel<0?'plays: mono mix':'plays: '+p.label);
- else if(p.channels>2)h+=chip('c-ch','plays: mix');
- else{const r=stereoRoute(role);h+=chip(r==='silent'?'c-dim':'c-ch','plays: '+r);}
  h+=chip(p.stream==='realtime'?'c-rt':'c-buf',p.stream==='realtime'?'Realtime':'Buffered');
  if(!p.playing)h+=chip('c-dim','paused');
  if(p.sync_ms!==undefined){const a=Math.abs(p.sync_ms);h+=chip(a<0.5?'c-ok':a<2?'c-warn':'c-bad','sync '+(p.sync_ms>=0?'+':'')+p.sync_ms.toFixed(2)+' ms · I2S '+(p.i2s_ppm>=0?'+':'')+p.i2s_ppm+' ppm');}
@@ -56,9 +153,12 @@ function playHtml(p,role){
 function update(c,s,dup){
  c.el.querySelector('h2').textContent=s.name||s.ip;
  const b=c.el.querySelector('.badge'),wait=s.state.indexOf('waiting')===0;
- b.textContent=wait?'waits for skip/seek':(s.audio?'playing stream':'connected');b.className='badge '+(wait?'wait':(s.audio?'on':''));
- c.el.querySelector('.meta').innerHTML=esc(s.ip)+' · '+esc(s.mac)+' · fw '+esc(s.firmware)+" · <a href='http://"+esc(s.ip)+"/' target='_blank'>own page</a> · <a href='http://"+esc(s.ip)+"/eq' target='_blank'>EQ</a>";
+ b.textContent=wait?'waits for skip':(s.audio?'streaming':'connected');b.className='badge '+(wait?'wait':(s.audio?'on':''));
+ c.el.querySelector('.meta').textContent=s.ip+' · fw '+s.firmware;
+ c.el.querySelector('.links').innerHTML="<a href='http://"+esc(s.ip)+"/' target='_blank'>Page</a><a href='http://"+esc(s.ip)+"/eq' target='_blank'>EQ</a>";
+ c.el.querySelector('.rb').textContent=short(s.channel);
  c.el.querySelector('.play').innerHTML=playHtml(s.playback,s.channel);
+ c.el.classList.toggle('live',audible(s.playback,s.channel));
  const have=s.channel!==undefined;
  [c.sel,c.trim,c.delay,c.btn].forEach(x=>x.disabled=!have);
  /* Never touch a field that is being edited or is open. */
@@ -70,13 +170,38 @@ function update(c,s,dup){
  c.note.style.display=notes.length?'block':'none';c.note.textContent=notes.join(' ');
  c.el.classList.toggle('warn',notes.length>0);
 }
+function updateRoom(list){
+ const mix=[];
+ for(const ch in nodes){nodes[ch].keys=[];nodes[ch].names=[];nodes[ch].live=false;}
+ list.forEach(s=>{
+  if(s.channel===-1){mix.push(s.name||s.ip);return;}
+  const n=nodes[s.channel];if(!n)return;
+  n.keys.push(key(s.mac));n.names.push(s.name||s.ip);if(audible(s.playback,s.channel))n.live=true;
+ });
+ for(const ch in nodes){const n=nodes[ch],cnt=n.keys.length;
+  n.el.className='node'+(cnt?' on':'')+(n.live?' live':'')+(cnt>1?' dup':'');
+  n.who.textContent=n.names.join(', ');
+  n.dot.innerHTML=short(+ch)+(cnt>1?"<span class='n'>"+cnt+"</span>":'');
+  n.el.title=cnt?n.names.join(', '):'No speaker';
+ }
+ document.getElementById('mixlist').textContent=mix.length?'Mono mix: '+mix.join(', '):'';
+}
+function updateNow(list){
+ const p=(list.find(s=>s.playback&&s.playback.active&&s.playback.playing)||list.find(s=>s.playback&&s.playback.active)||{}).playback;
+ let t='—';
+ if(p){const l=layout(p.channels)[0];t=[p.codec,p.sample_rate?rate(p.sample_rate):'',l].filter(Boolean).join(' · ')+(p.playing?'':' (paused)');}
+ document.getElementById('now-fmt').textContent=t;
+ const roles=new Set(list.filter(s=>s.channel>=0).map(s=>s.channel));
+ document.getElementById('now-count').textContent=list.length+' · '+roles.size+' of 8 positions';
+}
 async function load(){
  let d;try{const r=await fetch('/api/speakers',{cache:'no-store'});d=await r.json();}catch(e){return;}
  const list=document.getElementById('list'),seen={},count={};
  d.speakers.forEach(s=>{if(s.channel!==undefined&&s.channel>=0)count[s.channel]=(count[s.channel]||0)+1;});
- if(!d.speakers.length){list.innerHTML="<div class='card empty'>No speaker connected.<br>Switch a speaker to Surround mode on its own page.</div>";for(const k in cards)delete cards[k];return;}
+ updateRoom(d.speakers);updateNow(d.speakers);
+ if(!d.speakers.length){list.innerHTML="<div class='panel empty'>No speaker connected.<br>Switch a speaker to Surround mode on its own page.</div>";for(const k in cards)delete cards[k];return;}
  const empty=list.querySelector('.empty');if(empty)empty.remove();
- /* Cards never move once shown: moving a node closes an open dropdown and
+ /* Tiles never move once shown: moving a node closes an open dropdown and
   * makes the page jump. Speakers present at the first load come in role
   * order, later ones are added at the end. */
  d.speakers.sort((a,b)=>(a.channel??99)-(b.channel??99)||a.name.localeCompare(b.name)).forEach(s=>{
@@ -91,10 +216,10 @@ async function save(c){
  if(isNaN(body.trim_db)||isNaN(body.delay_ms)){c.msg.className='msg err';c.msg.textContent='Enter numbers';return;}
  c.btn.disabled=true;c.msg.className='msg';c.msg.textContent='Saving...';
  try{const r=await fetch('/api/speakers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();
-  if(d.success){c.dirty=false;c.msg.className='msg ok';c.msg.textContent='Saved on the speaker';setTimeout(load,400);}
+  if(d.success){c.dirty=false;c.msg.className='msg ok';c.msg.textContent='Saved';setTimeout(load,400);}
   else{c.msg.className='msg err';c.msg.textContent=d.error||'Error';}
  }catch(e){c.msg.className='msg err';c.msg.textContent='Error';}
  c.btn.disabled=false;
 }
-load();setInterval(load,3000);
+buildRoom();load();setInterval(load,3000);
 </script></body></html>
