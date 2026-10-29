@@ -42,6 +42,9 @@ a{color:var(--accent);text-decoration:none}
 .tile.live .rb{background:#fff;color:#000;border-color:#fff}
 .t-name{min-width:0;flex:1}
 .t-name h2{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.t-name .meta b{color:var(--text);font-weight:500}
+.t-name .fw{font-size:10px;color:var(--muted);margin-top:2px;font-family:ui-monospace,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.t-name .fw.odd{color:#f7c46c}
 .t-name .meta{font-size:11px;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .badge{flex:none;font-size:10px;padding:4px 9px;border-radius:999px;border:1px solid var(--line2);color:var(--muted);text-transform:uppercase;letter-spacing:1px;white-space:nowrap}
 .badge.on{border-color:rgba(48,209,88,.5);color:#7ee2a0}
@@ -78,18 +81,54 @@ select:disabled,input:disabled{opacity:.45}
 .msg.ok{color:#7ee2a0}.msg.err{color:#ff8a80}
 .empty{grid-column:1/-1;text-align:center;color:var(--muted);font-size:14px;line-height:1.7;padding:34px 18px}
 .help{margin-top:14px;color:var(--muted);font-size:12px;line-height:1.7}
+.cal{margin-top:14px}
+.cal-top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.cal-top h3{font-size:15px;font-weight:600}
+.cal-top p{font-size:12px;color:var(--muted);margin-top:3px}
+.cal-btns{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.btn.sec{background:transparent;color:var(--text);border:1px solid var(--line2)}
+.btn.sec:hover{border-color:#fff;background:transparent}
+.cal-bar{height:4px;border-radius:2px;background:var(--panel2);overflow:hidden;margin:14px 0 8px}
+.cal-bar>div{height:100%;width:0;background:var(--glow);transition:width .4s}
+.cal-msg{font-size:12px;color:var(--muted);min-height:16px;flex:1}
+.cal-row{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.cal-toggle{background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;padding:2px 0;font-family:inherit;white-space:nowrap}
+.cal-toggle:hover{color:var(--text)}
+.cal-toggle .chev{display:inline-block;transition:transform .2s;margin-left:4px}
+.cal-toggle.closed .chev{transform:rotate(-90deg)}
+.cal-msg.err{color:#ff8a80}
+.cal-table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px}
+.cal-table th{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1.2px;font-weight:500;text-align:right;padding:6px 6px}
+.cal-table th:nth-child(-n+2),.cal-table td:nth-child(-n+2){text-align:left}
+.cal-table td{border-top:1px solid var(--line);padding:8px 6px;text-align:right;white-space:nowrap}
+.cal-table .dev{color:var(--muted);font-size:11px;margin-left:6px}
+.cal-table td.note{text-align:left;white-space:normal;color:#f7c46c;font-size:12px}
+.cal-actions{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
 .help b{color:var(--text);font-weight:500}
 @media(max-width:560px){.header h1{font-size:24px}.node{width:70px}.node .dot{width:36px;height:36px;font-size:11px}.node .who{font-size:9px;max-width:70px}.room{aspect-ratio:1/1}.room .seat{top:58%}}
 </style></head><body><div class='wrap'>
 <div class='header'>
- <div><h1><b>Surround</b> Speakers</h1><div class='bar'></div><p>Role, level and delay of every speaker. <a href='/'>&larr; Back</a></p></div>
+ <div><h1><b>Surround</b> Speakers</h1><div class='bar'></div><p>Role, level and delay of every speaker. <a href='/'>&larr; Back</a></p><p id='gw-fw' style='margin-top:4px;font-size:11px'></p></div>
  <div class='now'><div class='stat'><label>Now playing</label><span id='now-fmt'>&mdash;</span></div><div class='stat'><label>Speakers</label><span id='now-count'>&mdash;</span></div></div>
 </div>
 <div class='panel'><div class='ptitle'>Room</div><div class='room' id='room'><div class='floor'></div><div class='screen'></div><div class='seat'>YOU</div></div><div class='mixlist' id='mixlist'></div></div>
+<div class='panel cal' id='cal' style='display:none'>
+ <div class='cal-top'>
+  <div><h3>Room calibration</h3><p>Put the Gateway with its microphone at your seat, ear height, and keep the room quiet.</p></div>
+  <div class='cal-btns'><span class='chip c-dim' id='cal-chip'>Microphone not tested</span><button class='btn sec' id='cal-test'>Test mic</button><button class='btn' id='cal-start'>Calibrate</button></div>
+ </div>
+ <div class='cal-bar'><div id='cal-bar'></div></div>
+ <div class='cal-row'><div class='cal-msg' id='cal-msg'></div><button class='cal-toggle' id='cal-toggle' style='display:none'><span id='cal-toggle-t'>Hide results</span><span class='chev'>&#9662;</span></button></div>
+ <table class='cal-table' id='cal-table' style='display:none'><thead><tr><th>Role</th><th>Speaker</th><th>Distance</th><th>Delay</th><th>Level</th></tr></thead><tbody id='cal-rows'></tbody></table>
+ <div class='cal-actions' id='cal-actions' style='display:none'><span class='msg'>Nothing changes until you apply. The farthest speaker gets 0 ms, the quietest 0 dB.</span><span class='cal-btns'><button class='btn sec' id='cal-discard'>Discard</button><button class='btn' id='cal-apply'>Apply to speakers</button></span></div>
+</div>
 <div class='grid' id='list'><div class='panel empty'>Loading...</div></div>
-<div class='panel help'><b>Stereo</b> plays on the front pair and the subwoofer only; centre and surrounds stay silent (5.1 and 7.1 play every role). <b>Level:</b> lower the louder speakers, 0 dB is the loudest. <b>Delay:</b> play later; 1 m of extra distance to the listener is about 2.9 ms, so delay the closer speakers. The <b>EQ</b> is set on each speaker's own page. A speaker shows up here after it is switched to Surround mode.</div>
+<div class='panel help'><b>Stereo</b> plays on the front pair and the subwoofer only; centre and surrounds stay silent (5.1 and 7.1 play every role). <b>Level:</b> lower the louder speakers, 0 dB is the loudest. <b>Delay:</b> play later; 1 m of extra distance to the listener is about 2.9 ms, so delay the closer speakers. The <b>EQ</b> is set on each speaker's own page. A speaker shows up here by itself once it is on the same Wi-Fi as the Gateway.</div>
 </div><script>
 const ROLES=[[-1,'Mono mix'],[0,'Front Left (L)'],[1,'Front Right (R)'],[2,'Centre (C)'],[3,'Subwoofer (LFE)'],[4,'Side Left (Ls)'],[5,'Side Right (Rs)'],[6,'Rear Left (Lrs)'],[7,'Rear Right (Rrs)']];
+/* The tile is named after the role it plays; the device name stays below. */
+const TITLE={'-1':'Mono mix',0:'Front Left',1:'Front Right',2:'Centre',3:'Subwoofer',4:'Side Left',5:'Side Right',6:'Rear Left',7:'Rear Right'};
+function title(ch,fallback){return ch!==undefined&&TITLE[ch]?TITLE[ch]:fallback;}
 const SHORT={'-1':'MIX',0:'FL',1:'FR',2:'C',3:'SUB',4:'SL',5:'SR',6:'RL',7:'RR'};
 /* Room positions in % of the room box (top view, screen at the top). */
 const SPOTS=[[0,30,15],[2,50,13],[1,70,15],[3,11,17],[4,8,56],[5,92,56],[6,24,90],[7,76,90]];
@@ -106,7 +145,7 @@ function buildRoom(){
 function focusCard(k){const c=cards[k];if(!c)return;c.el.scrollIntoView({behavior:'smooth',block:'center'});c.el.classList.add('flash');setTimeout(()=>c.el.classList.remove('flash'),1200);}
 function makeCard(s){
  const k=key(s.mac),d=document.createElement('div');d.className='tile';d.id='c'+k;
- d.innerHTML="<div class='t-head'><div class='rb'></div><div class='t-name'><h2></h2><div class='meta'></div></div><span class='badge'></span></div><div class='play'></div>"+
+ d.innerHTML="<div class='t-head'><div class='rb'></div><div class='t-name'><h2></h2><div class='meta'></div><div class='fw'></div></div><span class='badge'></span></div><div class='play'></div>"+
   "<div class='ctl'><div class='fg full'><label>Role</label><select>"+ROLES.map(r=>"<option value='"+r[0]+"'>"+r[1]+"</option>").join('')+"</select></div>"+
   "<div class='fg'><label>Level (dB)</label><input type='number' class='trim' min='-30' max='0' step='0.5'></div>"+
   "<div class='fg'><label>Delay (ms)</label><input type='number' class='delay' min='0' max='50' step='0.1'></div></div>"+
@@ -150,11 +189,13 @@ function playHtml(p,role){
  h+=p.time?chip(p.tsf_rms_us<20?'c-dim':'c-warn','TSF ±'+p.tsf_rms_us.toFixed(1)+' µs'):chip('c-bad','no sender time');
  return h;
 }
-function update(c,s,dup){
- c.el.querySelector('h2').textContent=s.name||s.ip;
+function update(c,s,dup,common){
+ c.el.querySelector('h2').textContent=title(s.channel,s.name||s.ip);
  const b=c.el.querySelector('.badge'),wait=s.state.indexOf('waiting')===0;
  b.textContent=wait?'waits for skip':(s.audio?'streaming':'connected');b.className='badge '+(wait?'wait':(s.audio?'on':''));
- c.el.querySelector('.meta').textContent=s.ip+' · fw '+s.firmware;
+ const odd=common&&s.firmware!==common;
+ c.el.querySelector('.meta').innerHTML='<b>'+esc(s.name||s.ip)+'</b> · '+esc(s.ip);
+ const fw=c.el.querySelector('.fw');fw.textContent='fw '+(s.firmware||'?');fw.className='fw'+(odd?' odd':'');fw.title=odd?'Different build from the other speakers':'';
  c.el.querySelector('.links').innerHTML="<a href='http://"+esc(s.ip)+"/' target='_blank'>Page</a><a href='http://"+esc(s.ip)+"/eq' target='_blank'>EQ</a>";
  c.el.querySelector('.rb').textContent=short(s.channel);
  c.el.querySelector('.play').innerHTML=playHtml(s.playback,s.channel);
@@ -167,6 +208,7 @@ function update(c,s,dup){
  const notes=[];
  if(have&&!s.multichannel)notes.push('This speaker was built without multichannel support: it ignores the role and plays the stereo mix.');
  if(dup)notes.push('Another speaker has the same role.');
+ if(odd)notes.push('Different firmware build from the other speakers ('+common+'): update it.');
  c.note.style.display=notes.length?'block':'none';c.note.textContent=notes.join(' ');
  c.el.classList.toggle('warn',notes.length>0);
 }
@@ -180,7 +222,8 @@ function updateRoom(list){
  });
  for(const ch in nodes){const n=nodes[ch],cnt=n.keys.length;
   n.el.className='node'+(cnt?' on':'')+(n.live?' live':'')+(cnt>1?' dup':'');
-  n.who.textContent=n.names.join(', ');
+  /* The dot says the role; device names only where two share it. */
+  n.who.textContent=cnt>1?n.names.join(', '):'';
   n.dot.innerHTML=short(+ch)+(cnt>1?"<span class='n'>"+cnt+"</span>":'');
   n.el.title=cnt?n.names.join(', '):'No speaker';
  }
@@ -198,8 +241,12 @@ async function load(){
  let d;try{const r=await fetch('/api/speakers',{cache:'no-store'});d=await r.json();}catch(e){return;}
  const list=document.getElementById('list'),seen={},count={};
  d.speakers.forEach(s=>{if(s.channel!==undefined&&s.channel>=0)count[s.channel]=(count[s.channel]||0)+1;});
+ /* The build most speakers run; the others are marked. */
+ const builds={};d.speakers.forEach(s=>{builds[s.firmware]=(builds[s.firmware]||0)+1;});
+ const ranked=Object.keys(builds).sort((a,b)=>builds[b]-builds[a]);
+ const common=ranked.length>1&&builds[ranked[0]]>builds[ranked[1]]?ranked[0]:null;
  updateRoom(d.speakers);updateNow(d.speakers);
- if(!d.speakers.length){list.innerHTML="<div class='panel empty'>No speaker connected.<br>Switch a speaker to Surround mode on its own page.</div>";for(const k in cards)delete cards[k];return;}
+ if(!d.speakers.length){list.innerHTML="<div class='panel empty'>No speaker connected.<br>Speakers find the Gateway by themselves on the same Wi-Fi.</div>";for(const k in cards)delete cards[k];return;}
  const empty=list.querySelector('.empty');if(empty)empty.remove();
  /* Tiles never move once shown: moving a node closes an open dropdown and
   * makes the page jump. Speakers present at the first load come in role
@@ -207,7 +254,7 @@ async function load(){
  d.speakers.sort((a,b)=>(a.channel??99)-(b.channel??99)||a.name.localeCompare(b.name)).forEach(s=>{
   const k=key(s.mac);let c=cards[k];
   if(!c){c=makeCard(s);list.appendChild(c.el);}
-  seen[k]=1;update(c,s,s.channel>=0&&count[s.channel]>1);
+  seen[k]=1;update(c,s,s.channel>=0&&count[s.channel]>1,common);
  });
  for(const k in cards)if(!seen[k]){cards[k].el.remove();delete cards[k];}
 }
@@ -221,5 +268,63 @@ async function save(c){
  }catch(e){c.msg.className='msg err';c.msg.textContent='Error';}
  c.btn.disabled=false;
 }
-buildRoom();load();setInterval(load,3000);
+/* ---- Room calibration ---- */
+let calTimer=null,calStream=false,calWasBusy=false;
+/* Results folded away: remembered in this browser only. */
+let calHidden=false;try{calHidden=localStorage.getItem('calHidden')==='1';}catch(e){}
+function calSetHidden(h){calHidden=h;try{localStorage.setItem('calHidden',h?'1':'0');}catch(e){}}
+function fmt(v,d,u){return v===undefined?'\u2014':(v>0&&u==='dB'?'+':'')+v.toFixed(d)+' '+u;}
+function calRender(c){
+ const box=document.getElementById('cal');
+ if(!c.mic_built){box.style.display='none';return;}
+ box.style.display='';
+ const busy=c.state==='busy';
+ const msg=document.getElementById('cal-msg');
+ msg.textContent=(c.message||'')+(c.sender_stopped&&!busy?' The Apple TV was disconnected: pick the Gateway again as its audio output.':'')||(c.stream_active?'The Apple TV is connected: Calibrate disconnects it for the measurement.':'');
+ msg.className='cal-msg'+(c.state==='failed'?' err':'');
+ document.getElementById('cal-bar').style.width=busy?(c.steps?Math.max(5,100*(c.step-0.5)/c.steps):5)+'%':(c.state==='done'&&!c.mic_test?'100%':'0');
+ const chip=document.getElementById('cal-chip');
+ if(c.noise_dbfs!==undefined){chip.className='chip '+(c.noise_dbfs<-50?'c-ok':'c-warn');chip.textContent='Mic OK · noise '+c.noise_dbfs.toFixed(0)+' dBFS';}
+ else if(c.state==='failed'||c.state==='done'){chip.className='chip c-bad';chip.textContent='No microphone signal';}
+ else{chip.className='chip c-dim';chip.textContent='Microphone not tested';}
+ ['cal-test','cal-start'].forEach(id=>document.getElementById(id).disabled=busy);
+ calStream=c.stream_active;
+ const rows=document.getElementById('cal-rows'),has=!c.mic_test&&c.speakers.length>0;
+ /* A new run always shows its progress. */
+ if(busy&&!calWasBusy)calSetHidden(false);
+ calWasBusy=busy;
+ const show=has&&(busy||!calHidden);
+ const tg=document.getElementById('cal-toggle');
+ tg.style.display=has&&!busy?'':'none';
+ tg.classList.toggle('closed',calHidden);
+ document.getElementById('cal-toggle-t').textContent=calHidden?'Show results':'Hide results';
+ document.getElementById('cal-table').style.display=show?'':'none';
+ rows.innerHTML=c.speakers.map((o,i)=>{
+  const wait=busy&&i+1>=c.step&&!o.measured;
+  const cell=v=>wait?(i+1===c.step?'\u2026':'\u2014'):v;
+  return "<tr><td><b>"+esc(short(o.channel))+"</b></td><td>"+esc(title(o.channel,o.name))+"<span class='dev'>"+esc(o.name)+"</span></td><td>"+cell(o.distance_m!==undefined?o.distance_m.toFixed(2)+' m':'\u2014')+"</td><td>"+cell(fmt(o.delay_ms,1,'ms'))+"</td><td>"+cell(o.trim_db!==undefined?fmt(o.trim_db,1,'dB'):'\u2014')+"</td></tr>"+
+   (o.note&&!wait?"<tr><td></td><td class='note' colspan='4'>"+esc(o.note)+"</td></tr>":'');
+ }).join('');
+ document.getElementById('cal-actions').style.display=c.state==='done'&&!c.mic_test&&show?'':'none';
+ clearTimeout(calTimer);calTimer=setTimeout(calLoad,busy?1000:3000);
+}
+async function calLoad(){try{const r=await fetch('/api/calibration',{cache:'no-store'});calRender(await r.json());}catch(e){clearTimeout(calTimer);calTimer=setTimeout(calLoad,3000);}}
+async function calPost(action){
+ const msg=document.getElementById('cal-msg');
+ try{const r=await fetch('/api/calibration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});const d=await r.json();
+  if(!d.success){msg.className='cal-msg err';msg.textContent=d.error||'Error';return;}
+  if(action==='apply'){msg.className='cal-msg';msg.textContent='Applied to '+(d.applied||0)+' speakers';setTimeout(load,400);}
+ }catch(e){msg.className='cal-msg err';msg.textContent='Error';}
+ calLoad();
+}
+document.getElementById('cal-test').onclick=()=>calPost('test');
+document.getElementById('cal-toggle').onclick=()=>{calSetHidden(!calHidden);calLoad();};
+document.getElementById('cal-start').onclick=()=>{
+ if(calStream&&!confirm('The Apple TV is connected to the Gateway. The calibration disconnects it for about a minute; afterwards pick the Gateway again as its audio output. Continue?'))return;
+ calPost('start');
+};
+document.getElementById('cal-apply').onclick=()=>calPost('apply');
+document.getElementById('cal-discard').onclick=()=>calPost('discard');
+fetch('/api/system/info').then(r=>r.json()).then(d=>{const i=d.info||{};document.getElementById('gw-fw').textContent='Gateway fw '+(i.firmware_build||i.firmware_version||'?');}).catch(()=>{});
+buildRoom();load();setInterval(load,3000);calLoad();
 </script></body></html>

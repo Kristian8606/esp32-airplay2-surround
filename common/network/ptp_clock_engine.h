@@ -79,6 +79,12 @@ typedef struct {
   /* After a crawl starts, the output follows the filter at the slew rate
    * (not dt/tau) until it has caught up; no drift is learned meanwhile. */
   bool output_catchup;
+
+  /* Samples below the filter are judged per window by the best (least
+   * delayed) of them, not one by one (see PTP_ENGINE_NEG_WINDOW_NS). */
+  bool neg_win_active;
+  int64_t neg_win_start_ns;
+  int64_t neg_win_best_ns;
 } ptp_clock_engine_t;
 
 void ptp_clock_engine_init(ptp_clock_engine_t *engine);

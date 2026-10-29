@@ -13,7 +13,9 @@
 #include "airplay_log.h"
 #include "amp_control.h"
 #include "audio_receiver.h"
-#include "esp_app_desc.h"
+#include "cal_chirp.h"
+#include "cal_playback.h"
+#include "firmware_id.h"
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_timer.h"
@@ -38,6 +40,17 @@ static const char *TAG = "spk_link";
 #define SPK_LINK_RETRY_MS    2000U
 #define SPK_LINK_RX_POLL_MS  500
 #define SPK_MDNS_TIMEOUT_MS  3000U
+/* A send to the Gateway that cannot complete in this time ends the link
+ * (the Gateway stopped reading), instead of blocking the link task. */
+#define SPK_LINK_TX_TIMEOUT_MS 2000
+
+/* The key is copied between these two structs byte for byte. */
+static_assert(sizeof(((audio_encrypt_t *)0)->key) ==
+                  sizeof(((surround_encryption_t *)0)->key),
+              "key size");
+static_assert(sizeof(((audio_encrypt_t *)0)->iv) ==
+                  sizeof(((surround_encryption_t *)0)->iv),
+              "iv size");
 
 static bool s_stream_started; /* START_* done, no STOP yet */
 static uint32_t s_gateway_ip;  /* of the current link, network byte order */
@@ -138,15 +151,14 @@ static void send_hello(int fd) {
   if (settings_get_device_name(name, sizeof(name)) == ESP_OK) {
     strlcpy(h.name, name, sizeof(h.name));
   }
-  const esp_app_desc_t *app = esp_app_get_description();
-  strlcpy(h.firmware, app ? app->version : "unknown", sizeof(h.firmware));
+  firmware_id(h.firmware, sizeof(h.firmware));
   (void)send_msg(fd, SURROUND_MSG_HELLO, &h, sizeof(h));
 }
 
-/* Which part of a stereo source this speaker plays, as a receiver in
- * stereo mode does it: the front pair plays left and right, the subwoofer
- * the mix of both (its own crossover keeps the bass), centre and surrounds
- * are silent. A "mono mix" speaker plays the mix. */
+/* Which part of a stereo source this speaker plays, as an AV receiver does
+ * it: the front pair plays left and right, the subwoofer the mix of both
+ * (its own crossover keeps the bass), centre and surrounds are silent. A
+ * "mono mix" speaker plays the mix. */
 static void apply_stereo_route(void) {
   const int role = aac_decoder_get_speaker();
   audio_stereo_route_t route;
@@ -285,7 +297,7 @@ static void stream_ended(void) {
 }
 
 /* One forwarded call: the same audio_receiver call RTSP made on the Gateway,
- * plus the amplifier and LED events RTSP raises around it on a speaker. */
+ * plus the amplifier and LED events RTSP would raise around it. */
 static void dispatch(int fd, uint8_t type, const uint8_t *p, size_t len) {
 #define PAYLOAD(T, v)                                                    \
   T v;                                                                   \
@@ -398,8 +410,8 @@ static void dispatch(int fd, uint8_t type, const uint8_t *p, size_t len) {
       break;
     case SURROUND_MSG_REALTIME_ANCHOR: {
       PAYLOAD(surround_realtime_anchor_t, m);
-      /* Same conversion RTSP makes for SETRATEANCHORTIME on a standalone
-       * receiver, with this speaker's clock. */
+      /* Same conversion RTSP on the Gateway makes for SETRATEANCHORTIME,
+       * with this speaker's clock. */
       ptp_realtime_snapshot_t ps = {0};
       ptp_clock_get_realtime_snapshot(&ps);
       uint64_t local_ns = 0;
@@ -419,6 +431,38 @@ static void dispatch(int fd, uint8_t type, const uint8_t *p, size_t len) {
       }
       break;
     }
+    case SURROUND_MSG_CAL_PLAY: {
+      PAYLOAD(surround_cal_play_t, m);
+      surround_cal_result_t r = {.seq = m.seq, .err = ESP_ERR_INVALID_STATE};
+      int bursts = m.bursts;
+      if (bursts < 1) bursts = 1;
+      if (bursts > SURROUND_CAL_BURSTS_MAX) bursts = SURROUND_CAL_BURSTS_MAX;
+      AP_LOGI(TAG, "CMD cal_play %s, %d dBFS, %d chirps",
+              m.kind == CAL_CHIRP_LOW ? "low" : "wide", (int)m.level_db, bursts);
+      /* The link task plays them itself (a few seconds): forwarded calls
+       * and TIME wait in the socket meanwhile. Never during a stream. */
+      if (!s_stream_started) {
+        int64_t emit_us[SURROUND_CAL_BURSTS_MAX] = {0};
+        int n = 0;
+        esp_err_t err = audio_receiver_play_cal_chirps(m.kind, m.level_db,
+                                                       bursts, emit_us, &n);
+        /* The sound leaves the speaker the output latency later. */
+        const int64_t out_ns =
+            (int64_t)audio_receiver_get_output_latency_us() * 1000LL;
+        for (int i = 0; err == ESP_OK && i < n; ++i) {
+          int64_t tsf = 0;
+          if (!spk_time_tsf_at(emit_us[i] * 1000LL + out_ns, &tsf)) {
+            err = ESP_ERR_INVALID_STATE; /* no TSF fit yet */
+            break;
+          }
+          r.emit_tsf_ns[i] = tsf;
+        }
+        r.err = (int16_t)err;
+        r.n = err == ESP_OK ? (uint8_t)n : 0U;
+      }
+      (void)send_msg(fd, SURROUND_MSG_CAL_RESULT, &r, sizeof(r));
+      break;
+    }
     case SURROUND_MSG_STOP:
       AP_LOGI(TAG, "CMD stop");
       audio_receiver_stop();
@@ -428,7 +472,9 @@ static void dispatch(int fd, uint8_t type, const uint8_t *p, size_t len) {
       PAYLOAD(surround_volume_t, m);
       AP_LOGI(TAG, "CMD set_volume_q15 %" PRId32 " (trim %.1f dB)",
               m.volume_q15, s_trim_db10 / 10.0);
-      s_sender_volume_q15 = m.volume_q15;
+      /* The same range audio_receiver_set_volume_q15() accepts. */
+      s_sender_volume_q15 = m.volume_q15 < 0 ? 0
+                            : m.volume_q15 > 32768 ? 32768 : m.volume_q15;
       apply_volume();
       break;
     }
@@ -575,6 +621,9 @@ static void link_task(void *arg) {
     const struct timeval tv = {.tv_sec = 0,
                                .tv_usec = SPK_LINK_RX_POLL_MS * 1000};
     (void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    const struct timeval tx_tv = {.tv_sec = SPK_LINK_TX_TIMEOUT_MS / 1000,
+                                  .tv_usec = (SPK_LINK_TX_TIMEOUT_MS % 1000) * 1000};
+    (void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tx_tv, sizeof(tx_tv));
 
     ESP_LOGI(TAG, "connected to Gateway %s:%u", ip,
              (unsigned)ntohs(gw.sin_port));
@@ -643,6 +692,6 @@ esp_err_t spk_link_start(void) {
                               SPK_LINK_CORE) != pdPASS) {
     return ESP_ERR_NO_MEM;
   }
-  ESP_LOGI(TAG, "Surround mode: looking for the Gateway");
+  ESP_LOGI(TAG, "looking for the Gateway");
   return ESP_OK;
 }

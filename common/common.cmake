@@ -9,6 +9,7 @@ set(AIRPLAY_COMMON_DIR "${CMAKE_CURRENT_LIST_DIR}")
 
 set(AIRPLAY_COMMON_SRCS
     "${AIRPLAY_COMMON_DIR}/amp_control.c"
+    "${AIRPLAY_COMMON_DIR}/firmware_id.c"
     "${AIRPLAY_COMMON_DIR}/settings.c"
     "${AIRPLAY_COMMON_DIR}/led.c"
     "${AIRPLAY_COMMON_DIR}/rtsp_events.c"
@@ -22,6 +23,7 @@ set(AIRPLAY_COMMON_SRCS
     "${AIRPLAY_COMMON_DIR}/network/log_stream.c"
     "${AIRPLAY_COMMON_DIR}/surround/tsf_fit.c"
     "${AIRPLAY_COMMON_DIR}/surround/sync_pulse.c"
+    "${AIRPLAY_COMMON_DIR}/surround/cal_chirp.c"
 )
 
 # Diagnostics are a true compile-time feature. When both diagnostic

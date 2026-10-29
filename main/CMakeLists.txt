@@ -30,6 +30,8 @@ set(GATEWAY_SRCS
     "gw_relay.c"
     "gw_rt_relay.c"
     "gw_speakers.c"
+    "gw_mic.c"
+    "gw_calib.c"
 )
 if(CONFIG_AIRPLAY_HARDWARE_BUTTONS)
     list(APPEND GATEWAY_SRCS "playback_buttons.c")
@@ -38,7 +40,7 @@ endif()
 idf_component_register(
     SRCS ${AIRPLAY_COMMON_SRCS} ${GATEWAY_SRCS}
     INCLUDE_DIRS "." "rtsp" "plist" "hap" ${AIRPLAY_COMMON_INCLUDE_DIRS}
-    PRIV_REQUIRES ${AIRPLAY_COMMON_PRIV_REQUIRES}
+    PRIV_REQUIRES ${AIRPLAY_COMMON_PRIV_REQUIRES} esp_driver_i2s
 )
 
 airplay_embed_web_pages(index logs speedtest speakers)

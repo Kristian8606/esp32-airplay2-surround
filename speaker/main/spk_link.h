@@ -2,13 +2,12 @@
 
 #include "esp_err.h"
 
-/* Speaker in Surround mode: the control link to the Gateway.
+/* Speaker: the control link to the Gateway.
  *
  * Finds the Gateway (CONFIG_AIRPLAY_SURROUND_GATEWAY_HOST, else mDNS
  * _apsurround._tcp), connects, sends HELLO and makes every forwarded
  * audio_receiver call locally. Reconnects whenever the link drops; a stream
- * in progress is stopped first. Replaces mDNS/RTSP in this mode; call after
- * audio_receiver_init(). */
+ * in progress is stopped first. Call after audio_receiver_init(). */
 esp_err_t spk_link_start(void);
 
 /* Web page (Wi-Fi scan, latency test): drop the link, stop the stream and

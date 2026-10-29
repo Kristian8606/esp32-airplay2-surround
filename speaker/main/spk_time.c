@@ -46,6 +46,10 @@ static void withdraw(const char *why) {
 
 void spk_time_reset(void) { withdraw("link to the Gateway lost"); }
 
+bool spk_time_tsf_at(int64_t local_ns, int64_t *tsf_ns) {
+  return tsf_fit_tsf_at(&s_fit, local_ns, tsf_ns);
+}
+
 bool spk_time_status(uint32_t *tsf_rms_ns) {
   if (tsf_rms_ns) *tsf_rms_ns = (uint32_t)s_fit.rms_ns;
   return s_published;

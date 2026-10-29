@@ -14,8 +14,9 @@
  * pings them. Call after mdns_airplay_init(). */
 esp_err_t gw_speakers_start(void);
 
-/* Forward one audio_receiver call to the speakers. Never blocks: a speaker
- * whose socket cannot take the whole frame at once is dropped.
+/* Forward one audio_receiver call to the speakers. Never waits on a
+ * socket: a speaker whose socket cannot take the whole frame at once is
+ * dropped.
  *
  * A speaker that connects during a stream waits for the sender's next FLUSH:
  * on SEEK_FLUSH, DEFERRED_FLUSH or IMMEDIATE_FLUSH it first receives the
@@ -48,6 +49,17 @@ size_t gw_speakers_list(gw_speaker_info_t out[SURROUND_MAX_SPEAKERS]);
  * next gw_speakers_list() shows. ESP_ERR_NOT_FOUND when not connected. */
 esp_err_t gw_speakers_set_config(const uint8_t mac[6],
                                  const surround_set_config_t *cfg);
+
+/* Room calibration: ask the speaker with this MAC to play test chirps; its
+ * CAL_RESULT goes to gw_calib_on_result(). ESP_ERR_NOT_FOUND when not
+ * connected. */
+esp_err_t gw_speakers_cal_play(const uint8_t mac[6],
+                               const surround_cal_play_t *m);
+
+/* This ESP's clock (esp_timer, ns) and the access point's TSF, through the
+ * line the TIME messages use. False until it has enough samples. */
+bool gw_speakers_local_to_tsf(int64_t local_ns, int64_t *tsf_ns);
+bool gw_speakers_tsf_to_local(int64_t tsf_ns, int64_t *local_ns);
 
 /* Where the relay copies the buffered audio stream, one entry per speaker
  * slot. */

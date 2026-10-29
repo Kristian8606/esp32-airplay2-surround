@@ -3,24 +3,27 @@ menu "Surround Build Role"
         prompt "Firmware role"
         default AIRPLAY_ROLE_SPEAKER
         help
-            Speaker: today's AirPlay receiver with I2S output.
-            Gateway: the AirPlay front end the Apple TV talks to. It keeps
-            mDNS, pairing, RTSP and PTP, but has no decoder or I2S output;
-            the audio_receiver API is served by a proxy that will forward
-            every call and the raw audio stream to the speakers.
-            Build with sdkconfig.defaults.gateway (see README).
+            Set by the project folder, leave it: the repository folder
+            builds the Gateway (sdkconfig.defaults.gateway), speaker/ the
+            speakers.
+            Gateway: the AirPlay receiver the Apple TV plays to (mDNS,
+            pairing, RTSP, PTP), without a decoder or I2S output; a proxy
+            forwards every audio_receiver call and the raw audio stream to
+            the speakers.
+            Speaker: follows the Gateway and plays one channel through I2S;
+            not an AirPlay receiver of its own.
         config AIRPLAY_ROLE_SPEAKER
-            bool "Speaker (AirPlay receiver with I2S output)"
+            bool "Speaker (follows the Gateway, I2S output)"
         config AIRPLAY_ROLE_GATEWAY
             bool "Gateway (AirPlay front end, no audio output)"
     endchoice
 
     config AIRPLAY_SURROUND_GATEWAY_HOST
-        string "Gateway IPv4 address for Surround mode (empty = mDNS)"
+        string "Gateway IPv4 address (empty = find it by mDNS)"
         default ""
         depends on AIRPLAY_ROLE_SPEAKER
         help
-            A speaker in Surround mode finds the Gateway by mDNS
+            A speaker finds the Gateway by mDNS
             (_apsurround._tcp). Set an IPv4 address here to skip the search,
             for example when mDNS is filtered on the network.
 
@@ -46,6 +49,37 @@ menu "Surround Build Role"
             Pick a free pin (default 9: not used by the default I2S 4/5/6,
             amplifier 21, LED 38 or latency loopback 7; avoid the strapping
             pins 0, 3, 45, 46, USB 19/20 and the flash/PSRAM pins 26-37).
+
+    config AIRPLAY_SURROUND_CAL_MIC
+        bool "Room calibration microphone (INMP441) on the Gateway"
+        default y
+        depends on AIRPLAY_ROLE_GATEWAY
+        help
+            An I2S MEMS microphone (INMP441) on the Gateway, placed at the
+            listening seat, measures every speaker's travel time and level
+            from test chirps and suggests each speaker's delay and level
+            (speakers page, Room calibration). The microphone runs only
+            during a measurement; without one the page says there is no
+            signal. Wiring: VDD to 3V3, GND and L/R to GND, SCK, WS and SD
+            to the pins below.
+
+    config AIRPLAY_SURROUND_CAL_MIC_SCK_GPIO
+        int "Calibration microphone SCK GPIO"
+        default 5
+        range 0 48
+        depends on AIRPLAY_SURROUND_CAL_MIC
+
+    config AIRPLAY_SURROUND_CAL_MIC_WS_GPIO
+        int "Calibration microphone WS GPIO"
+        default 6
+        range 0 48
+        depends on AIRPLAY_SURROUND_CAL_MIC
+
+    config AIRPLAY_SURROUND_CAL_MIC_SD_GPIO
+        int "Calibration microphone SD (data) GPIO"
+        default 4
+        range 0 48
+        depends on AIRPLAY_SURROUND_CAL_MIC
 endmenu
 
 menu "AirPlay Receiver"

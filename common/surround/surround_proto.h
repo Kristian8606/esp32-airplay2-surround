@@ -17,7 +17,7 @@
 #include <assert.h>
 #include <stdint.h>
 
-#define SURROUND_PROTO_VERSION   6
+#define SURROUND_PROTO_VERSION   7
 #define SURROUND_STR_(x)         #x
 #define SURROUND_STR(x)          SURROUND_STR_(x)
 #define SURROUND_HELLO_MAGIC     0x53524e44U /* "SRND" */
@@ -53,6 +53,7 @@ typedef enum {
   SURROUND_MSG_PONG = 0x03,
   SURROUND_MSG_CONFIG = 0x04, /* after HELLO and after every SET_CONFIG */
   SURROUND_MSG_STATUS = 0x05, /* what it plays, every SURROUND_STATUS_MS */
+  SURROUND_MSG_CAL_RESULT = 0x06, /* answer to CAL_PLAY */
 
   /* Gateway -> speaker: audio_receiver.h calls */
   SURROUND_MSG_SET_STREAM_TYPE = 0x10,
@@ -80,6 +81,8 @@ typedef enum {
   SURROUND_MSG_TIME = 0x31,
   /* Gateway -> speaker: its own settings (Gateway web page) */
   SURROUND_MSG_SET_CONFIG = 0x32,
+  /* Gateway -> speaker: room calibration (gw_calib.c) */
+  SURROUND_MSG_CAL_PLAY = 0x33,
 } surround_msg_type_t;
 
 typedef struct __attribute__((packed)) {
@@ -107,7 +110,7 @@ typedef struct __attribute__((packed)) {
 } surround_realtime_flush_t;
 
 /* A realtime SETRATEANCHORTIME in the sender's clock; the speaker maps it to
- * its own clock exactly as RTSP does on a standalone receiver. */
+ * its own clock exactly as RTSP on the Gateway maps it to the Gateway's. */
 typedef struct __attribute__((packed)) {
   uint64_t clock_id;
   uint64_t remote_ptp_ns;
@@ -229,7 +232,30 @@ typedef struct __attribute__((packed)) {
   uint16_t tsf_rms_ns10;   /* TSF fit residual, units of 10 ns */
 } surround_status_t;
 
+/* Room calibration. The speaker plays CAL_CHIRP_BURSTS test chirps
+ * (cal_chirp.h) through its EQ while the Gateway records its microphone, and
+ * answers when each chirp left the speaker, on the access point's TSF (output
+ * latency included). The Gateway finds the chirps in the recording: the
+ * difference is the sound's travel time. Only between streams. */
+#define SURROUND_CAL_BURSTS_MAX 6
+
+typedef struct __attribute__((packed)) {
+  uint8_t seq;      /* echoed in CAL_RESULT */
+  uint8_t kind;     /* cal_chirp_kind_t */
+  int8_t level_db;  /* chirp peak, dB below full scale */
+  uint8_t bursts;   /* 1 .. SURROUND_CAL_BURSTS_MAX */
+} surround_cal_play_t;
+
+typedef struct __attribute__((packed)) {
+  uint8_t seq;
+  uint8_t n;        /* valid entries of emit_tsf_ns */
+  int16_t err;      /* esp_err_t */
+  int64_t emit_tsf_ns[SURROUND_CAL_BURSTS_MAX];
+} surround_cal_result_t;
+
 static_assert(sizeof(surround_hello_t) <= SURROUND_MAX_PAYLOAD, "hello");
+static_assert(sizeof(surround_cal_result_t) <= SURROUND_MAX_PAYLOAD,
+              "cal result");
 static_assert(sizeof(surround_status_t) <= SURROUND_MAX_PAYLOAD, "status");
 static_assert(sizeof(surround_config_t) <= SURROUND_MAX_PAYLOAD, "config");
 static_assert(sizeof(surround_time_t) <= SURROUND_MAX_PAYLOAD, "time");

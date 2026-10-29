@@ -9,7 +9,16 @@
  * the minimum-delay envelope before steady-state 1/16 tracking begins. */
 #define PTP_ENGINE_STARTUP_NS        2000000000LL
 #define PTP_ENGINE_POS_STEADY_DIV    16LL
-#define PTP_ENGINE_NEG_DIV           256LL
+/* Negative jitter is a longer delay, or a filter that sits too high. It used
+ * to pull the filter down by 1/256 of every such sample; when the Wi-Fi is
+ * busy (a buffered fill to several Surround speakers) every Sync is late, and
+ * at 8 Syncs/s that dragged the reference down by up to ~80 us/s, 0.3-0.4 ms
+ * per fill. Now the samples below the filter are collected per window and
+ * only the best (least delayed) of them counts: one timely Sync in the window
+ * keeps the filter where it is. With 8 Syncs/s a 2 s window and 1/16 of the
+ * best moves a filter that really is too high as fast as 16 x 1/256 did. */
+#define PTP_ENGINE_NEG_WINDOW_NS     2000000000LL
+#define PTP_ENGINE_NEG_DIV           16LL
 #define PTP_ENGINE_NEG_CLAMP_NS      (-2500000LL)
 #define PTP_ENGINE_READY_NS ((int64_t)PTP_CLOCK_ENGINE_READY_MS * 1000000LL)
 /* No accepted sample for this long (Sync stopped during a pause, Wi-Fi
@@ -72,6 +81,9 @@ static void clear_filter_state(ptp_clock_engine_t *engine) {
   engine->drift_valid = false;
   engine->drift_window_start_ns = 0;
   engine->drift_window_start_offset_ns = 0;
+  engine->neg_win_active = false;
+  engine->neg_win_start_ns = 0;
+  engine->neg_win_best_ns = 0;
 }
 
 void ptp_clock_engine_init(ptp_clock_engine_t *engine) {
@@ -246,15 +258,30 @@ ptp_clock_engine_sample_t ptp_clock_engine_add_sample(
   } else if (jitter < 0) {
     smoothed = old_filtered;
     if (mastership_ns > PTP_ENGINE_STARTUP_NS) {
-      const int64_t clamped =
-          jitter < PTP_ENGINE_NEG_CLAMP_NS ? PTP_ENGINE_NEG_CLAMP_NS : jitter;
-      smoothed += clamped / PTP_ENGINE_NEG_DIV;
+      if (!engine->neg_win_active) {
+        engine->neg_win_active = true;
+        engine->neg_win_start_ns = reception_time_ns;
+        engine->neg_win_best_ns = jitter;
+      } else if (jitter > engine->neg_win_best_ns) {
+        engine->neg_win_best_ns = jitter;
+      }
+      if (reception_time_ns - engine->neg_win_start_ns >= PTP_ENGINE_NEG_WINDOW_NS) {
+        const int64_t best = engine->neg_win_best_ns;
+        const int64_t clamped =
+            best < PTP_ENGINE_NEG_CLAMP_NS ? PTP_ENGINE_NEG_CLAMP_NS : best;
+        smoothed += clamped / PTP_ENGINE_NEG_DIV;
+        engine->neg_win_active = false;
+      }
     }
   } else if (mastership_ns < PTP_ENGINE_STARTUP_NS) {
     smoothed = raw_offset_ns;
   } else {
     smoothed = old_filtered + jitter / PTP_ENGINE_POS_STEADY_DIV;
   }
+
+  /* A timely Sync (or a crawl) settles the level: the late ones collected
+   * so far do not count. */
+  if (jitter >= 0 || engine->crawl_active) engine->neg_win_active = false;
 
   /* Learn the drift from the filter's slope once startup has settled. A
    * crawl, and the settling after it, follow a step, not drift: start a new

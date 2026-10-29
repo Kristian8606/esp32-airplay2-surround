@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include "airplay_log.h"
+#include "audio_receiver.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -27,7 +28,8 @@ static const char *TAG = "gw_relay";
 #define GW_RELAY_STACK       5120U
 #define GW_RELAY_CHUNK       4096U
 #define GW_RELAY_POLL_MS     200
-/* While the stream is held for a speaker, poll often to resume promptly. */
+/* While the stream is held for a speaker or paced, poll often to resume
+ * promptly. */
 #define GW_RELAY_HOLD_POLL_MS 20
 #define GW_RELAY_STATS_MS    5000
 #define GW_RELAY_STOP_WAIT_MS 1000
@@ -40,6 +42,18 @@ static const char *TAG = "gw_relay";
 #define GW_RELAY_CONNECT_TIMEOUT_MS 3000
 #define GW_RELAY_RETRY_MS    1000
 #define GW_RELAY_STALL_LOG_MS 5000
+/* Fill pacing. The sender sends a new track's audio as fast as the network
+ * takes it (~300 KB/s per speaker seen), and the Gateway sends it again to
+ * every speaker: with five speakers the Wi-Fi was busy enough that the
+ * sender's PTP Syncs arrived late and the Gateway's clock estimate drifted
+ * by 0.3-0.4 ms per fill. The speakers keep up to ~90 s of audio, so the
+ * relay forwards at most GW_RELAY_PACE_FACTOR times real time (plus a start
+ * of GW_RELAY_PACE_BURST_S at full speed); TCP holds the sender back
+ * meanwhile. Real time comes from the frames' RTP timestamps. */
+#define GW_RELAY_PACE_FACTOR  2.0
+#define GW_RELAY_PACE_BURST_S 2.0
+/* RTP jumps more than this (a seek, a new track): pacing starts over. */
+#define GW_RELAY_PACE_JUMP_S  1.0
 
 typedef struct {
   /* Frame walker over the TCP byte stream. */
@@ -56,6 +70,13 @@ typedef struct {
   uint32_t win_first_seq, win_last_seq;
   uint32_t win_first_rtp, win_last_rtp;
   int64_t win_start_us;
+  /* Fill pacing: media forwarded since pace_t0_us, from pace_rtp0. */
+  bool have_rtp;
+  uint32_t last_rtp;
+  bool pace_valid;
+  uint32_t pace_rtp0;
+  int64_t pace_t0_us;
+  uint32_t win_paced_ms;
 } relay_stream_t;
 
 typedef enum {
@@ -145,16 +166,17 @@ static void log_window(bool force) {
     ESP_LOGI(TAG,
              "RELAY rx %" PRIu32 " pkts %" PRIu32 " B (%.0f kbit/s) seq %" PRIu32
              "..%" PRIu32 " rtp %" PRIu32 "..%" PRIu32 " | total %" PRIu64
-             " pkts %" PRIu64 " KiB | PTP valid=%d locked=%d gm=%016" PRIx64
-             " offset=%" PRId64 " ns",
+             " pkts %" PRIu64 " KiB | paced %" PRIu32 " ms | PTP valid=%d "
+             "locked=%d gm=%016" PRIx64 " offset=%" PRId64 " ns",
              st->win_packets, st->win_bytes, kbit_s, st->win_first_seq,
              st->win_last_seq, st->win_first_rtp, st->win_last_rtp,
-             st->total_packets, st->total_bytes / 1024U, ps.valid, ps.locked,
-             ps.grandmaster_clock_id, ps.filtered_offset_ns);
+             st->total_packets, st->total_bytes / 1024U, st->win_paced_ms,
+             ps.valid, ps.locked, ps.grandmaster_clock_id, ps.filtered_offset_ns);
     log_targets();
   }
   st->win_bytes = 0;
   st->win_packets = 0;
+  st->win_paced_ms = 0;
   st->win_start_us = now_us;
 }
 
@@ -171,6 +193,39 @@ static void frame_done(void) {
   st->win_last_rtp = rtp;
   st->win_packets++;
   st->total_packets++;
+  if (st->have_rtp) {
+    const int32_t step = (int32_t)(rtp - st->last_rtp);
+    const uint32_t rate = audio_receiver_get_sample_rate();
+    if (step < 0 || (double)step > GW_RELAY_PACE_JUMP_S * rate) {
+      st->pace_valid = false; /* a seek or a new track */
+    }
+  }
+  st->last_rtp = rtp;
+  st->have_rtp = true;
+}
+
+/* True while the relay is further ahead of real time than pacing allows:
+ * the sender is not read meanwhile. */
+static bool pace_ahead(int64_t now_us) {
+  relay_stream_t *st = &s.stream;
+  if (!st->have_rtp) return false;
+  const double rate = (double)audio_receiver_get_sample_rate();
+  if (!st->pace_valid) {
+    st->pace_valid = true;
+    st->pace_rtp0 = st->last_rtp;
+    st->pace_t0_us = now_us;
+    return false;
+  }
+  const double media_s = (double)(uint32_t)(st->last_rtp - st->pace_rtp0) / rate;
+  const double elapsed_s = (double)(now_us - st->pace_t0_us) / 1e6;
+  const double allowed_s = GW_RELAY_PACE_BURST_S + GW_RELAY_PACE_FACTOR * elapsed_s;
+  if (allowed_s - media_s > GW_RELAY_PACE_BURST_S) {
+    /* Held back by the speakers (full buffers, a pause): no credit beyond
+     * one burst piles up for later. */
+    st->pace_t0_us = now_us - (int64_t)(media_s / GW_RELAY_PACE_FACTOR * 1e6);
+    return false;
+  }
+  return media_s > allowed_s;
 }
 
 /* Walk the frames in one received chunk. False on invalid framing, which
@@ -437,8 +492,11 @@ static void relay_task(void *arg) {
     if (s.client_sock >= 0) start_connects(now_us);
     const bool hold = s.client_sock >= 0 && !s.chunk_pending &&
                       should_hold(now_us);
-    const int sel_client =
-        s.client_sock >= 0 && !s.chunk_pending && !hold ? s.client_sock : -1;
+    const bool paced = s.client_sock >= 0 && !s.chunk_pending && !hold &&
+                       pace_ahead(now_us);
+    const int sel_client = s.client_sock >= 0 && !s.chunk_pending && !hold &&
+                                   !paced
+                               ? s.client_sock : -1;
 
     fd_set rd, wr;
     FD_ZERO(&rd);
@@ -459,7 +517,8 @@ static void relay_task(void *arg) {
       }
       if (t->fd > maxfd) maxfd = t->fd;
     }
-    const int poll_ms = hold ? GW_RELAY_HOLD_POLL_MS : GW_RELAY_POLL_MS;
+    const int poll_ms = hold || paced ? GW_RELAY_HOLD_POLL_MS : GW_RELAY_POLL_MS;
+    if (paced) s.stream.win_paced_ms += (uint32_t)poll_ms;
     struct timeval tv = {.tv_sec = 0, .tv_usec = poll_ms * 1000};
     const int n = select(maxfd + 1, &rd, &wr, NULL, &tv);
     if (!s.running) break;

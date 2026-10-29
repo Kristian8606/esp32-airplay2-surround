@@ -27,6 +27,14 @@
 
 static const char *TAG = "gw_proxy";
 
+/* The key is copied between these two structs byte for byte. */
+static_assert(sizeof(((audio_encrypt_t *)0)->key) ==
+                  sizeof(((surround_encryption_t *)0)->key),
+              "key size");
+static_assert(sizeof(((audio_encrypt_t *)0)->iv) ==
+                  sizeof(((surround_encryption_t *)0)->iv),
+              "iv size");
+
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 static struct {
   bool initialized;

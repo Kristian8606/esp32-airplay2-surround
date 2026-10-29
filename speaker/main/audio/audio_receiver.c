@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <math.h>
 #include <netinet/in.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -37,6 +38,8 @@
 #include "network/ptp_clock_engine.h"
 #include "network/socket_utils.h"
 #include "latency_cal.h"
+#include "cal_playback.h"
+#include "cal_chirp.h"
 #include "settings.h"
 #include "amp_control.h"
 #include "airplay_log.h"
@@ -101,8 +104,12 @@
 
 #define AP2_PID_CALC_PERIOD_US    1000000LL  /* PID math at 1 Hz */
 #define AP2_PID_TUNE_PERIOD_US    1000000LL  /* live divider write: <= 1 Hz */
-#define AP2_PID_DEADBAND_US          1000    /* +/-1 ms is already good */
-#define AP2_PID_SOFTBAND_US          2000    /* 1..2 ms => gentler P action */
+/* The sender time comes from the Gateway through the access point's TSF
+ * (spk_time.c), microsecond-steady, not from a noisy PTP estimate: the good
+ * zone can be narrow. Every speaker follows the same time, so the tighter
+ * each one holds it, the closer the speakers are to each other. */
+#define AP2_PID_DEADBAND_US           300    /* +/-0.3 ms is already good */
+#define AP2_PID_SOFTBAND_US           800    /* 0.3..0.8 ms => gentler P action */
 #define AP2_PID_MAX_PPM               160
 #define AP2_PID_MIN_TUNE_PPM            1  /* the divider is dithered: any ppm is exact */
 #define AP2_PID_MAX_JUMP_PPM            80
@@ -136,7 +143,7 @@
 #define AP2_PID_KD_PPM_PER_MS_PER_S    55.0
 #define AP2_PID_D_ALPHA                  0.20
 #define AP2_PID_I_TERM_LIMIT_PPM       110.0
-/* Outside the +/-1 ms zone (a PTP clock step, a new anchor) the PID terms
+/* Outside the good zone (a clock step, a new anchor) the PID terms
  * are replaced by phase recovery: hold the learned clock (I) and approach 0
  * at -sync / AP2_RECOVER_TIME_S, like the centring loop. The full PID wound
  * its integrator up on such a step and overshot: a +3 ms step went to
@@ -149,34 +156,41 @@
  * learned as a clock error. */
 #define AP2_PID_CONVERGING_MS_S          0.02
 
-/* Slow centring inside the +/-1 ms good zone (multiroom accuracy).
+/* Centring inside the good zone (speaker-to-speaker accuracy).
  * The PID alone only holds the clock inside the zone, so sync would park near
- * +/-1 ms and the crystal error would never be learned precisely. Every window
- * the centring loop measures the real phase slope and steers the frequency so
- * that sync approaches 0 at <= AP2_CENTER_MAX_SLOPE_US_S and then stays flat.
+ * its edge and the crystal error would never be learned precisely. The
+ * centring loop measures the real phase slope (least squares over the 1 Hz
+ * sync samples since its last step) and steers the frequency so that sync
+ * approaches 0 at <= AP2_CENTER_MAX_SLOPE_US_S and then stays flat.
+ * It looks every second once the fit spans AP2_CENTER_MIN_FIT_US, and steps
+ * by AP2_CENTER_GAIN of the error: a slope estimate always carries some
+ * noise, and a full step on it made the clock hunt between two rates 40 ppm
+ * apart (sync swung by ~1 ms). Without a step the fit keeps growing, so the
+ * estimate gets better, up to AP2_CENTER_WINDOW_US.
  * 1 ppm of I2S rate change = 1 us/s of sync slope. */
-#define AP2_CENTER_WINDOW_US         15000000LL /* slope measurement window */
-#define AP2_CENTER_QUIET_US                50    /* |sync| below: aim for 0 slope */
-#define AP2_CENTER_TIME_S                20.0   /* approach time constant */
-#define AP2_CENTER_MAX_SLOPE_US_S        40.0   /* max wanted approach speed */
-#define AP2_CENTER_MAX_STEP_PPM            40    /* max frequency step per window */
-/* Hysteresis: centring mode is entered inside +/-1 ms and is kept through
- * brief excursions. It hands back to the PID only when |sync| stays above
- * 1.5 ms for 3 s, or immediately above 3 ms; dropping out on any momentary
- * D-estimate spike would never let a 15 s window complete. */
-#define AP2_CENTER_EXIT_US               1500
+#define AP2_CENTER_MIN_FIT_US         8000000LL /* shortest slope fit */
+#define AP2_CENTER_WINDOW_US         20000000LL /* longest slope fit */
+#define AP2_CENTER_QUIET_US                30    /* |sync| below: aim for 0 slope */
+#define AP2_CENTER_TIME_S                 8.0   /* approach time constant */
+#define AP2_CENTER_MAX_SLOPE_US_S        30.0   /* max wanted approach speed */
+#define AP2_CENTER_MAX_STEP_PPM            10    /* max frequency step per fit */
+/* Hysteresis: centring mode is entered inside the good zone and is kept
+ * through brief excursions. It hands back to the PID only when |sync| stays
+ * above 0.7 ms for 3 s, or immediately above 1.5 ms; dropping out on any
+ * momentary D-estimate spike would never let a fit complete. */
+#define AP2_CENTER_EXIT_US                700
 #define AP2_CENTER_EXIT_HOLD_US       3000000LL
-#define AP2_CENTER_EXIT_HARD_US          3000
+#define AP2_CENTER_EXIT_HARD_US          1500
 /* A PTP filter step moves sync by >1 ms between two 1 s samples, while real
  * drift is < 0.1 ms/s; a window containing such a jump would give a false
  * slope (-83 us/s seen on the board). The jump is subtracted from the
  * following samples of the window, so the slope stays the true drift and the
  * end-of-window phase still includes the step. */
 #define AP2_CENTER_JUMP_US                400
-/* Fraction of the computed correction applied per window. 0.5 was tried in
- * simulation and made phase recovery slower without reducing retunes, so the
- * full step is kept. */
-#define AP2_CENTER_GAIN                   1.0
+/* Fraction of the computed correction applied per fit. With the PTP
+ * reference a full step was kept (0.5 only slowed recovery); with the TSF
+ * reference fits come every second, and half steps settle without hunting. */
+#define AP2_CENTER_GAIN                   0.5
 /* Shairport Sync 5.5.2: audio_decoded_buffer_desired_length defaults to
  * 0.75 s; buffered blocks are decoded only inside target + 0.1 s. */
 #define AP2_PCM_TARGET_MS            750U
@@ -2847,13 +2861,6 @@ static void fade_in_apply(float *pcm, uint32_t frames) {
                       AP2_FADE_IN_FRAMES);
 }
 
-/* The end of the float chain: EQ, volume, loudness, the fade-in after a
- * stop, then the one and only saturation float -> 32-bit slot, in place.
- * Returns the same memory as the I2S block. Only the playout task calls this,
- * and only for blocks that are really played, so the EQ filter history is
- * exactly the audio that was heard: PCM replaced in the FIFO (AutoMix
- * re-send, FLUSH) never passed through it, and EQ changes are heard within
- * the DMA queue (~87 ms) instead of the whole PCM window. */
 static uint32_t s_stereo_route = AUDIO_STEREO_ROUTE_STEREO;
 
 void audio_receiver_set_stereo_route(audio_stereo_route_t route) {
@@ -2878,6 +2885,14 @@ static void apply_stereo_route(float *block, uint32_t frames) {
   }
 }
 
+/* The end of the float chain: the speaker's stereo route, EQ, volume,
+ * loudness, the fade-in after a stop, then the one and only saturation
+ * float -> 32-bit slot, in place. Returns the same memory as the I2S block.
+ * Only the playout task calls this, and only for blocks that are really
+ * played, so the EQ filter history is exactly the audio that was heard: PCM
+ * replaced in the FIFO (AutoMix re-send, FLUSH) never passed through it, and
+ * EQ changes are heard within the DMA queue (~87 ms) instead of the whole
+ * PCM window. */
 static const audio_out_sample_t *output_stage(float *block, uint32_t frames,
                                               int sample_rate,
                                               int32_t current_q15[2]) {
@@ -3075,6 +3090,128 @@ static esp_err_t playout_run_latency_calibration(void) {
 }
 
 #endif /* CONFIG_AIRPLAY_LATENCY_CAL */
+
+/* ---- room calibration: test chirps for the Gateway's microphone ----
+ * Same lifecycle as the wired latency test: the engine is released (only
+ * between streams), the caller's task owns I2S, plays silence and the chirps
+ * and records from the tagged DMA completions when each chirp started at the
+ * sync servo's reference point. Unlike the wired test the chirps go through
+ * the EQ (a 2-way speaker's crossover protects the tweeter), at the level the
+ * Gateway asks for. The engine is restored before returning. */
+#define ROOMCAL_GENERATION  0xCA1C0000U
+#define ROOMCAL_LEAD_BLOCKS 16U /* ~170 ms of silence before the first chirp */
+#define ROOMCAL_TAIL_BLOCKS 20U /* the last chirp's echoes */
+
+static volatile bool s_roomcal_busy = false;
+
+/* A completed DMA block: the first block of a chirp gives its start. */
+static void roomcal_take(const audio_playout_completion_t *d, uint32_t rate,
+                         uint32_t period_blocks, int bursts, int64_t *emit_us,
+                         int *n_emit) {
+  if (d->generation != ROOMCAL_GENERATION || d->rtp < ROOMCAL_LEAD_BLOCKS) return;
+  const uint32_t r = d->rtp - ROOMCAL_LEAD_BLOCKS;
+  if (r % period_blocks != 0U || r / period_blocks >= (uint32_t)bursts) return;
+  /* done_local_us marks the END of the block; the chirp starts with it. */
+  emit_us[r / period_blocks] =
+      d->done_local_us - ((int64_t)d->frames * 1000000LL) / (int64_t)rate;
+  (*n_emit)++;
+}
+
+static esp_err_t roomcal_play(cal_chirp_kind_t kind, float gain, int bursts,
+                              float *block, int64_t *emit_us, int *n_emit) {
+  const uint32_t rate = audio_playout_get_rate();
+  const uint32_t frames = AUDIO_PLAYOUT_FRAMES;
+  const uint32_t period_blocks = (uint32_t)ceil(cal_chirp_period_s(kind) * rate / frames);
+  const uint32_t chirp_blocks = (uint32_t)ceil(cal_chirp_length_s(kind) * rate / frames);
+  const uint32_t total = ROOMCAL_LEAD_BLOCKS + (uint32_t)bursts * period_blocks +
+                         ROOMCAL_TAIL_BLOCKS;
+  *n_emit = 0;
+
+  if (!playout_flush_checked("room-cal")) return ESP_FAIL;
+  bool ok = true;
+  for (uint32_t k = 0; k < AUDIO_PLAYOUT_DMA_BLOCKS && ok; ++k) {
+    ok = audio_playout_preload_tagged(s_silence_block, frames, k,
+                                      ROOMCAL_GENERATION) == ESP_OK;
+  }
+  if (!ok || audio_playout_enable() != ESP_OK) {
+    (void)playout_flush_checked("room-cal-start");
+    return ESP_FAIL;
+  }
+  audio_playout_completion_t d;
+  for (uint32_t idx = AUDIO_PLAYOUT_DMA_BLOCKS; idx < total; ++idx) {
+    const uint32_t rel = idx - ROOMCAL_LEAD_BLOCKS;
+    const uint32_t burst = rel / period_blocks;
+    const uint32_t off = rel % period_blocks;
+    const bool chirp = idx >= ROOMCAL_LEAD_BLOCKS && burst < (uint32_t)bursts &&
+                       off < chirp_blocks;
+    for (uint32_t f = 0; f < frames; ++f) {
+      const float v =
+          chirp ? gain * cal_chirp_value(kind, (double)(off * frames + f) / rate) : 0.0f;
+      block[2U * f] = v;
+      block[2U * f + 1U] = v;
+    }
+    /* Silence too, so the filters ring out naturally after each chirp. */
+    audio_eq_process(block, frames, 2, (int)rate);
+    const uint32_t muted = audio_receiver_get_output_mute_mask();
+    for (uint32_t f = 0; muted && f < frames; ++f) {
+      if (muted & 1U) block[2U * f] = 0.0f;
+      if (muted & 2U) block[2U * f + 1U] = 0.0f;
+    }
+    const audio_out_sample_t *out =
+        audio_out_from_float_block_inplace(block, (size_t)frames * 2U);
+    if (audio_playout_write_tagged(out, frames, idx, ROOMCAL_GENERATION) != ESP_OK ||
+        audio_playout_has_fault()) {
+      (void)playout_flush_checked("room-cal-write");
+      return ESP_FAIL;
+    }
+    while (audio_playout_poll_completion(&d)) {
+      roomcal_take(&d, rate, period_blocks, bursts, emit_us, n_emit);
+    }
+  }
+  /* The tail is longer than the DMA queue, so every chirp has completed by
+   * now; drain what is left. */
+  for (int i = 0; i < 10 && *n_emit < bursts; ++i) {
+    if (audio_playout_wait_completion(&d, pdMS_TO_TICKS(20))) {
+      roomcal_take(&d, rate, period_blocks, bursts, emit_us, n_emit);
+    }
+  }
+  (void)playout_flush_checked("room-cal-end");
+  return *n_emit == bursts ? ESP_OK : ESP_ERR_TIMEOUT;
+}
+
+esp_err_t audio_receiver_play_cal_chirps(int kind, int level_db, int bursts,
+                                         int64_t *emit_us, int *n_emit) {
+  if (!emit_us || !n_emit || bursts < 1) return ESP_ERR_INVALID_ARG;
+  *n_emit = 0;
+  if (__atomic_load_n(&s.rx_running, __ATOMIC_ACQUIRE) ||
+      realtime_receiver_is_running()) {
+    return ESP_ERR_INVALID_STATE; /* a stream is on */
+  }
+  if (__atomic_exchange_n(&s_roomcal_busy, true, __ATOMIC_ACQ_REL)) {
+    return ESP_ERR_INVALID_STATE;
+  }
+  if (level_db > 0) level_db = 0;
+  if (level_db < -60) level_db = -60;
+  float *block = malloc(AUDIO_PLAYOUT_FRAMES * 2U * sizeof(float));
+  esp_err_t err = block ? audio_receiver_release_for_wifi_scan() : ESP_ERR_NO_MEM;
+  if (err == ESP_OK) err = audio_playout_init();
+  if (err == ESP_OK) {
+    amp_control_session_connected();
+    vTaskDelay(pdMS_TO_TICKS(400)); /* amplifier start-up / anti-pop time */
+    err = roomcal_play(kind == CAL_CHIRP_LOW ? CAL_CHIRP_LOW : CAL_CHIRP_WIDE,
+                       powf(10.0f, (float)level_db / 20.0f), bursts, block,
+                       emit_us, n_emit);
+    amp_control_session_disconnected();
+  }
+  free(block);
+  /* Whatever happened, the engine is needed for the next stream. */
+  const esp_err_t init_err = audio_receiver_init();
+  __atomic_store_n(&s_roomcal_busy, false, __ATOMIC_RELEASE);
+  AP_LOGI(TAG, "ROOM CAL %s chirps at %d dBFS: %s, %d emitted",
+          kind == CAL_CHIRP_LOW ? "low" : "wide", level_db, esp_err_to_name(err),
+          *n_emit);
+  return err != ESP_OK ? err : init_err;
+}
 
 static esp_err_t playout_write(const audio_out_sample_t *blk, uint32_t frames,
                                uint32_t rtp, uint32_t generation) {
@@ -3912,10 +4049,10 @@ static void ap2_playout_task(void *arg) {
      * The PID math and the clock retune run every 1 s. A retune is a live
      * write of the fractional divider, dithered per block so every integer
      * ppm is exact on average; I2S and the DMA/tag chronology keep running.
-     * +/-1 ms is deliberately treated as GOOD: once there and
-     * phase velocity is modest, the PID stops acting and a slow centring loop
-     * (AP2_CENTER_*) steers towards 0 ms with at most one small step
-     * per 15 s window, based on a least-squares slope of the measured sync.
+     * +/-AP2_PID_DEADBAND_US is treated as GOOD: once there and phase
+     * velocity is modest, the PID stops acting and the centring loop
+     * (AP2_CENTER_*) steers towards 0 ms with small steps, based on a
+     * least-squares slope of the measured sync.
      */
     const int64_t pid_now_us = esp_timer_get_time();
     if (write_err == ESP_OK && s.output_sync.valid &&
@@ -3946,9 +4083,9 @@ static void ap2_playout_task(void *arg) {
           ? -s.output_sync.us : s.output_sync.us;
       const bool in_deadband = abs_sync_us <= AP2_PID_DEADBAND_US;
 
-      /* In the 1..2 ms soft band reduce proportional aggression.  Outside
-       * 2 ms use full P.  This prevents unnecessary hunting once we are already
-       * close enough for multiroom use. */
+      /* In the soft band (deadband..softband) reduce proportional
+       * aggression; outside it use full P. This prevents unnecessary hunting
+       * once we are already close. */
       double p_error_ms = error_ms;
       if (abs_sync_us > AP2_PID_DEADBAND_US &&
           abs_sync_us <= AP2_PID_SOFTBAND_US) {
@@ -3959,7 +4096,7 @@ static void ap2_playout_task(void *arg) {
       const double d_term = AP2_PID_KD_PPM_PER_MS_PER_S * pid_d_filtered_ms_s;
 
       /* Candidate integral update with anti-windup.  We integrate outside the
-       * +/-1 ms good zone.  If P+I+D is already saturated in the same direction
+       * good zone.  If P+I+D is already saturated in the same direction
        * as the error, freeze I; if the error would pull us out of saturation,
        * allow it to unwind. */
       double i_term = AP2_PID_KI_PPM_PER_MS_S * pid_integral_ms_s;
@@ -4052,8 +4189,9 @@ static void ap2_playout_task(void *arg) {
             center_stt += t_s * t_s; center_sty += t_s * y;
           }
           const double den = center_n * center_stt - center_st * center_st;
+          const int64_t fit_span_us = pid_now_us - center_start_us;
           if (!restart_window && center_n >= 5.0 && den > 0.0 &&
-              pid_now_us - center_start_us >= AP2_CENTER_WINDOW_US) {
+              fit_span_us >= AP2_CENTER_MIN_FIT_US) {
             const double slope_us_s = (center_n * center_sty - center_st * center_sy) / den;
             const double icpt = (center_sy - slope_us_s * center_st) / center_n;
             const double t_end = (double)(pid_now_us - center_start_us) / 1000000.0;
@@ -4074,8 +4212,13 @@ static void ap2_playout_task(void *arg) {
               if (pid_integral_ms_s < -i_limit_state) pid_integral_ms_s = -i_limit_state;
               pevt_post(PEVT_CENTER, sync_fit_us,
                         (int32_t)(slope_us_s * 10.0), t, 0, 0, NULL);
+              /* The slope changes with the step: fit it afresh. */
+              restart_window = true;
+            } else if (fit_span_us >= AP2_CENTER_WINDOW_US) {
+              /* On target: start a fresh fit, so old samples do not hide a
+               * slow change of the crystal. */
+              restart_window = true;
             }
-            restart_window = true;
           }
         }
         if (restart_window) {

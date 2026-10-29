@@ -14,6 +14,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
+#include "gw_calib.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -33,6 +34,8 @@ static const char *TAG = "gw_speakers";
 #define GW_FRAME_MAX          (3U + SURROUND_MAX_PAYLOAD)
 #define GW_BSSID_REFRESH_MS   2000
 #define GW_TIME_LOG_MS        10000
+/* A speaker playing calibration chirps answers within this time. */
+#define GW_CAL_LINK_GRACE_US  (15LL * 1000000LL)
 
 typedef enum {
   SPK_FREE = 0,
@@ -60,6 +63,9 @@ typedef struct {
   bool audio_pending;
   int64_t audio_pending_since_us;
   int64_t last_rx_us;
+  /* CAL_PLAY sent: the speaker plays chirps and is silent meanwhile, so the
+   * link timeout waits until this time. 0 = none. */
+  int64_t cal_until_us;
   uint8_t rx[GW_FRAME_MAX];
   size_t rx_have;
 } gw_speaker_t;
@@ -94,6 +100,8 @@ static uint32_t s_audio_gen;
 static uint32_t s_next_audio_id;
 /* Sender time (TIME messages); used by the speakers task only. */
 static tsf_fit_t s_tsf;
+/* A copy for other tasks (room calibration), under s_lock. */
+static tsf_fit_t s_tsf_shared;
 static uint8_t s_bssid[6];
 static int64_t s_bssid_read_us;
 static int64_t s_time_log_us;
@@ -264,6 +272,12 @@ void gw_speakers_send(surround_msg_type_t type, const void *payload,
 
 /* Caller holds s_lock. */
 static void handle_hello(gw_speaker_t *sp, const uint8_t *p, size_t len) {
+  if (sp->state != SPK_CONNECTED) {
+    /* Once per connection: a second HELLO must not move a speaker that is
+     * playing back to "waiting". */
+    AP_LOGW(TAG, "speaker %s: repeated HELLO ignored", spk_label(sp));
+    return;
+  }
   surround_hello_t h;
   if (len != sizeof(h)) {
     AP_LOGW(TAG, "%s: HELLO of %u bytes, expected %u", sp->ip, (unsigned)len,
@@ -332,6 +346,14 @@ static void handle_message(gw_speaker_t *sp, uint8_t type, const uint8_t *p,
       AP_LOGI(TAG, "speaker %s: channel %d, trim %.1f dB, delay %" PRId32 " us",
               spk_label(sp), (int)sp->config.channel,
               sp->config.trim_db10 / 10.0, sp->config.delay_us);
+      break;
+    }
+    case SURROUND_MSG_CAL_RESULT: {
+      surround_cal_result_t r;
+      if (len != sizeof(r)) break;
+      memcpy(&r, p, sizeof(r));
+      sp->cal_until_us = 0;
+      gw_calib_on_result(sp->hello.mac, &r);
       break;
     }
     case SURROUND_MSG_START_RESULT: {
@@ -427,6 +449,9 @@ static void time_tick(int64_t now_us) {
     AP_LOGW(TAG, "TSF stepped (access point restarted or changed): time fit "
                  "restarted");
   }
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  s_tsf_shared = s_tsf;
+  xSemaphoreGive(s_lock);
   surround_time_t m = {0};
   int64_t tsf_now_ns = 0;
   if (!tsf_fit_tsf_at(&s_tsf, local_ns, &tsf_now_ns)) return;
@@ -588,7 +613,8 @@ static void speakers_task(void *arg) {
       if (sp->dead) {
         close_speaker(sp, "send failed");
       } else if (now_us - sp->last_rx_us >
-                 (int64_t)SURROUND_LINK_TIMEOUT_MS * 1000LL) {
+                     (int64_t)SURROUND_LINK_TIMEOUT_MS * 1000LL &&
+                 now_us >= sp->cal_until_us) {
         close_speaker(sp, sp->state == SPK_CONNECTED ? "no HELLO"
                                                      : "no answer to PING");
       } else if (ping && sp->state != SPK_CONNECTED) {
@@ -642,6 +668,41 @@ esp_err_t gw_speakers_set_config(const uint8_t mac[6],
   }
   xSemaphoreGive(s_lock);
   return err;
+}
+
+esp_err_t gw_speakers_cal_play(const uint8_t mac[6],
+                               const surround_cal_play_t *m) {
+  if (!s_lock || !m) return ESP_ERR_INVALID_STATE;
+  esp_err_t err = ESP_ERR_NOT_FOUND;
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  for (size_t i = 0; i < SURROUND_MAX_SPEAKERS; ++i) {
+    gw_speaker_t *sp = &s_spk[i];
+    if (sp->fd < 0 || sp->dead || sp->state == SPK_CONNECTED ||
+        memcmp(sp->hello.mac, mac, sizeof(sp->hello.mac)) != 0)
+      continue;
+    send_frame(sp, SURROUND_MSG_CAL_PLAY, m, sizeof(*m));
+    sp->cal_until_us = esp_timer_get_time() + GW_CAL_LINK_GRACE_US;
+    err = sp->dead ? ESP_FAIL : ESP_OK;
+    break;
+  }
+  xSemaphoreGive(s_lock);
+  return err;
+}
+
+bool gw_speakers_local_to_tsf(int64_t local_ns, int64_t *tsf_ns) {
+  if (!s_lock) return false;
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  const bool ok = tsf_fit_tsf_at(&s_tsf_shared, local_ns, tsf_ns);
+  xSemaphoreGive(s_lock);
+  return ok;
+}
+
+bool gw_speakers_tsf_to_local(int64_t tsf_ns, int64_t *local_ns) {
+  if (!s_lock) return false;
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  const bool ok = tsf_fit_local_at(&s_tsf_shared, tsf_ns, local_ns);
+  xSemaphoreGive(s_lock);
+  return ok;
 }
 
 uint32_t gw_speakers_audio_generation(void) {

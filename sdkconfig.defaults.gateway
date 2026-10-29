@@ -6,12 +6,13 @@ CONFIG_AIRPLAY_ROLE_GATEWAY=y
 # No amplifier on the Gateway.
 CONFIG_AIRPLAY_AMP_CONTROL=n
 
-# Up to 8 speakers, each with a control and (from step 3) an audio TCP
-# connection, next to RTSP, event, PTP, mDNS and web sockets.
+# Up to 8 speakers, each with a control and an audio TCP connection, next to
+# RTSP, event, PTP, mDNS, realtime relay and web sockets.
 CONFIG_LWIP_MAX_SOCKETS=32
 CONFIG_LWIP_MAX_ACTIVE_TCP=32
 
-# Step 1 checks the forwarded calls in the log: keep the runtime event logs.
+# The forwarded calls (FWD ...) and relay statistics are runtime event logs:
+# keep them on the Gateway.
 CONFIG_AIRPLAY_LOG_RUNTIME=y
 
 # The Gateway is watched over its USB port: make USB Serial/JTAG the primary

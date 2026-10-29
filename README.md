@@ -178,6 +178,7 @@ With stereo the subwoofer gets the full-range mix; a low-pass on its EQ page
 |---|---|
 | **One ESP32-S3 board**, the same type as the speakers (N8R8) | It has no audio output: no DAC, no amplifier, no wiring. A USB supply is all it needs. |
 | **A place with a good signal** | It receives the stream from the Apple TV and sends it again to every speaker, so it carries the most Wi-Fi traffic. Near the access point is best. |
+| *Optional:* **INMP441 I2S microphone** | For [room calibration](#room-calibration): VDD → 3V3, GND and L/R → GND, SCK → GPIO 5, WS → GPIO 6, SD → GPIO 4 (changeable in `menuconfig`). |
 
 ### Per speaker (one set for every position)
 
@@ -216,7 +217,8 @@ of the dialogue**, so build it early.
 
 ## Assembly and wiring
 
-The Gateway needs no wiring. Everything below is for the speakers.
+The Gateway needs no wiring (only the optional calibration microphone, see
+[What you need](#the-gateway)). Everything below is for the speakers.
 
 > [!NOTE]
 > The GPIOs below are the defaults and can be changed in `menuconfig`
@@ -380,9 +382,8 @@ idf.py -p /dev/cu.usbmodem101 build flash monitor
 ```
 
 On macOS list the ports with `ls /dev/cu.*`; on Windows the port is `COMx`,
-on Linux usually `/dev/ttyACM0`. The Gateway's log goes to its USB port
-(USB Serial/JTAG); a speaker's log goes to UART0 (GPIO 43/44) and to its
-`/logs` page.
+on Linux usually `/dev/ttyACM0`. Every board's log goes to its USB port
+(USB Serial/JTAG, so `idf.py monitor` shows it) and to its `/logs` page.
 
 ### 6. Updates
 
@@ -507,6 +508,37 @@ role.
 | **Left / Right Output Filters** | two independent chains of up to **24 biquad filters** each: peak, low-pass, high-pass, band-pass, notch, low shelf, high shelf; a **preamp** and a **mute** button per output |
 | **Apply & Save** | applies live and stores in flash |
 
+### Room calibration
+
+With an INMP441 microphone on the Gateway, the speakers page measures every
+speaker from your seat and suggests its **delay** and **level**:
+
+1. Put the Gateway with its microphone at your listening seat, at ear
+   height, on a power bank if needed. Keep the room quiet.
+2. If the Apple TV is connected, **Calibrate** disconnects it for the
+   measurement (the speakers can only chirp between streams). Afterwards
+   pick the Gateway again as its audio output.
+3. **Test mic** checks the microphone and shows the room noise.
+4. **Calibrate**: each speaker in turn plays four short chirps through its
+   own EQ (a 2-way speaker's crossover protects the tweeter), quietly first
+   and louder only if the microphone does not hear them clearly.
+5. The table shows every speaker's distance, suggested delay (the farthest
+   gets 0 ms) and level (the quietest gets 0 dB). **Apply to speakers**
+   saves them like a manual edit; **Discard** changes nothing.
+
+The microphone is checked first, while music may still play. Without a
+microphone signal the speakers still play their chirps one after another
+(so you hear that each one works), and the panel says nothing was measured.
+
+<a href="images/speakers-page-calibration.png"><img src="images/speakers-page-calibration.png" alt="Room calibration panel after a run without a microphone: every speaker played its chirps, nothing measured" width="100%"></a>
+
+How it measures: a speaker does not have to chirp at an exact moment. It
+plays when it can and reports when each chirp left it, on the access point's
+TSF (its output latency included); the Gateway finds the chirps in its
+recording on the same TSF. The difference is the sound's travel time, with
+no cable to any speaker. The subwoofer gets a low chirp and a delay, but its
+level is left for you to set by ear.
+
 ### Other pages (every board)
 
 - **`/logs`**: live log of the board over WebSocket.
@@ -610,7 +642,7 @@ Apple TV's time through the access point:
 
 | Stream | How the Gateway passes it on |
 |---|---|
-| **Buffered** (type 103: music, films) | one TCP connection per speaker, a copy of the Apple TV's. TCP backpressure makes the slowest speaker pace the Apple TV, so nobody falls behind and the Gateway keeps no buffer. Speakers keep up to ~90 s of compressed audio. |
+| **Buffered** (type 103: music, films) | one TCP connection per speaker, a copy of the Apple TV's. TCP backpressure makes the slowest speaker pace the Apple TV, so nobody falls behind and the Gateway keeps no buffer. Speakers keep up to ~90 s of compressed audio. The fill is paced at twice real time after a 2 s start: sent at full speed to every speaker at once, it kept the Wi-Fi so busy that the Apple TV's clock packets arrived late. |
 | **Realtime** (type 96: screen mirroring, system audio) | every UDP audio and sync packet is copied to each speaker's ports. A speaker that misses a packet asks the Gateway; several requests for the same packet reach the Apple TV once. |
 
 A speaker that connects in the middle of a session gets the session's
@@ -654,6 +686,7 @@ are listed in
 | Speaker link | `speaker/main/spk_link.c` | finds the Gateway, runs every forwarded call locally (`CMD …`) |
 | Protocol | `common/surround/surround_proto.h` | message types and payloads, versioned |
 | Audio engine | `speaker/main/audio` | FIFO, FDK AAC / ALAC decode, PCM store, I2S playout and servo |
+| Room calibration | `main/gw_calib.c`, `main/gw_mic.c`, `common/surround/cal_chirp.c` | microphone capture, chirp search, suggestions (`gw_calib` in the log); the speaker side plays the chirps (`ROOM CAL …`) |
 
 ## Measuring sync
 
@@ -677,6 +710,7 @@ are listed in
 - **Experimental.** Tested with one Apple TV, a Gateway and two speakers
   playing together (three connected): 7.1 and stereo AAC, skip, seek, pause,
   volume, role and level changes while playing, a second sender taking over.
+- **Room calibration** is written but not yet tested with a microphone.
 - **Not yet tested:** realtime (screen mirroring, system audio) through the
   Gateway, the stereo routing to front pair and subwoofer, oscilloscope
   measurements, more than three speakers, a weak Wi-Fi signal.
@@ -704,6 +738,7 @@ are listed in
 |---|---|
 | A speaker does not appear on `/speakers` | Same Wi-Fi as the Gateway; its log says `connected to Gateway …`. If mDNS is filtered, set **Surround Build Role → Gateway IPv4 address** on the speaker. |
 | A speaker still shows up as an AirPlay speaker on an iPhone | It runs an old firmware from before the Gateway design: update it. |
+| Which build does a speaker run? | Its tile shows `fw v4.5.5 7c5d1e74`: the version plus a code that changes with every build. A speaker on a different build than the others is marked; the Gateway's own is under the page title. |
 | A speaker connects and drops again | `protocol version …, Gateway speaks …` in the Gateway log: update both to the same firmware. |
 | A speaker is silent after joining | Wait for the next skip or seek (`speaker … joins at this FLUSH`). Then its role on `/speakers`, the **Mute** buttons on its EQ page, the PCM5102A **XSMT** jumper, the BCLK / LRCK / DATA wiring. |
 | `no common TSF, no sender time` on a speaker | It is on another access point (or mesh node) than the Gateway. |
@@ -718,7 +753,7 @@ Every board streams its log to `http://<board-ip>/logs`. Useful lines:
 | Line | Where | Meaning |
 |---|---|---|
 | `FWD set_format AAC 48000 Hz …` | Gateway | an Apple TV instruction forwarded to the speakers |
-| `RELAY rx … \| RELAY tx Front:live …` | Gateway | audio in from the Apple TV and out to each speaker |
+| `RELAY rx … \| paced … ms \| … RELAY tx Front:live …` | Gateway | audio in from the Apple TV and out to each speaker; how long the fill was held back |
 | `RT RELAY data … pkts -> N speakers \| NACK …` | Gateway | realtime audio and retransmit requests |
 | `control connection from …` / `speaker … joins at this FLUSH` | Gateway | a speaker connected / started playing |
 | `TIME tsf fit 64 samples -31.0 ppm rms 4.5 us … locked=1` | both | TSF fit quality and the Apple TV clock's state |
