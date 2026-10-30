@@ -28,6 +28,8 @@ set(GATEWAY_SRCS
     "hap/tlv8.c"
     "gw_proxy.c"
     "gw_relay.c"
+    "gw_timeline.c"
+    "gw_fw.c"
     "gw_rt_relay.c"
     "gw_speakers.c"
     "gw_mic.c"
@@ -40,7 +42,7 @@ endif()
 idf_component_register(
     SRCS ${AIRPLAY_COMMON_SRCS} ${GATEWAY_SRCS}
     INCLUDE_DIRS "." "rtsp" "plist" "hap" ${AIRPLAY_COMMON_INCLUDE_DIRS}
-    PRIV_REQUIRES ${AIRPLAY_COMMON_PRIV_REQUIRES} esp_driver_i2s
+    PRIV_REQUIRES ${AIRPLAY_COMMON_PRIV_REQUIRES} esp_driver_i2s esp_partition
 )
 
 airplay_embed_web_pages(index logs speedtest speakers)

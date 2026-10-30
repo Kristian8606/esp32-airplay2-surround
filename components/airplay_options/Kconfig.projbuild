@@ -93,14 +93,6 @@ menu "AirPlay Receiver"
         int "Setup AP channel"
         default 1
         range 1 13
-    config WIFI_PREFER_5GHZ
-        bool "Prefer 5 GHz when available"
-        default n
-    config WIFI_PREFER_5GHZ_MIN_RSSI
-        int "Minimum 5 GHz RSSI"
-        default -75
-        range -95 -30
-        depends on WIFI_PREFER_5GHZ
     config ENABLE_AIRPLAY_ARTWORK
         bool "Advertise artwork support"
         default n
@@ -182,22 +174,24 @@ menu "Multichannel Experiment"
             I2S follows the input rate, with a short silence at each switch.
 
     choice AIRPLAY_MULTICHANNEL_SPEAKER
-        prompt "Default speaker this receiver plays"
+        prompt "Default speaker this speaker plays"
         depends on AIRPLAY_MULTICHANNEL
         default AIRPLAY_MC_SPEAKER_L
         help
-            Which speaker of the 5.1/7.1 stream goes to this receiver's
+            Which speaker of the 5.1/7.1 stream goes to this speaker's
             output (the same signal on both I2S slots, L = R). This is only
-            the default: the Audio EQ page (/eq, card "Source") changes it
-            live and remembers the choice across reboots.
+            the default: the Gateway's Speakers page (Role) changes it live
+            and the speaker remembers the choice across reboots.
 
             The speaker is found by name, not by a fixed channel number, so
             the same setting works for 5.1 and 7.1. For 7.1, Apple TV sends
             AAC channel configuration 7: C, pair, pair, pair, LFE. The names
-            below follow Apple's 7.1 order (C L R Ls Rs Lrs Rrs LFE); the
-            ISO reading of configuration 7 would instead call the first pair
-            "front centre" and the second pair L/R. Check with a 7.1 speaker
-            test; if Front L/R and Side L/R come out swapped, that is why.
+            below follow the 7.1 order C L R Ls Rs Lrs Rrs LFE (Apple's
+            AAC_7_1_B; FFmpeg and Shairport Sync read configuration 7 the
+            same way); the ISO reading of configuration 7 would instead call
+            the first pair "front centre" and the second pair L/R. Check
+            with a 7.1 speaker test; if Front L/R and Side L/R come out
+            swapped, that is why.
 
             Typical 7.1 placement (listener in the middle, facing the TV):
               Front L/R  ~ 30 deg left/right of the screen
@@ -205,7 +199,9 @@ menu "Multichannel Experiment"
               Side L/R   ~ 90-110 deg, beside the listener
               Rear L/R   ~ 135-150 deg, behind the listener
               LFE        subwoofer (low-frequency effects, < ~120 Hz)
-            With 5.1 there are no rear speakers: Rear L/R play Side L/R.
+            Every channel plays only on its own speaker: with 5.1 the stream
+            has no rear channels, so Rear L/R are silent; with 7.1 and no
+            rear speakers the rear channels are not heard.
 
         config AIRPLAY_MC_SPEAKER_L
             bool "Front Left (L)"

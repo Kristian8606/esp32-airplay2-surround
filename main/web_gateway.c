@@ -10,6 +10,7 @@
 #include "cJSON.h"
 #include "esp_http_server.h"
 #include "gw_calib.h"
+#include "gw_fw.h"
 #include "gw_speakers.h"
 #include "audio_receiver.h"
 #include "rtsp_remote.h"
@@ -38,6 +39,7 @@ static esp_err_t speakers_get_handler(httpd_req_t *req) {
     cJSON_AddStringToObject(o, "ip", sp->ip);
     cJSON_AddStringToObject(o, "mac", mac);
     cJSON_AddStringToObject(o, "firmware", sp->firmware);
+    if (sp->fw_update) cJSON_AddStringToObject(o, "fw_update", sp->fw_update);
     cJSON_AddStringToObject(o, "state", sp->state);
     cJSON_AddBoolToObject(o, "audio", sp->audio);
     if (sp->config_valid) {
@@ -302,6 +304,45 @@ bool web_role_source_idle(void) { return rtsp_server_is_idle(); }
 
 esp_err_t web_role_source_start(void) { return rtsp_server_start(); }
 
+/* ---- Speaker firmware the Gateway hands out (gw_fw.c) ---- */
+static esp_err_t speaker_fw_get_handler(httpd_req_t *req) {
+  gw_fw_image_t img;
+  gw_fw_get(&img);
+  gw_fw_busy_t busy;
+  gw_speakers_fw_busy(&busy);
+  cJSON *r = cJSON_CreateObject();
+  cJSON_AddBoolToObject(r, "success", true);
+  cJSON_AddBoolToObject(r, "stored", img.valid);
+  cJSON_AddNumberToObject(r, "capacity", (double)gw_fw_capacity());
+  if (img.valid) {
+    cJSON_AddStringToObject(r, "build", img.id);
+    cJSON_AddNumberToObject(r, "size", img.size);
+  }
+  if (img.valid && img.halted) cJSON_AddStringToObject(r, "halted_by", img.halted_by);
+  if (busy.active) {
+    cJSON *b = cJSON_AddObjectToObject(r, "updating");
+    cJSON_AddStringToObject(b, "name", busy.name);
+    cJSON_AddStringToObject(b, "ip", busy.ip);
+    cJSON_AddNumberToObject(b, "seconds", busy.seconds);
+  }
+  web_send_json(req, r);
+  return ESP_OK;
+}
+static esp_err_t speaker_fw_post_handler(httpd_req_t *req) {
+  if (!web_admin_ok(req)) return ESP_OK;
+  const char *why = NULL;
+  const esp_err_t err = gw_fw_receive(req, &why);
+  cJSON *r = cJSON_CreateObject();
+  cJSON_AddBoolToObject(r, "success", err == ESP_OK);
+  if (err != ESP_OK) cJSON_AddStringToObject(r, "error", why ? why : esp_err_to_name(err));
+  gw_fw_image_t img;
+  gw_fw_get(&img);
+  if (img.valid) cJSON_AddStringToObject(r, "build", img.id);
+  web_send_json(req, r);
+  return ESP_OK;
+}
+static esp_err_t speaker_fw_bin_handler(httpd_req_t *req) { return gw_fw_serve(req); }
+
 void web_role_register(httpd_handle_t server) {
 #define REG(U, M, H)                                                     \
   do {                                                                   \
@@ -315,5 +356,8 @@ void web_role_register(httpd_handle_t server) {
   REG("/api/audio/remote", HTTP_POST, remote_post_handler);
   REG("/api/calibration", HTTP_GET, calibration_get_handler);
   REG("/api/calibration", HTTP_POST, calibration_post_handler);
+  REG("/api/speakers/firmware", HTTP_GET, speaker_fw_get_handler);
+  REG("/api/speakers/firmware", HTTP_POST, speaker_fw_post_handler);
+  REG(SURROUND_FW_PATH, HTTP_GET, speaker_fw_bin_handler);
 #undef REG
 }

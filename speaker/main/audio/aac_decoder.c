@@ -52,6 +52,7 @@ struct aac_decoder {
   char mc_label[MC_MAX_CHANNELS][16];
   int mc_applied_speaker; /* speaker the synth mask is set for; -2 = none */
   int mc_play_channel;    /* decoded channel played, -1 = mono mix */
+  bool mc_silent;         /* the speaker's channel is not in the stream */
   int64_t mc_time_sum_us;
   int64_t mc_time_max_us;
   uint32_t mc_time_frames;
@@ -188,6 +189,7 @@ static bool open_fdk_decoder(aac_decoder_t *d) {
 #if AAC_MULTICHANNEL
   d->mc_applied_speaker = -2;
   d->mc_play_channel = -1;
+  d->mc_silent = false;
   d->mc_lfe_index = -1;
   if (d->config.channels > 2) aacDecoder_SetTimeHook(d->fdk, mc_clock_us);
 #endif
@@ -259,10 +261,16 @@ static int mc_count(const CStreamInfo *si, AUDIO_CHANNEL_TYPE type) {
  * (configuration 6) is unambiguous: front C/L/R, back = surround pair. For
  * 7.1, Apple TV sends configuration 7, which FDK (following ISO) reports as
  * five fronts + two backs: front #0 = C, #1/#2 and #3/#4 = two pairs. ISO
- * calls #1/#2 "left/right centre" and #3/#4 L/R; Apple's 7.1 order (C L R
- * Ls Rs Lrs Rrs LFE) makes #1/#2 L/R, #3/#4 the side pair and the backs the
- * rear pair. We follow Apple: in the first test the #1/#2 pair carried the
- * most energy of an upmixed stereo song, as main L/R should. */
+ * calls #1/#2 "left/right centre" and #3/#4 L/R; in practice (Apple's
+ * kAudioChannelLayoutTag_AAC_7_1_B, Nero, FFmpeg and so Shairport Sync)
+ * #1/#2 are L/R, #3/#4 the side pair and the backs the rear pair. We follow
+ * that: in the first test the #1/#2 pair carried the most energy of an
+ * upmixed stereo song, as main L/R should. Configuration 12 (7.1 with rear
+ * surrounds, ISO amendment) is reported as three fronts + four backs: backs
+ * #0/#1 are the side pair, #2/#3 the rear pair.
+ *
+ * A speaker whose channel is not in the stream stays silent (-1), e.g. the
+ * rear pair with 5.1: every channel plays only on its own speaker. */
 static void mc_build_speaker_map(aac_decoder_t *d, const CStreamInfo *si) {
   int8_t *m = d->mc_speaker_channel;
   for (int s = 0; s < AAC_SPEAKER_COUNT; ++s) m[s] = -1;
@@ -279,25 +287,23 @@ static void mc_build_speaker_map(aac_decoder_t *d, const CStreamInfo *si) {
   m[AAC_SPEAKER_L] = (int8_t)mc_find(si, ACT_FRONT, lr);
   m[AAC_SPEAKER_R] = (int8_t)mc_find(si, ACT_FRONT, lr + 1);
   m[AAC_SPEAKER_LFE] = (int8_t)mc_find(si, ACT_LFE, 0);
-  bool rear_pair = false;
+  int rear = -1; /* back index of the rear pair, -1 = none in the stream */
   if (sides >= 2) {
     m[AAC_SPEAKER_LS] = (int8_t)mc_find(si, ACT_SIDE, 0);
     m[AAC_SPEAKER_RS] = (int8_t)mc_find(si, ACT_SIDE, 1);
-    rear_pair = backs >= 2;
-  } else if (fronts >= lr + 4) { /* Apple 7.1 in configuration 7 */
+    if (backs >= 2) rear = 0;
+  } else if (fronts >= lr + 4) { /* 7.1 in configuration 7 */
     m[AAC_SPEAKER_LS] = (int8_t)mc_find(si, ACT_FRONT, lr + 2);
     m[AAC_SPEAKER_RS] = (int8_t)mc_find(si, ACT_FRONT, lr + 3);
-    rear_pair = backs >= 2;
-  } else if (backs >= 2) { /* 5.1: the backs are the surround pair */
+    if (backs >= 2) rear = 0;
+  } else if (backs >= 2) { /* 5.1, or 7.1 in configuration 12 */
     m[AAC_SPEAKER_LS] = (int8_t)mc_find(si, ACT_BACK, 0);
     m[AAC_SPEAKER_RS] = (int8_t)mc_find(si, ACT_BACK, 1);
+    if (backs >= 4) rear = 2;
   }
-  if (rear_pair) {
-    m[AAC_SPEAKER_LRS] = (int8_t)mc_find(si, ACT_BACK, 0);
-    m[AAC_SPEAKER_RRS] = (int8_t)mc_find(si, ACT_BACK, 1);
-  } else {
-    m[AAC_SPEAKER_LRS] = m[AAC_SPEAKER_LS];
-    m[AAC_SPEAKER_RRS] = m[AAC_SPEAKER_RS];
+  if (rear >= 0) {
+    m[AAC_SPEAKER_LRS] = (int8_t)mc_find(si, ACT_BACK, rear);
+    m[AAC_SPEAKER_RRS] = (int8_t)mc_find(si, ACT_BACK, rear + 1);
   }
   d->mc_lfe_index = m[AAC_SPEAKER_LFE];
   d->mc_channels = si->numChannels;
@@ -310,7 +316,6 @@ static void mc_build_speaker_map(aac_decoder_t *d, const CStreamInfo *si) {
              si->pChannelIndices[c]);
     const char *speaker = "-";
     for (int s = 0; s < AAC_SPEAKER_COUNT; ++s) {
-      /* First match wins, so a 5.1 side pair is named Side, not Rear. */
       if (m[s] == c) {
         speaker = aac_speaker_name(s);
         break;
@@ -337,17 +342,24 @@ static void mc_apply_speaker(aac_decoder_t *d) {
   if (speaker == d->mc_applied_speaker) return;
   const int channel =
       (speaker >= 0 && speaker < AAC_SPEAKER_COUNT) ? d->mc_speaker_channel[speaker] : -1;
+  const bool silent = speaker >= 0 && channel < 0;
   if (channel >= 0) {
     aacDecoder_SetSynthChannel(d->fdk, d->mc_type[channel], d->mc_index[channel]);
+  } else if (silent) {
+    /* Nothing of this stream is played: synthesize only the cheapest
+     * channel (LFE if there is one) and output silence. */
+    const int keep = d->mc_lfe_index >= 0 ? d->mc_lfe_index : 0;
+    aacDecoder_SetSynthChannel(d->fdk, d->mc_type[keep], d->mc_index[keep]);
   } else {
     aacDecoder_SetSynthChannel(d->fdk, ACT_NONE, 0);
   }
   d->mc_applied_speaker = speaker;
   d->mc_play_channel = channel;
+  d->mc_silent = silent;
   audio_log_surround_playback(TAG, d->config.sample_rate, d->mc_channels,
-                              aac_speaker_name(speaker), channel);
+                              aac_speaker_name(speaker), silent ? -2 : channel);
   mc_publish_status(true, channel, d->mc_channels,
-                    channel >= 0 ? d->mc_label[channel] : "mix");
+                    channel >= 0 ? d->mc_label[channel] : silent ? "silent" : "mix");
 }
 
 /* At the start of a stream and then every MC_TIMING_EVERY frames. In the
@@ -518,7 +530,9 @@ static int mc_decode(aac_decoder_t *d, const uint8_t *data, size_t len,
 
 #if AAC_MULTICHANNEL
   const int pick = d->mc_play_channel;
-  if (fast) {
+  if (ch >= 3 && d->mc_silent) {
+    memset(output, 0, frames * 2U * sizeof(*output));
+  } else if (fast) {
     /* FDK wrote just the played channel, mono. */
     mc_pick_channel(d->mc_pcm, 1, 0, frames, output);
   } else if (ch >= 3 && pick >= 0 && pick < ch) {

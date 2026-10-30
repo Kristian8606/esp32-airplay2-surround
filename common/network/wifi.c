@@ -462,7 +462,7 @@ void wifi_init_apsta(const char *ap_ssid, const char *ap_password) {
   strncpy((char *)s_ap_config.ap.ssid, default_ssid,
           sizeof(s_ap_config.ap.ssid) - 1);
   s_ap_config.ap.ssid_len = strlen(default_ssid);
-  s_ap_config.ap.channel = 1;
+  s_ap_config.ap.channel = CONFIG_DEFAULT_AP_CHANNEL;
   s_ap_config.ap.max_connection = 4;
 
   if (strlen(default_password) == 0) {

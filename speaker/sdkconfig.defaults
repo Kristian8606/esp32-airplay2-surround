@@ -11,3 +11,9 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../partitions.csv"
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 # CONFIG_ESP_CONSOLE_UART_CUSTOM is not set
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# Firmware from the Gateway (spk_update.c): a new image that does not reach
+# the Gateway (crash at boot, no link) goes back to the previous one at the
+# next restart. spk_update_confirm() marks it good on the first PING/TIME.
+# Needs the bootloader of this build: flash the speaker once over USB.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

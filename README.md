@@ -387,16 +387,40 @@ on Linux usually `/dev/ttyACM0`. Every board's log goes to its USB port
 
 ### 6. Updates
 
-Later versions can be installed **over Wi-Fi**: on the board's main page,
-**Firmware Update** → choose `speaker/build/airplay-speaker_<version>.bin`
-for a speaker or `build/airplay-gateway_<version>.bin` for the Gateway →
-**Upload Firmware**. The web interface is part of the firmware and is updated
-with it.
+Later versions are installed **over Wi-Fi**:
+
+- **Gateway:** on its main page, **Firmware Update** → choose
+  `build/airplay-gateway_<version>.bin` → **Upload Firmware**.
+- **Speakers, all at once:** on the Gateway's **speakers page**, panel
+  **Speaker firmware** → **Choose .bin** →
+  `speaker/build/airplay-speaker_<version>.bin` → **Upload**. The Gateway
+  keeps it in its otherwise unused `storage` partition (1.9 MB) and every
+  speaker with another build installs it by itself: one at a time and right
+  away, also a speaker that was switched off and comes back later. A speaker
+  that is playing stops its stream for the update (the others play on),
+  checks size and SHA-256 and restarts into the new firmware at once; in a
+  buffered stream (music, films) it plays again from the next track, skip or
+  seek, in a realtime stream at once. Nothing waits for the playback to end;
+  only a running room calibration holds the update back. Each tile shows
+  `will update`, `updating…` or `update failed` (after three tries). If a
+  speaker restarts and does not come back with the new build within
+  3 minutes, the update **stops** there (`update stopped`)
+  instead of going on to the next speaker; check that speaker, then upload the
+  firmware again to continue. A new speaker firmware that cannot reach the
+  Gateway (crashes at boot, no link) goes back to the previous one at its next
+  restart (app rollback). The rollback needs the bootloader of v4.5.11 or
+  later: flash every speaker once over USB (`idf.py flash` in `speaker/`).
+- **One speaker by hand:** its own main page, **Firmware Update**, as for the
+  Gateway.
+
+The web interface is part of the firmware and is updated with it.
 
 > [!IMPORTANT]
-> **Update the Gateway and all speakers together.** The control protocol is
-> versioned; a speaker with an older firmware is refused by the Gateway
-> (`protocol version …, Gateway speaks …` in its log) until it is updated.
+> **Speakers older than v4.5.9 cannot update from the Gateway** and need this
+> once by hand on their own page. From v4.5.9 on the Gateway also updates
+> speakers whose control protocol differs from its own (`protocol version …,
+> Gateway speaks …` in its log), so a new Gateway brings the speakers up to it.
+> A speaker image larger than the `storage` partition is refused on upload.
 
 ## First start
 
@@ -628,15 +652,48 @@ Apple TV's time through the access point:
    microsecond timer carried in every beacon. Each board reads its TSF
    together with its own clock and fits a line through the last 64 such
    readings (outliers dropped), which averages out the reading jitter.
-2. Eight times a second the Gateway sends **TIME**: the Apple TV's PTP time
-   and the TSF at the same instant, with the clock's identity and state.
+2. Eight times a second the Gateway sends **TIME**: a straight line on the
+   TSF, "the Apple TV's time is P at TSF T and runs at 1 + rate", with the
+   clock's identity and state.
 3. A speaker looks up its own local time at that TSF and gets the offset to
-   the Apple TV's clock. Because the message names a TSF moment rather than
-   "now", its delay over Wi-Fi does not matter.
+   the Apple TV's clock, and carries it forward on the rate until the next
+   message. Because the message names a TSF moment rather than "now", its
+   delay over Wi-Fi does not matter.
+
+**One smooth line for all speakers.** While the Gateway relays audio most of
+the Apple TV's PTP Syncs reach it 5 to 100 ms late, and even the best of a
+few seconds scatter by 3 to 6 ms. A Sync is never early, so every sample lies
+on or below the true sender time. The speakers get a line fitted to the raw
+Syncs (`main/gw_timeline.c`): the best Sync of each second over the last ten
+minutes, and the edge of their upper envelope (convex hull) over the middle
+of that window, the lowest line above all of them. Its rate comes from timely
+Syncs minutes apart (a few ppm); late Syncs never count, and nothing guesses
+clock steps from them. The published line follows it on that rate, takes a
+difference back at most 100 µs per second and bends at most 5 ppm per
+second. A Sync more than 1 s below the fit, or the first one after 5 s
+without any (the Apple TV restarted), starts the fit again at once. The line
+steps only for a new sender clock, a restarted access point or a jump beyond
+20 ms; after a step it follows the fit directly for 10 s. Every speaker
+evaluates the same line, so all of them play the same time even when one
+receives an update later than another. The Gateway logs the line every 10 s:
+`TIME … | line epoch N rate … ppm (fitted), envelope … ms from it over … s,
+PTP filter … ms from it`.
 4. From there each speaker runs the playback engine of an AirPlay 2
    receiver: it plays every sample at the scheduled time, minus its
    **output latency**, plus its **delay** from the speakers page, and tunes
-   its I2S clock live to follow the Apple TV.
+   its I2S clock live to follow the Apple TV. The line's rate on the
+   speaker's own clock is exactly the I2S correction needed, so the I2S
+   clock runs at it directly and only the remaining phase is steered (back
+   over 10 s): a new track, a reboot or a bend of the line needs no
+   relearning. The speaker logs `SERVO LINE: line … ppm, sync … ms -> I2S …
+   ppm` every 10 s.
+
+**Wi-Fi dropouts.** During a stream a speaker carries the last line forward
+for up to 30 s, and both sides wait 20 s (instead of 6 s) before they give a
+silent link up. A dropout of a few seconds costs nothing: the speaker plays on
+from its buffer, in step, and logs `Gateway silent …` and `TIME again after
+… ms`. Only a longer one ends that speaker's stream; it joins again at the
+next pause, seek or track.
 
 ### Relaying the stream
 
@@ -679,10 +736,11 @@ are listed in
 | Shared services | `common/network` | Wi-Fi, web server core, OTA, logs, the PTP clock (full on the Gateway, fed by the Gateway on a speaker) |
 | Web pages | `main/web_gateway.c`, `speaker/main/web_speaker.c` | each firmware's own pages and APIs on top of the shared web server |
 | Gateway proxy | `main/gw_proxy.c` | implements the audio engine API on the Gateway and forwards each call (`FWD …` in the log) |
-| Speaker registry | `main/gw_speakers.c` | control link on port 7100 (`_apsurround._tcp`), late joins, settings, status, TIME messages |
+| Speaker registry | `main/gw_speakers.c` | control link on port 7100 (`_apsurround._tcp`), late joins, settings, status, TIME messages, which speaker updates next |
+| Speaker firmware | `main/gw_fw.c`, `speaker/main/spk_update.c` | the image in the Gateway's `storage` partition (`gw_fw`); download, check and install on the speaker (`spk_update`) |
 | Buffered relay | `main/gw_relay.c` | copies the TCP audio stream to every speaker, paced by the slowest (`RELAY …`) |
 | Realtime relay | `main/gw_rt_relay.c` | copies UDP audio and sync packets, passes retransmit requests on (`RT RELAY …`) |
-| Time | `common/surround/tsf_fit.c`, `speaker/main/spk_time.c` | TSF line fits on both sides; feeds the speaker's clock (`TIME …`) |
+| Time | `common/surround/tsf_fit.c`, `main/gw_timeline.c`, `speaker/main/spk_time.c` | TSF line fits on both sides; the Gateway's smooth sender-time line; feeds the speaker's clock (`TIME …`, `gw_timeline`) |
 | Speaker link | `speaker/main/spk_link.c` | finds the Gateway, runs every forwarded call locally (`CMD …`) |
 | Protocol | `common/surround/surround_proto.h` | message types and payloads, versioned |
 | Audio engine | `speaker/main/audio` | FIFO, FDK AAC / ALAC decode, PCM store, I2S playout and servo |

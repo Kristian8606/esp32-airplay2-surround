@@ -6,7 +6,8 @@
  * Every frame is [u16 big-endian length of type+payload][u8 type][payload].
  * Payloads are the packed structs below; both ends are ESP32-S3 built from
  * this tree, so they share layout and byte order. HELLO carries the protocol
- * version and the Gateway drops a speaker whose version differs.
+ * version; a speaker whose version differs does not join (the Gateway may
+ * first send it FW_UPDATE, see SURROUND_PROTO_FW_UPDATE).
  *
  * Gateway -> speaker messages are the audio_receiver.h calls RTSP makes on
  * the Gateway, with the same arguments; the speaker makes the same calls
@@ -17,7 +18,12 @@
 #include <assert.h>
 #include <stdint.h>
 
-#define SURROUND_PROTO_VERSION   7
+#define SURROUND_PROTO_VERSION   9
+/* The first version whose speakers install firmware from the Gateway
+ * (FW_UPDATE). A Gateway keeps updating a speaker of any version from this
+ * one on, also when their versions differ: HELLO and FW_UPDATE never change
+ * layout, so a later protocol can always bring older speakers up to it. */
+#define SURROUND_PROTO_FW_UPDATE 9
 #define SURROUND_STR_(x)         #x
 #define SURROUND_STR(x)          SURROUND_STR_(x)
 #define SURROUND_HELLO_MAGIC     0x53524e44U /* "SRND" */
@@ -32,12 +38,18 @@
  * PONG; either side drops the link after the timeout without traffic. */
 #define SURROUND_PING_INTERVAL_MS 2000U
 #define SURROUND_LINK_TIMEOUT_MS  6000U
+/* During a stream both sides wait this long instead: a Wi-Fi dropout of a
+ * few seconds must not cost a speaker the rest of the stream (it could only
+ * join again at the next FLUSH). Meanwhile the speaker plays its buffer on
+ * the last timeline (PTP_EXTERNAL_CARRY_NS in ptp_clock.c). */
+#define SURROUND_LINK_TIMEOUT_STREAM_MS 20000U
 
 /* Sender time: the Gateway sends TIME at the sender's PTP Sync rate. Both
  * ends are stations of the same Wi-Fi access point, so they share its TSF
- * (802.11 beacon timer): the Gateway says "sender PTP time P is TSF T", and
- * the speaker turns T into its own clock through its own TSF reading. The
- * transport delay of the message does not enter the result. */
+ * (802.11 beacon timer): the Gateway says "sender PTP time P is TSF T, and
+ * runs at 1 + rate against the TSF" (gw_timeline.c), and the speaker turns T
+ * into its own clock through its own TSF reading. The transport delay of the
+ * message does not enter the result. */
 #define SURROUND_TIME_INTERVAL_MS 125U
 #define SURROUND_STATUS_MS        2000U
 
@@ -83,8 +95,13 @@ typedef enum {
   SURROUND_MSG_SET_CONFIG = 0x32,
   /* Gateway -> speaker: room calibration (gw_calib.c) */
   SURROUND_MSG_CAL_PLAY = 0x33,
+  /* Gateway -> speaker: install the firmware the Gateway holds (gw_fw.c).
+   * Type and layout are fixed for good (SURROUND_PROTO_FW_UPDATE). */
+  SURROUND_MSG_FW_UPDATE = 0x34,
 } surround_msg_type_t;
 
+/* Fixed for good, like FW_UPDATE: a Gateway reads it from speakers of any
+ * protocol version. */
 typedef struct __attribute__((packed)) {
   uint32_t magic;
   uint16_t version;
@@ -174,7 +191,8 @@ typedef struct __attribute__((packed)) {
 typedef struct __attribute__((packed)) {
   /* The Gateway's TSF (ns) at one instant, from its smoothed TSF fit. */
   int64_t tsf_ns;
-  /* The sender's PTP time at the same instant (Gateway estimate). */
+  /* The sender's PTP time at the same instant: the Gateway's smooth line
+   * (gw_timeline.c), not its raw estimate. */
   int64_t ptp_ns;
   uint64_t source_clock_id;
   uint64_t grandmaster_clock_id;
@@ -182,6 +200,10 @@ typedef struct __attribute__((packed)) {
   uint32_t sample_count;
   uint8_t bssid[6]; /* the access point whose TSF this is */
   uint8_t flags;    /* SURROUND_TIME_* */
+  /* The line's rate, d(ptp)/d(tsf) - 1 in ppb: the speaker carries the time
+   * forward between messages with it. */
+  int32_t rate_ppb;
+  uint16_t epoch; /* changes when the line steps */
 } surround_time_t;
 
 /* A speaker's own settings, kept in its NVS. The Gateway web page shows and
@@ -253,7 +275,19 @@ typedef struct __attribute__((packed)) {
   int64_t emit_tsf_ns[SURROUND_CAL_BURSTS_MAX];
 } surround_cal_result_t;
 
+/* The speaker fetches the image over HTTP from the Gateway's web server at
+ * the link's address (GET SURROUND_FW_PATH), checks size and SHA-256,
+ * installs it and restarts; it comes back with the new firmware in HELLO. */
+#define SURROUND_FW_PATH "/api/speakers/firmware.bin"
+typedef struct __attribute__((packed)) {
+  uint32_t size;
+  uint16_t http_port;
+  uint8_t sha256[32];
+} surround_fw_update_t;
+
 static_assert(sizeof(surround_hello_t) <= SURROUND_MAX_PAYLOAD, "hello");
+static_assert(sizeof(surround_hello_t) == 61, "HELLO layout is fixed");
+static_assert(sizeof(surround_fw_update_t) == 38, "FW_UPDATE layout is fixed");
 static_assert(sizeof(surround_cal_result_t) <= SURROUND_MAX_PAYLOAD,
               "cal result");
 static_assert(sizeof(surround_status_t) <= SURROUND_MAX_PAYLOAD, "status");

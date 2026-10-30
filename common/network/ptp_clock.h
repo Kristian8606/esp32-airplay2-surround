@@ -49,26 +49,40 @@ typedef struct {
   uint32_t sample_count;
   uint32_t sample_age_ms; /* UINT32_MAX when no accepted timing sample exists. */
   /* Diagnostics: why a buffered anchor may never become usable. */
-  bool source_mixed;          /* source identity changed within selected peer */
-  uint64_t expected_clock_id; /* D7/timeline hint, 0 = none */
+  bool source_mixed; /* source identity changed within selected peer */
+  /* Surround speaker: how fast the offset moves (the Gateway line's rate on
+   * this clock, ppb), which is the I2S correction the sender needs. */
+  bool offset_rate_valid;
+  int32_t offset_rate_ppb;
 } ptp_clock_snapshot_t;
 
 /* Coherent status/diagnostic snapshot for either buffered or realtime mode. */
 void ptp_clock_get_snapshot(ptp_clock_snapshot_t *snapshot);
 
+/* One measured Sync of the selected sender, unfiltered: the sender's clock
+ * read remote_ns no later than local_ns (the reception adds the delay). */
+typedef struct {
+  int64_t local_ns;
+  int64_t remote_ns;
+  uint64_t source_clock_id;
+  uint64_t grandmaster_clock_id;
+} ptp_clock_sample_t;
+
+/* The Syncs measured since *cursor (0 at first), oldest first, at most max;
+ * advances *cursor. Samples older than the last PTP_CLOCK_SAMPLES are lost.
+ * Lets the Surround Gateway fit its own line to the raw samples. */
+uint32_t ptp_clock_read_samples(uint32_t *cursor, ptp_clock_sample_t *out,
+                                uint32_t max);
+
 /**
  * Stream SETUP equivalent of Shairport/NQPTP T <RTSP client IP>, then B.
- * Starts one fresh timing record and selects that IP for both AAC and ALAC.
- * SETPEERS/SETPEERSX and media anchors never reset this record.
+ * Starts one fresh timing record and selects that IP for both AAC and ALAC,
+ * except that a settled estimate of the same sender is kept, also across a
+ * switch between realtime and buffered. SETPEERS/SETPEERSX and media anchors
+ * never reset this record.
  */
 void ptp_clock_start_timing(bool realtime, uint32_t timing_peer_ip);
 
-/**
- * Record the clockIdentity carried by the latest realtime D7 anchor. This is
- * an observation/hint only; it never creates a virtual PTP domain or rewrites
- * the realtime audio timeline.
- */
-void ptp_clock_note_realtime_d7(uint64_t clock_id);
 
 
 typedef struct {
@@ -104,6 +118,9 @@ typedef struct {
   uint64_t grandmaster_clock_id;
   int64_t offset_ns;      /* sender PTP - local */
   int64_t sample_time_ns; /* local time the offset was measured for */
+  /* How fast the offset moves (d offset / d local, ppb): the snapshot carries
+   * it forward from sample_time_ns, so the time runs on between messages. */
+  int32_t offset_rate_ppb;
   uint32_t mastership_age_ms;
   uint32_t sample_count;
   bool locked;
@@ -114,7 +131,3 @@ typedef struct {
 
 /* NULL withdraws the estimate (the snapshot becomes invalid). */
 void ptp_clock_set_external(const ptp_clock_external_t *ext);
-
-/* Media-anchor hint for diagnostics only. Source selection belongs to
- * ptp_clock_start_timing(); changing this hint never resets the estimator. */
-void ptp_clock_set_master_clock_id(uint64_t clock_id);

@@ -34,6 +34,9 @@ static uint32_t *s_stamp_count;
 static int64_t *s_stamp_us;
 static volatile uint32_t s_stamps;
 static volatile uint32_t s_dma_samples;
+/* DMA buffers the driver dropped because the reader was behind: the
+ * recording no longer matches its DMA times. */
+static volatile uint32_t s_overflows;
 /* Sample time line of the last recording: t_us = a + b * (index + 1). */
 static double s_a_us, s_b_us;
 static bool s_line_valid;
@@ -52,15 +55,26 @@ static bool IRAM_ATTR on_recv(i2s_chan_handle_t handle, i2s_event_data_t *event,
   return false;
 }
 
+static bool IRAM_ATTR on_recv_q_ovf(i2s_chan_handle_t handle,
+                                    i2s_event_data_t *event, void *ctx) {
+  (void)handle;
+  (void)event;
+  (void)ctx;
+  s_overflows++;
+  return false;
+}
+
 static void reader_task(void *arg) {
   (void)arg;
   static int32_t chunk[MIC_READ_SAMPLES];
   while (s_running) {
     size_t got = 0;
-    if (i2s_channel_read(s_rx, chunk, sizeof(chunk), &got, pdMS_TO_TICKS(100)) !=
-        ESP_OK) {
-      continue;
-    }
+    /* The timeout is in milliseconds, not ticks. On a timeout the samples
+     * read so far are still kept: every sample the DMA counted must be in
+     * the recording, or its times no longer match. */
+    const esp_err_t err =
+        i2s_channel_read(s_rx, chunk, sizeof(chunk), &got, 100);
+    if (err != ESP_OK && err != ESP_ERR_TIMEOUT) continue;
     const uint32_t n = (uint32_t)(got / sizeof(int32_t));
     for (uint32_t i = 0; i < n && s_count < s_capacity; ++i) {
       /* INMP441: 24 bits, MSB first, in a 32-bit slot. */
@@ -121,6 +135,7 @@ esp_err_t gw_mic_start(uint32_t max_seconds) {
   s_count = 0;
   s_stamps = 0;
   s_dma_samples = 0;
+  s_overflows = 0;
   s_line_valid = false;
 
   i2s_chan_config_t chan = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
@@ -141,7 +156,8 @@ esp_err_t gw_mic_start(uint32_t max_seconds) {
       },
   };
   std.slot_cfg.slot_mask = I2S_STD_SLOT_LEFT; /* L/R pin to GND */
-  const i2s_event_callbacks_t cbs = {.on_recv = on_recv};
+  const i2s_event_callbacks_t cbs = {.on_recv = on_recv,
+                                     .on_recv_q_ovf = on_recv_q_ovf};
   err = i2s_channel_init_std_mode(s_rx, &std);
   if (err == ESP_OK) err = i2s_channel_register_event_callback(s_rx, &cbs, NULL);
   if (err == ESP_OK) err = i2s_channel_enable(s_rx);
@@ -171,6 +187,11 @@ void gw_mic_stop(void) {
   i2s_del_channel(s_rx);
   s_rx = NULL;
   fit_line();
+  if (s_overflows) {
+    ESP_LOGW(TAG, "recording lost %u DMA buffers (reader too slow): no "
+                  "usable timing", (unsigned)s_overflows);
+    s_line_valid = false;
+  }
   if (s_line_valid) {
     ESP_LOGI(TAG, "recorded %u samples, %u DMA stamps, %.3f us/sample",
              (unsigned)s_count, (unsigned)s_stamps, s_b_us);

@@ -28,6 +28,7 @@
 #include "settings.h"
 #include "socket_utils.h"
 #include "spk_time.h"
+#include "spk_update.h"
 #include "surround_proto.h"
 
 static const char *TAG = "spk_link";
@@ -308,12 +309,20 @@ static void dispatch(int fd, uint8_t type, const uint8_t *p, size_t len) {
   }                                                                      \
   memcpy(&v, p, sizeof(v))
 
+  /* While a firmware installs, this speaker sits out the stream: only the
+   * link itself (PING, TIME) and its settings are handled. */
+  if (spk_update_running() && type != SURROUND_MSG_PING &&
+      type != SURROUND_MSG_TIME && type != SURROUND_MSG_SET_CONFIG)
+    return;
+
   switch (type) {
     case SURROUND_MSG_PING:
+      spk_update_confirm(); /* only an accepted speaker gets PING and TIME */
       (void)send_msg(fd, SURROUND_MSG_PONG, NULL, 0);
       break;
     case SURROUND_MSG_TIME: {
       PAYLOAD(surround_time_t, m);
+      spk_update_confirm();
       spk_time_handle(&m); /* 8 per second: not logged */
       break;
     }
@@ -463,6 +472,19 @@ static void dispatch(int fd, uint8_t type, const uint8_t *p, size_t len) {
       (void)send_msg(fd, SURROUND_MSG_CAL_RESULT, &r, sizeof(r));
       break;
     }
+    case SURROUND_MSG_FW_UPDATE: {
+      PAYLOAD(surround_fw_update_t, m);
+      AP_LOGI(TAG, "CMD fw_update: %u bytes from the Gateway", (unsigned)m.size);
+      if (s_stream_started) {
+        /* The update does not wait: this speaker leaves the stream. */
+        AP_LOGI(TAG, "stopping the stream for the firmware update");
+        audio_receiver_set_playing(false);
+        audio_receiver_stop();
+        stream_ended();
+      }
+      spk_update_start(s_gateway_ip, &m);
+      break;
+    }
     case SURROUND_MSG_STOP:
       AP_LOGI(TAG, "CMD stop");
       audio_receiver_stop();
@@ -542,6 +564,7 @@ static void run_link(int fd) {
   size_t have = 0;
   int64_t last_rx_us = esp_timer_get_time();
   int64_t last_status_us = 0;
+  bool quiet_logged = false;
   for (;;) {
     const int r = recv(fd, rx + have, sizeof(rx) - have, 0);
     const int64_t now_us = esp_timer_get_time();
@@ -554,12 +577,27 @@ static void run_link(int fd) {
         ESP_LOGW(TAG, "link recv errno=%d", errno);
         return;
       }
-      if (now_us - last_rx_us > (int64_t)SURROUND_LINK_TIMEOUT_MS * 1000LL) {
-        ESP_LOGW(TAG, "no PING from the Gateway for %u ms",
-                 (unsigned)SURROUND_LINK_TIMEOUT_MS);
+      /* During a stream a dropout is ridden out on the buffer and the last
+       * timeline (SURROUND_LINK_TIMEOUT_STREAM_MS). */
+      const uint32_t timeout_ms = s_stream_started ? SURROUND_LINK_TIMEOUT_STREAM_MS
+                                                   : SURROUND_LINK_TIMEOUT_MS;
+      if (now_us - last_rx_us > (int64_t)timeout_ms * 1000LL) {
+        ESP_LOGW(TAG, "no PING from the Gateway for %u ms", (unsigned)timeout_ms);
         return;
       }
+      if (s_stream_started && !quiet_logged &&
+          now_us - last_rx_us > (int64_t)SURROUND_LINK_TIMEOUT_MS * 1000LL) {
+        quiet_logged = true;
+        AP_LOGW(TAG, "Gateway silent for %u ms: playing on, waiting up to %u ms",
+                (unsigned)SURROUND_LINK_TIMEOUT_MS,
+                (unsigned)SURROUND_LINK_TIMEOUT_STREAM_MS);
+      }
       continue;
+    }
+    if (quiet_logged) {
+      quiet_logged = false;
+      AP_LOGI(TAG, "Gateway back after %u ms without a message",
+              (unsigned)((now_us - last_rx_us) / 1000));
     }
     last_rx_us = now_us;
     if (now_us - last_status_us >= (int64_t)SURROUND_STATUS_MS * 1000LL) {

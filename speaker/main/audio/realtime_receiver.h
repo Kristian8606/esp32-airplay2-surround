@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "audio_playout.h"
 #include "audio_receiver.h"
 #include "esp_err.h"
 
@@ -18,8 +19,17 @@ typedef bool (*realtime_deadline_cb_t)(uint32_t rtp,
 
 /* Shairport-style recovery ends only when ordered staging must commit the
  * frame. Keep the final loss decision and the staging silence deadline on the
- * same boundary so an in-flight RTX remains useful after the last NACK. */
-#define REALTIME_RECOVERY_FINAL_MARGIN_US 50000LL
+ * same boundary so an in-flight RTX remains useful after the last NACK.
+ * The boundary is where playout takes the PCM, not where it is heard: the
+ * playout task fills the I2S queue (all its DMA blocks plus one batch) ahead
+ * of time, and a frame staged after that is already played as silence; with
+ * a fixed 50 ms an RTX arriving 50-110 ms before output was wasted and held
+ * back the frames after it. At the lowest rate (44.1 kHz, the longest queue),
+ * plus 15 ms for staging and task scheduling. */
+#define REALTIME_RECOVERY_FINAL_MARGIN_US                                   \
+  ((int64_t)(AUDIO_PLAYOUT_DMA_BLOCKS + AUDIO_PLAYOUT_BATCH) *             \
+       AUDIO_PLAYOUT_FRAMES * 1000000LL / 44100LL +                         \
+   15000LL)
 
 
 typedef struct {

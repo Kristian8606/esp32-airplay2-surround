@@ -51,14 +51,16 @@
 #define RT_RETRANSMIT_PT          86U
 #define RT_RESEND_REQUEST_PT      85U
 #define RT_MAX_NACK_COUNT         32U
-/* Match Shairport Sync defaults: wait 100 ms before the first request, retry
- * at 250 ms intervals, and stop issuing NEW requests 100 ms before output.
- * Do not declare final loss there: an already-requested RTX may still arrive.
- * Final loss is the ordered-staging commit boundary below. */
+/* Shairport Sync defaults: wait 100 ms before the first request, retry at
+ * 250 ms intervals. NEW requests stop 50 ms (a request's round trip through
+ * the Gateway) before the frame is needed, here the staging commit boundary:
+ * it is taken for the I2S queue before it is heard. Do not declare final
+ * loss at the last request: an already-requested RTX may still arrive. Final
+ * loss is that boundary. */
+#define RT_FINAL_LOSS_MARGIN_MS   ((uint32_t)(REALTIME_RECOVERY_FINAL_MARGIN_US / 1000LL))
 #define RT_RESEND_FIRST_MS        100U
 #define RT_RESEND_RETRY_MS        250U
-#define RT_RESEND_LAST_REQUEST_MS 100U
-#define RT_FINAL_LOSS_MARGIN_MS   ((uint32_t)(REALTIME_RECOVERY_FINAL_MARGIN_US / 1000LL))
+#define RT_RESEND_LAST_REQUEST_MS (RT_FINAL_LOSS_MARGIN_MS + 50U)
 #define RT_RESEND_SCAN_MS         10U
 #define RT_SOCKET_TIMEOUT_MS      100U
 
@@ -709,7 +711,6 @@ static void process_control_packet(const uint8_t *buf, size_t len) {
     s_rt.last_d7_clock_id = clock_id;
     s_rt.d7_packets++;
 
-    ptp_clock_note_realtime_d7(clock_id);
     service_d7_anchor();
 
 #if defined(CONFIG_AIRPLAY_LOG_RUNTIME) && CONFIG_AIRPLAY_LOG_RUNTIME

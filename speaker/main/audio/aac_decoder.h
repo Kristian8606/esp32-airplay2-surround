@@ -15,8 +15,9 @@ typedef struct {
 } aac_decoder_config_t;
 
 /* EXPERIMENT (multichannel): the speaker of a 5.1/7.1 stream this receiver
- * plays, on both stereo slots. Names follow Apple's 7.1 order; see the
- * Kconfig help of AIRPLAY_MULTICHANNEL_SPEAKER for the ISO caveat. */
+ * plays, on both stereo slots. Names follow the 7.1 order C L R Ls Rs Lrs
+ * Rrs LFE; see the Kconfig help of AIRPLAY_MULTICHANNEL_SPEAKER for the ISO
+ * caveat. A speaker whose channel is not in the stream is silent. */
 typedef enum {
   AAC_SPEAKER_MIX = -1, /* all channels except LFE, mono */
   AAC_SPEAKER_L = 0,
@@ -25,8 +26,8 @@ typedef enum {
   AAC_SPEAKER_LFE,
   AAC_SPEAKER_LS,
   AAC_SPEAKER_RS,
-  AAC_SPEAKER_LRS, /* 5.1: plays Ls */
-  AAC_SPEAKER_RRS, /* 5.1: plays Rs */
+  AAC_SPEAKER_LRS, /* 7.1 only; silent with 5.1 */
+  AAC_SPEAKER_RRS, /* 7.1 only; silent with 5.1 */
   AAC_SPEAKER_COUNT
 } aac_speaker_t;
 

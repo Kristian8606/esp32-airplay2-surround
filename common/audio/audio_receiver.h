@@ -15,7 +15,9 @@
  * physical 6 MiB raw FIFO so normal TCP backpressure bounds sender preload. */
 #define AP2_BUFFERED_AUDIO_ADVERTISED_BYTES (6U * 1024U * 1024U)
 
-/* AirPlay 2 audio receiver: buffered AAC/ALAC plus realtime ALAC. */
+/* AirPlay 2 audio receiver: buffered AAC/ALAC plus realtime ALAC. Implemented
+ * twice: the speaker's audio engine (speaker/main/audio/audio_receiver.c) and
+ * the Gateway's proxy that forwards each call to the speakers (gw_proxy.c). */
 typedef struct {
   char codec[32];
   int sample_rate;
@@ -57,7 +59,8 @@ bool audio_receiver_is_idle(void);
  * memory release (except for the already-created I2S driver itself): current
  * media is stopped, audio worker tasks exit, all large codec/PCM stores are
  * freed, and audio_receiver_init() may be called afterwards to restore the
- * engine. Call only after the RTSP server has stopped accepting clients. */
+ * engine. Call only when no stream can start: on the speaker after
+ * spk_link_suspend(), on the Gateway after the RTSP server stopped. */
 esp_err_t audio_receiver_release_for_wifi_scan(void);
 void audio_receiver_set_format(const audio_format_t *format);
 uint32_t audio_receiver_get_sample_rate(void);
@@ -134,7 +137,6 @@ int32_t audio_receiver_get_output_latency_us(void);
 esp_err_t audio_receiver_set_output_latency_us(int32_t us, bool persist);
 /* Surround speaker: play this much later than the anchor says (distance to
  * the listener), on top of the output latency. Not saved here. */
-int32_t audio_receiver_get_extra_delay_us(void);
 esp_err_t audio_receiver_set_extra_delay_us(int32_t us);
 /* Surround speaker: which part of a stereo source it plays, from its role
  * (spk_link.c). A 5.1/7.1 stream is not affected: it already arrives as the
@@ -164,8 +166,9 @@ typedef struct {
 } audio_receiver_playback_info_t;
 void audio_receiver_get_playback_info(audio_receiver_playback_info_t *out);
 
-/* Wired ADC loopback measurement. The caller must first stop RTSP and call
- * audio_receiver_release_for_wifi_scan() (exactly like the Wi-Fi scan) and
- * restore AirPlay afterwards. Blocks ~2-3 s. Does NOT apply the result. */
+/* Speaker: wired ADC loopback measurement. The caller must first suspend the
+ * Gateway link and call audio_receiver_release_for_wifi_scan() (exactly like
+ * the Wi-Fi scan) and resume afterwards. Blocks ~2-3 s. Does NOT apply the
+ * result. */
 esp_err_t audio_receiver_measure_output_latency(latency_cal_result_t *res,
                                                 bool audible);

@@ -97,11 +97,6 @@ bool ptp_clock_engine_set_domain(ptp_clock_engine_t *engine,
                                  uint64_t grandmaster_clock_id,
                                  ptp_clock_engine_domain_event_t *event_out);
 
-/* Reset smoothing/history while preserving the current source/GM identity.
- * Bumps the estimator epoch so readers can distinguish pre/post-reset state. */
-void ptp_clock_engine_reset_filter(ptp_clock_engine_t *engine,
-                                   bool bump_epoch);
-
 /* NQPTP-derived passive one-way estimator:
  *  - first sample accepted directly;
  *  - positive jitter (shorter network delay) accepted fully during startup,

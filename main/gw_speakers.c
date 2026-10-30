@@ -15,6 +15,7 @@
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "gw_calib.h"
+#include "gw_fw.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -23,6 +24,7 @@
 #include "ptp_clock_engine.h"
 #include "settings.h"
 #include "socket_utils.h"
+#include "gw_timeline.h"
 #include "tsf_fit.h"
 
 static const char *TAG = "gw_speakers";
@@ -36,6 +38,16 @@ static const char *TAG = "gw_speakers";
 #define GW_TIME_LOG_MS        10000
 /* A speaker playing calibration chirps answers within this time. */
 #define GW_CAL_LINK_GRACE_US  (15LL * 1000000LL)
+/* Firmware from the Gateway: tries per speaker and image, how long one
+ * install may take (counted only while nothing plays: the speaker restarts
+ * only between streams), and how long nothing must have played (a track
+ * change is a STOP and a new SETUP 50 ms apart). A speaker that went away
+ * and is not back with the image by then may not start with it: the rollout
+ * stops there (gw_fw_halt) instead of taking the next speaker. The speaker
+ * fetches the image from the web server (main.c). */
+#define GW_FW_ATTEMPTS        3
+#define GW_FW_TIMEOUT_US      (180LL * 1000000LL)
+#define GW_FW_HTTP_PORT       80
 
 typedef enum {
   SPK_FREE = 0,
@@ -66,6 +78,9 @@ typedef struct {
   /* CAL_PLAY sent: the speaker plays chirps and is silent meanwhile, so the
    * link timeout waits until this time. 0 = none. */
   int64_t cal_until_us;
+  /* FW_UPDATE sent to a speaker of another protocol version: it stays
+   * connected (without joining) until it restarts. */
+  bool fw_only;
   uint8_t rx[GW_FRAME_MAX];
   size_t rx_have;
 } gw_speaker_t;
@@ -105,6 +120,28 @@ static tsf_fit_t s_tsf_shared;
 static uint8_t s_bssid[6];
 static int64_t s_bssid_read_us;
 static int64_t s_time_log_us;
+/* The last TIME with sender time: its identity and flags go on while the
+ * line holds over a gap (gw_timeline_hold). Speakers task only. */
+static surround_time_t s_time_last;
+static int64_t s_time_last_us;
+static uint32_t s_ptp_cursor; /* ptp_clock_read_samples() */
+/* Firmware from the Gateway, under s_lock: tries per speaker for the
+ * current image, and the one install under way. */
+typedef struct {
+  uint8_t mac[6];
+  uint32_t generation;
+  uint8_t attempts;
+} fw_try_t;
+static fw_try_t s_fw_tries[2 * SURROUND_MAX_SPEAKERS];
+static uint32_t s_fw_tries_next;
+static struct {
+  bool active;
+  uint8_t mac[6];
+  char name[24];
+  char ip[16];
+  int64_t since_us; /* FW_UPDATE sent; GW_FW_TIMEOUT_US from here */
+  bool left; /* its connection closed since FW_UPDATE (it restarted) */
+} s_fw_busy;
 /* gw_speakers_post_volume() -> speakers task. */
 static int32_t s_volume_next;
 static bool s_volume_dirty;
@@ -178,6 +215,9 @@ static void send_frame(gw_speaker_t *sp, uint8_t type, const void *payload,
 static void close_speaker(gw_speaker_t *sp, const char *why) {
   if (sp->fd < 0) return;
   AP_LOGI(TAG, "speaker %s disconnected (%s)", spk_label(sp), why);
+  if (s_fw_busy.active && memcmp(s_fw_busy.mac, sp->hello.mac, 6) == 0) {
+    s_fw_busy.left = true;
+  }
   if (has_audio(sp)) audio_changed();
   close(sp->fd);
   memset(sp, 0, sizeof(*sp));
@@ -193,6 +233,93 @@ static bool session_active(void) {
 static bool realtime_session(void) {
   return s_rec[REC_STREAM_TYPE].valid &&
          s_rec[REC_STREAM_TYPE].payload[0] == SURROUND_STREAM_REALTIME;
+}
+
+/* A speaker in a stream may be silent this long (a Wi-Fi dropout) before it
+ * is dropped; it plays on its buffer meanwhile. Caller holds s_lock. */
+static int64_t link_timeout_us(const gw_speaker_t *sp) {
+  const bool stream = session_active() && sp->state != SPK_CONNECTED;
+  return (int64_t)(stream ? SURROUND_LINK_TIMEOUT_STREAM_MS
+                          : SURROUND_LINK_TIMEOUT_MS) * 1000LL;
+}
+
+/* ---- Firmware from the Gateway (gw_fw.c); caller holds s_lock ---- */
+
+static fw_try_t *fw_tries(const uint8_t mac[6], uint32_t generation) {
+  fw_try_t *t = NULL;
+  for (size_t i = 0; i < sizeof(s_fw_tries) / sizeof(s_fw_tries[0]); ++i) {
+    if (memcmp(s_fw_tries[i].mac, mac, 6) == 0) t = &s_fw_tries[i];
+  }
+  if (!t) {
+    t = &s_fw_tries[s_fw_tries_next];
+    s_fw_tries_next = (s_fw_tries_next + 1U) % (sizeof(s_fw_tries) / sizeof(s_fw_tries[0]));
+    memcpy(t->mac, mac, 6);
+    t->generation = generation;
+    t->attempts = 0;
+  }
+  if (t->generation != generation) {
+    t->generation = generation; /* a new image: new tries */
+    t->attempts = 0;
+  }
+  return t;
+}
+
+/* A speaker may update now: at once, even during a stream (that speaker
+ * stops playing for it), only not during a room calibration. */
+static bool fw_allowed(void) { return !gw_calib_running(); }
+
+/* The speaker can take the image and runs another build. */
+static bool fw_wanted(const surround_hello_t *h, const gw_fw_image_t *img) {
+  return img->valid && !img->halted && h->version >= SURROUND_PROTO_FW_UPDATE &&
+         strcmp(h->firmware, img->id) != 0 &&
+         fw_tries(h->mac, img->generation)->attempts < GW_FW_ATTEMPTS;
+}
+
+static void fw_send(gw_speaker_t *sp, const surround_hello_t *h,
+                    const gw_fw_image_t *img, int64_t now_us) {
+  surround_fw_update_t m = {.size = img->size, .http_port = GW_FW_HTTP_PORT};
+  memcpy(m.sha256, img->sha256, sizeof(m.sha256));
+  send_frame(sp, SURROUND_MSG_FW_UPDATE, &m, sizeof(m));
+  fw_tries(h->mac, img->generation)->attempts++;
+  s_fw_busy.active = true;
+  memcpy(s_fw_busy.mac, h->mac, sizeof(s_fw_busy.mac));
+  strlcpy(s_fw_busy.name, h->name, sizeof(s_fw_busy.name));
+  strlcpy(s_fw_busy.ip, sp->ip, sizeof(s_fw_busy.ip));
+  s_fw_busy.since_us = now_us;
+  s_fw_busy.left = false;
+  AP_LOGI(TAG, "speaker %s (%s) runs %s: installing %s from the Gateway", h->name,
+          sp->ip, h->firmware, img->id);
+}
+
+/* Once a second: the next speaker with another build. */
+static void fw_tick(int64_t now_us) {
+  if (s_fw_busy.active && now_us - s_fw_busy.since_us > GW_FW_TIMEOUT_US) {
+    s_fw_busy.active = false;
+    if (s_fw_busy.left) {
+      /* It restarted and is not back with the image: it may not start with
+       * it (or went back to its old one). No other speaker gets it. */
+      ESP_LOGE(TAG, "speaker %s did not come back with the new firmware: the "
+                   "update of the other speakers is stopped",
+              s_fw_busy.name);
+      gw_fw_halt(s_fw_busy.name);
+    } else {
+      /* Still on its first connection: the download or install failed and
+       * it runs its old firmware. */
+      AP_LOGW(TAG, "speaker %s did not install the new firmware: it keeps its old one",
+              s_fw_busy.name);
+    }
+  }
+  if (!fw_allowed() || s_fw_busy.active) return;
+  gw_fw_image_t img;
+  gw_fw_get(&img);
+  if (!img.valid || img.halted) return;
+  for (size_t i = 0; i < SURROUND_MAX_SPEAKERS; ++i) {
+    gw_speaker_t *sp = &s_spk[i];
+    if (sp->fd < 0 || sp->dead || sp->state == SPK_CONNECTED) continue;
+    if (!fw_wanted(&sp->hello, &img)) continue;
+    fw_send(sp, &sp->hello, &img, now_us);
+    return;
+  }
 }
 
 /* Caller holds s_lock. Bring one speaker to the state the others have. */
@@ -291,6 +418,17 @@ static void handle_hello(gw_speaker_t *sp, const uint8_t *p, size_t len) {
   if (h.magic != SURROUND_HELLO_MAGIC || h.version != SURROUND_PROTO_VERSION) {
     AP_LOGW(TAG, "%s: protocol version %u, Gateway speaks %u", sp->ip,
             (unsigned)h.version, (unsigned)SURROUND_PROTO_VERSION);
+    /* It cannot join, but it can take the firmware that lets it. */
+    const int64_t now_us = esp_timer_get_time();
+    gw_fw_image_t img;
+    gw_fw_get(&img);
+    if (h.magic == SURROUND_HELLO_MAGIC && !s_fw_busy.active && fw_allowed() &&
+        fw_wanted(&h, &img)) {
+      sp->fw_only = true;
+      sp->hello = h; /* its MAC: close_speaker() notes when it restarts */
+      fw_send(sp, &h, &img, now_us);
+      return;
+    }
     close_speaker(sp, "protocol version mismatch");
     return;
   }
@@ -303,6 +441,14 @@ static void handle_hello(gw_speaker_t *sp, const uint8_t *p, size_t len) {
     }
   }
   sp->hello = h;
+  if (s_fw_busy.active && memcmp(s_fw_busy.mac, h.mac, sizeof(h.mac)) == 0) {
+    gw_fw_image_t img;
+    gw_fw_get(&img);
+    if (strcmp(h.firmware, img.id) == 0) {
+      AP_LOGI(TAG, "speaker %s updated to %s", h.name, h.firmware);
+      s_fw_busy.active = false;
+    }
+  }
   const bool join_now = session_active() && realtime_session();
   sp->state = session_active() && !join_now ? SPK_WAITING : SPK_ACTIVE;
   AP_LOGI(TAG,
@@ -326,7 +472,7 @@ static void handle_message(gw_speaker_t *sp, uint8_t type, const uint8_t *p,
     return;
   }
   if (sp->state == SPK_CONNECTED) {
-    AP_LOGW(TAG, "%s: message 0x%02x before HELLO", sp->ip, type);
+    if (!sp->fw_only) AP_LOGW(TAG, "%s: message 0x%02x before HELLO", sp->ip, type);
     return;
   }
   switch (type) {
@@ -441,11 +587,14 @@ static void accept_speaker(void) {
 }
 
 /* Speakers task: read the TSF once, extend the fit and tell every speaker
- * which sender PTP time the fitted TSF of this instant is. */
+ * which sender PTP time the fitted TSF of this instant is, on the smooth
+ * line of gw_timeline.c. */
 static void time_tick(int64_t now_us) {
   int64_t local_ns = 0, tsf_ns = 0;
   if (!tsf_fit_read_sample(&local_ns, &tsf_ns)) return;
-  if (tsf_fit_add(&s_tsf, local_ns, tsf_ns) == TSF_FIT_RESTARTED) {
+  const bool tsf_restarted =
+      tsf_fit_add(&s_tsf, local_ns, tsf_ns) == TSF_FIT_RESTARTED;
+  if (tsf_restarted) {
     AP_LOGW(TAG, "TSF stepped (access point restarted or changed): time fit "
                  "restarted");
   }
@@ -456,6 +605,21 @@ static void time_tick(int64_t now_us) {
   int64_t tsf_now_ns = 0;
   if (!tsf_fit_tsf_at(&s_tsf, local_ns, &tsf_now_ns)) return;
   m.tsf_ns = tsf_now_ns; /* packed member: no pointer to it */
+
+  /* The Syncs measured since the last tick, on the TSF: the line is fitted
+   * to them (gw_timeline.c), not to the PTP filter. */
+  ptp_clock_sample_t smp[16];
+  uint32_t n_smp;
+  while ((n_smp = ptp_clock_read_samples(&s_ptp_cursor, smp, 16)) > 0) {
+    for (uint32_t i = 0; i < n_smp; ++i) {
+      int64_t tsf_rx_ns = 0;
+      if (tsf_fit_tsf_at(&s_tsf, smp[i].local_ns, &tsf_rx_ns)) {
+        gw_timeline_add_sample(tsf_rx_ns, smp[i].remote_ns,
+                               smp[i].source_clock_id ^
+                                   (smp[i].grandmaster_clock_id * 31U));
+      }
+    }
+  }
 
   if (s_bssid_read_us == 0 ||
       now_us - s_bssid_read_us > GW_BSSID_REFRESH_MS * 1000LL) {
@@ -498,6 +662,32 @@ static void time_tick(int64_t now_us) {
     m.flags = SURROUND_TIME_PTP_VALID | (ps.locked ? SURROUND_TIME_PTP_LOCKED : 0U);
   }
 
+  gw_timeline_out_t line = {0};
+  const int64_t filter_ns = m.ptp_ns; /* the PTP filter, for the log */
+  if ((m.flags & SURROUND_TIME_PTP_VALID) &&
+      gw_timeline_update(m.tsf_ns, tsf_restarted, &line)) {
+    m.ptp_ns = line.ptp_ns;
+    m.rate_ppb = line.rate_ppb;
+    m.epoch = line.epoch;
+    s_time_last = m;
+    s_time_last_us = now_us;
+  } else if (!tsf_restarted && gw_timeline_hold(m.tsf_ns, &line)) {
+    /* A gap in the sender's PTP (late Syncs, the realtime estimate not ready
+     * for a moment): the speakers keep the same line instead of dropping
+     * their time all at once. */
+    const uint32_t gap_ms = (uint32_t)((now_us - s_time_last_us) / 1000LL);
+    m.ptp_ns = line.ptp_ns;
+    m.rate_ppb = line.rate_ppb;
+    m.epoch = line.epoch;
+    m.source_clock_id = s_time_last.source_clock_id;
+    m.grandmaster_clock_id = s_time_last.grandmaster_clock_id;
+    m.mastership_age_ms = s_time_last.mastership_age_ms + gap_ms;
+    m.sample_count = s_time_last.sample_count;
+    m.flags = s_time_last.flags;
+  } else {
+    gw_timeline_invalidate();
+  }
+
   xSemaphoreTake(s_lock, portMAX_DELAY);
   for (size_t i = 0; i < SURROUND_MAX_SPEAKERS; ++i) {
     gw_speaker_t *sp = &s_spk[i];
@@ -509,14 +699,33 @@ static void time_tick(int64_t now_us) {
 
   if (now_us - s_time_log_us >= GW_TIME_LOG_MS * 1000LL) {
     s_time_log_us = now_us;
+    int64_t best_ns = 0;
+    uint32_t syncs = 0;
+    if (gw_timeline_take_best(&best_ns, &syncs)) {
+      /* Short, so the log keeps the whole line. */
+      ESP_LOGI(TAG,
+               "APPLE TV vs LINE: best Sync %+.3f ms (of %u) | line epoch %u "
+               "%+.3f ppm%s, fit %+.3f ms over %u s | PTP filter %+.3f ms",
+               (double)best_ns / 1e6, (unsigned)syncs, (unsigned)line.epoch,
+               (double)line.rate_ppb / 1000.0, line.fitted ? " fitted" : "",
+               (double)line.err_ns / 1e6, (unsigned)(line.span_ms / 1000U),
+               (m.flags & SURROUND_TIME_PTP_VALID) && filter_ns != 0
+                   ? (double)(filter_ns - m.ptp_ns) / 1e6 : 0.0);
+    }
     ESP_LOGI(TAG,
              "TIME tsf fit %u samples %+.3f ppm rms %.2f us restarts %u | PTP "
              "valid=%d locked=%d realtime=%d gm=%016" PRIx64 " offset=%" PRId64
-             " ns",
+             " ns | line epoch %u rate %+.3f ppm%s, envelope %+.3f ms from it over "
+             "%.0f s%s, PTP filter %+.3f ms from it",
              (unsigned)s_tsf.count, s_tsf.slope * 1e6, s_tsf.rms_ns / 1000.0,
              (unsigned)s_tsf.restarts, (m.flags & SURROUND_TIME_PTP_VALID) != 0,
              (m.flags & SURROUND_TIME_PTP_LOCKED) != 0, ps.realtime_mode,
-             m.grandmaster_clock_id, ps.filtered_offset_ns);
+             m.grandmaster_clock_id, ps.filtered_offset_ns, (unsigned)line.epoch,
+             (double)line.rate_ppb / 1000.0, line.fitted ? " (fitted)" : "",
+             (double)line.err_ns / 1e6, line.span_ms / 1000.0,
+             line.settling ? " (settling)" : "",
+             (m.flags & SURROUND_TIME_PTP_VALID) && filter_ns != 0
+                 ? (double)(filter_ns - m.ptp_ns) / 1e6 : 0.0);
   }
 }
 
@@ -542,6 +751,7 @@ static void forward_posted_volume(void) {
 static void speakers_task(void *arg) {
   (void)arg;
   int64_t last_ping_us = 0;
+  int64_t last_fw_us = 0;
   int64_t next_time_us = 0;
   uint8_t buf[256];
   for (;;) {
@@ -594,6 +804,13 @@ static void speakers_task(void *arg) {
 
     forward_posted_volume();
 
+    if (now_us - last_fw_us >= 1000000LL) {
+      last_fw_us = now_us;
+      xSemaphoreTake(s_lock, portMAX_DELAY);
+      fw_tick(now_us);
+      xSemaphoreGive(s_lock);
+    }
+
     if (now_us >= next_time_us) {
       /* A fixed cadence, not drifting with the select wake-ups. */
       next_time_us = next_time_us == 0 || now_us - next_time_us >
@@ -612,8 +829,7 @@ static void speakers_task(void *arg) {
       if (sp->fd < 0) continue;
       if (sp->dead) {
         close_speaker(sp, "send failed");
-      } else if (now_us - sp->last_rx_us >
-                     (int64_t)SURROUND_LINK_TIMEOUT_MS * 1000LL &&
+      } else if (now_us - sp->last_rx_us > link_timeout_us(sp) &&
                  now_us >= sp->cal_until_us) {
         close_speaker(sp, sp->state == SPK_CONNECTED ? "no HELLO"
                                                      : "no answer to PING");
@@ -628,6 +844,8 @@ static void speakers_task(void *arg) {
 size_t gw_speakers_list(gw_speaker_info_t out[SURROUND_MAX_SPEAKERS]) {
   size_t n = 0;
   if (!s_lock) return 0;
+  gw_fw_image_t img;
+  gw_fw_get(&img);
   xSemaphoreTake(s_lock, portMAX_DELAY);
   for (size_t i = 0; i < SURROUND_MAX_SPEAKERS; ++i) {
     const gw_speaker_t *sp = &s_spk[i];
@@ -647,9 +865,31 @@ size_t gw_speakers_list(gw_speaker_info_t out[SURROUND_MAX_SPEAKERS]) {
         esp_timer_get_time() - sp->status_us <
             3LL * SURROUND_STATUS_MS * 1000LL;
     o->status = sp->status;
+    if (img.valid) {
+      const surround_hello_t *h = &sp->hello;
+      o->fw_update = strcmp(h->firmware, img.id) == 0 ? "current"
+          : s_fw_busy.active && memcmp(s_fw_busy.mac, h->mac, 6) == 0 ? "updating"
+          : h->version < SURROUND_PROTO_FW_UPDATE ? "manual"
+          : img.halted ? "halted"
+          : fw_tries(h->mac, img.generation)->attempts >= GW_FW_ATTEMPTS ? "failed"
+                                                                         : "pending";
+    }
   }
   xSemaphoreGive(s_lock);
   return n;
+}
+
+void gw_speakers_fw_busy(gw_fw_busy_t *out) {
+  memset(out, 0, sizeof(*out));
+  if (!s_lock) return;
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  if (s_fw_busy.active) {
+    out->active = true;
+    strlcpy(out->name, s_fw_busy.name, sizeof(out->name));
+    strlcpy(out->ip, s_fw_busy.ip, sizeof(out->ip));
+    out->seconds = (uint32_t)((esp_timer_get_time() - s_fw_busy.since_us) / 1000000LL);
+  }
+  xSemaphoreGive(s_lock);
 }
 
 esp_err_t gw_speakers_set_config(const uint8_t mac[6],
@@ -687,14 +927,6 @@ esp_err_t gw_speakers_cal_play(const uint8_t mac[6],
   }
   xSemaphoreGive(s_lock);
   return err;
-}
-
-bool gw_speakers_local_to_tsf(int64_t local_ns, int64_t *tsf_ns) {
-  if (!s_lock) return false;
-  xSemaphoreTake(s_lock, portMAX_DELAY);
-  const bool ok = tsf_fit_tsf_at(&s_tsf_shared, local_ns, tsf_ns);
-  xSemaphoreGive(s_lock);
-  return ok;
 }
 
 bool gw_speakers_tsf_to_local(int64_t tsf_ns, int64_t *local_ns) {

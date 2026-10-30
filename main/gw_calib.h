@@ -64,6 +64,8 @@ void gw_calib_get(gw_cal_status_t *out);
  * Returns how many speakers took them through *applied. */
 esp_err_t gw_calib_apply(int *applied);
 void gw_calib_discard(void);
+/* A run (test or measurement) is under way: speakers must not be disturbed. */
+bool gw_calib_running(void);
 
 /* gw_speakers.c: a speaker's CAL_RESULT (called with its lock held). */
 void gw_calib_on_result(const uint8_t mac[6], const surround_cal_result_t *r);

@@ -13,8 +13,6 @@
 
 _Static_assert((PCM_RTP_SLOT_COUNT & (PCM_RTP_SLOT_COUNT - 1U)) == 0,
                "PCM_RTP_SLOT_COUNT must be power of two");
-_Static_assert((PCM_RTP_FINAL_SLOT_COUNT & (PCM_RTP_FINAL_SLOT_COUNT - 1U)) == 0,
-               "PCM_RTP_FINAL_SLOT_COUNT must be power of two");
 _Static_assert((PCM_RTP_SLOT_FRAMES & (PCM_RTP_SLOT_FRAMES - 1U)) == 0,
                "PCM_RTP_SLOT_FRAMES must be power of two");
 _Static_assert((PCM_RTP_SLOT_FRAMES % 32U) == 0,
@@ -177,10 +175,6 @@ static esp_err_t pcm_rtp_ring_create_internal(
 
   *out = r;
   return ESP_OK;
-}
-
-esp_err_t pcm_rtp_ring_create(pcm_rtp_ring_t **out) {
-  return pcm_rtp_ring_create_internal(out, NULL, 0U, PCM_RTP_FINAL_SLOT_COUNT);
 }
 
 esp_err_t pcm_rtp_ring_create_with_storage(pcm_rtp_ring_t **out,
@@ -433,55 +427,6 @@ static bool read_page_range(const pcm_rtp_ring_t *r, uint32_t rtp,
   return false;
 }
 
-static bool has_page_range(const pcm_rtp_ring_t *r, uint32_t rtp,
-                           uint32_t generation, uint32_t frames) {
-  uint32_t base = page_base(rtp);
-  uint32_t offset = rtp - base;
-  if (offset + frames > PCM_RTP_SLOT_FRAMES) {
-    return false;
-  }
-
-  uint32_t slot = slot_for_page(r, base);
-  const pcm_slot_tag_t *tag = &r->tags[slot];
-  for (int retry = 0; retry < 2; ++retry) {
-    uint32_t seq1 = __atomic_load_n(&tag->seq, __ATOMIC_ACQUIRE);
-    if (seq1 & 1U) {
-      continue;
-    }
-    if (tag->generation != generation || tag->page_rtp != base ||
-        !validity_has_range(tag->valid, offset, frames)) {
-      return false;
-    }
-    uint32_t seq2 = __atomic_load_n(&tag->seq, __ATOMIC_ACQUIRE);
-    if (seq1 == seq2 && !(seq2 & 1U)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-bool pcm_rtp_ring_has_range(const pcm_rtp_ring_t *r, uint32_t first_rtp,
-                            uint32_t frames, uint32_t generation) {
-  if (!r || frames == 0 || generation != __atomic_load_n(&r->generation, __ATOMIC_ACQUIRE)) {
-    return false;
-  }
-  uint32_t cur = first_rtp;
-  uint32_t remain = frames;
-  while (remain) {
-    uint32_t offset = cur & (PCM_RTP_SLOT_FRAMES - 1U);
-    uint32_t chunk = PCM_RTP_SLOT_FRAMES - offset;
-    if (chunk > remain) {
-      chunk = remain;
-    }
-    if (!has_page_range(r, cur, generation, chunk)) {
-      return false;
-    }
-    cur += chunk;
-    remain -= chunk;
-  }
-  return true;
-}
-
 uint32_t pcm_rtp_ring_contiguous_frames(const pcm_rtp_ring_t *r,
                                         uint32_t first_rtp,
                                         uint32_t generation,
@@ -562,109 +507,6 @@ bool pcm_rtp_ring_read(const pcm_rtp_ring_t *r, uint32_t first_rtp,
     out_frame += chunk;
   }
   return true;
-}
-
-bool pcm_rtp_ring_read_256(const pcm_rtp_ring_t *r, uint32_t first_rtp,
-                           uint32_t generation, int16_t *out) {
-  return pcm_rtp_ring_read(r, first_rtp, 256U, generation, out);
-}
-
-static bool read_page_range_conceal(const pcm_rtp_ring_t *r, uint32_t rtp,
-                                    uint32_t generation, uint32_t frames,
-                                    int16_t *out, uint32_t *missing) {
-  const uint32_t base = page_base(rtp);
-  const uint32_t offset = rtp - base;
-  if (offset + frames > PCM_RTP_SLOT_FRAMES) return false;
-
-  const uint32_t slot = slot_for_page(r, base);
-  const pcm_slot_tag_t *tag = &r->tags[slot];
-  uint32_t valid_copy[VALID_WORDS];
-
-  for (int retry = 0; retry < 2; ++retry) {
-    const uint32_t seq1 = __atomic_load_n(&tag->seq, __ATOMIC_ACQUIRE);
-    if (seq1 & 1U) continue;
-    if (tag->generation != generation || tag->page_rtp != base) return false;
-
-    memcpy(out,
-           r->pcm + ((size_t)slot * PCM_SLOT_SAMPLES) +
-               ((size_t)offset * PCM_RTP_CHANNELS),
-           (size_t)frames * PCM_RTP_CHANNELS * sizeof(int16_t));
-    memcpy(valid_copy, tag->valid, sizeof(valid_copy));
-
-    const uint32_t seq2 = __atomic_load_n(&tag->seq, __ATOMIC_ACQUIRE);
-    if (seq1 != seq2 || (seq2 & 1U)) continue;
-
-    uint32_t local_missing = 0U;
-    for (uint32_t i = 0; i < frames; ++i) {
-      const uint32_t bit = offset + i;
-      if ((valid_copy[bit >> 5] & (1U << (bit & 31U))) == 0U) {
-        out[(size_t)i * PCM_RTP_CHANNELS] = 0;
-        out[(size_t)i * PCM_RTP_CHANNELS + 1U] = 0;
-        local_missing++;
-      }
-    }
-    if (missing) *missing += local_missing;
-    return true;
-  }
-  return false;
-}
-
-bool pcm_rtp_ring_read_256_conceal(const pcm_rtp_ring_t *r,
-                                   uint32_t first_rtp, uint32_t generation,
-                                   int16_t *out, uint32_t *out_missing_frames) {
-  if (out_missing_frames) *out_missing_frames = 0U;
-  if (!r || !out ||
-      generation != __atomic_load_n(&r->generation, __ATOMIC_ACQUIRE)) {
-    return false;
-  }
-
-  uint32_t cur = first_rtp;
-  uint32_t remain = 256U;
-  size_t out_frame = 0U;
-  uint32_t missing = 0U;
-  while (remain) {
-    const uint32_t offset = cur & (PCM_RTP_SLOT_FRAMES - 1U);
-    uint32_t chunk = PCM_RTP_SLOT_FRAMES - offset;
-    if (chunk > remain) chunk = remain;
-    if (!read_page_range_conceal(
-            r, cur, generation, chunk,
-            out + out_frame * PCM_RTP_CHANNELS, &missing)) {
-      return false;
-    }
-    cur += chunk;
-    remain -= chunk;
-    out_frame += chunk;
-  }
-  if (out_missing_frames) *out_missing_frames = missing;
-  return true;
-}
-
-void pcm_rtp_ring_invalidate_range(pcm_rtp_ring_t *r, uint32_t from_rtp,
-                                   uint32_t until_rtp, uint32_t generation) {
-  const int32_t length = (int32_t)(until_rtp - from_rtp);
-  if (!r || length <= 0) return;
-
-  xSemaphoreTake(r->writer_mutex, portMAX_DELAY);
-  /* Visit physical tags once, even if the sender names hours of RTP time. */
-  for (uint32_t i = 0; i < r->slot_count; ++i) {
-    pcm_slot_tag_t *tag = &r->tags[i];
-    if (tag->generation != generation) continue;
-    const int64_t start = (int32_t)(tag->page_rtp - from_rtp);
-    const int64_t end = start + PCM_RTP_SLOT_FRAMES;
-    if (end <= 0 || start >= length) continue;
-    const uint32_t off = start < 0 ? (uint32_t)(-start) : 0U;
-    const uint32_t stop = end > length ? (uint32_t)(length - start)
-                                      : PCM_RTP_SLOT_FRAMES;
-    const uint32_t seq = __atomic_load_n(&tag->seq, __ATOMIC_ACQUIRE);
-    (void)__atomic_exchange_n(&tag->seq, seq + 1U, __ATOMIC_ACQ_REL);
-    validity_clear_range(tag->valid, off, stop - off);
-    if (!validity_any(tag->valid)) {
-      tag->page_rtp = 0U;
-      tag->generation = 0U;
-    }
-    __atomic_store_n(&tag->seq, seq + 2U, __ATOMIC_RELEASE);
-  }
-  xSemaphoreGive(r->writer_mutex);
 }
 
 void pcm_rtp_ring_invalidate_before(pcm_rtp_ring_t *r, uint32_t until_rtp,

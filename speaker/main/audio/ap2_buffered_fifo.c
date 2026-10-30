@@ -400,10 +400,6 @@ static void ap2_buffered_fifo_abort_client(ap2_buffered_fifo_t *fifo) {
   signal_all(fifo);
 }
 
-size_t ap2_buffered_fifo_capacity(const ap2_buffered_fifo_t *fifo) {
-  return fifo ? fifo->capacity : 0U;
-}
-
 bool ap2_buffered_fifo_epoch_is_current(const ap2_buffered_fifo_t *fifo,
                                         uint32_t stream_epoch) {
   return fifo && __atomic_load_n(&fifo->running, __ATOMIC_ACQUIRE) && stream_epoch ==

@@ -61,6 +61,13 @@ static const char *TAG = "ptp_clock";
 #define PTP_STEP_FILTER_NS        500000LL  /* 0.5 ms */
 #define PTP_STEP_RAW_FILTER_NS   2000000LL /* 2.0 ms */
 #define PTP_STEP_LOG_COOLDOWN_NS 1000000000LL
+/* Surround speaker: how far the Gateway's last TIME is carried forward on its
+ * rate (TIME comes every 125 ms). It covers a Wi-Fi dropout during a stream
+ * (SURROUND_LINK_TIMEOUT_STREAM_MS): the line's rate is known to well under
+ * 1 ppm, so 30 s on it stays within microseconds. Within it the time counts
+ * as fresh; beyond it the offset holds and ages. */
+#define PTP_EXTERNAL_CARRY_NS    30000000000LL
+#define PTP_EXTERNAL_CARRY_MS    ((uint32_t)(PTP_EXTERNAL_CARRY_NS / 1000000LL))
 
 /* One outstanding two-step Sync. A Follow_Up carries the precise origin
  * timestamp of the corresponding Sync, but the local receive timestamp that
@@ -99,12 +106,14 @@ static struct {
   /* Realtime: Announce GM changes after the first GM (audio epoch). */
   uint32_t gm_changes;
 
-  // Media-anchor clock hint for diagnostics (0 = unspecified).
-  uint64_t expected_clock_id;
-
   /* Diagnostic history within the selected RTSP peer's timing record. */
   uint64_t first_source_clock_id;
   bool source_mixed;
+
+  /* Surround speaker: the offset's rate (ppb) from ptp_clock_set_external();
+   * not valid on a PTP receiver. */
+  bool external_rate_valid;
+  int32_t external_rate_ppb;
 } ptp = {0};
 
 /* PTP state is written by the PTP task on Core 0 and read/reset from RTSP/audio
@@ -265,6 +274,11 @@ static void update_lock_locked(const ptp_clock_engine_sample_t *r,
   }
 }
 
+/* The last measured Syncs for ptp_clock_read_samples(); ptp_state_mux. */
+#define PTP_CLOCK_SAMPLES 64U
+static ptp_clock_sample_t s_samples[PTP_CLOCK_SAMPLES];
+static uint32_t s_samples_total;
+
 /* Feed one paired Sync/Follow_Up offset. Caller holds ptp_state_mux. */
 static void add_sample_locked(int64_t raw_offset_ns, int64_t reception_ns,
                               int64_t rx_lag_ns, uint16_t seq,
@@ -272,6 +286,13 @@ static void add_sample_locked(int64_t raw_offset_ns, int64_t reception_ns,
   const ptp_clock_engine_sample_t r = ptp_clock_engine_add_sample(
       &ptp.engine, raw_offset_ns, reception_ns);
   if (!r.accepted) return;
+  s_samples[s_samples_total % PTP_CLOCK_SAMPLES] = (ptp_clock_sample_t){
+      .local_ns = reception_ns,
+      .remote_ns = reception_ns + raw_offset_ns,
+      .source_clock_id = ptp.engine.source_clock_id,
+      .grandmaster_clock_id = ptp.engine.grandmaster_clock_id,
+  };
+  s_samples_total++;
   ptp.last_sync_ms = (uint32_t)(reception_ns / 1000000LL);
   if (!ptp.realtime_mode) update_lock_locked(&r, reception_ns);
 
@@ -715,21 +736,41 @@ static void ptp_clear_estimators_locked(void) {
   ptp.lock_candidate_start_ms = 0;
   ptp.last_sync_ms = 0;
   ptp.last_step_log_ns = 0;
-  ptp.expected_clock_id = 0;
   ptp.first_source_clock_id = 0;
   ptp.source_mixed = false;
-}
-
-void ptp_clock_clear(void) {
-  taskENTER_CRITICAL(&ptp_state_mux);
-  ptp_clear_estimators_locked();
-  taskEXIT_CRITICAL(&ptp_state_mux);
+  ptp.external_rate_valid = false;
+  ptp.external_rate_ppb = 0;
 }
 
 static uint32_t age_ms_since(int64_t now_ns, int64_t then_ns) {
   if (then_ns <= 0 || now_ns < then_ns) return UINT32_MAX;
   const uint64_t age_ms = (uint64_t)(now_ns - then_ns) / 1000000ULL;
   return age_ms > UINT32_MAX ? UINT32_MAX : (uint32_t)age_ms;
+}
+
+/* Age of the estimate. A speaker's carried time is as good as a fresh sample
+ * for PTP_EXTERNAL_CARRY_NS. Caller holds ptp_state_mux. */
+static uint32_t sample_age_locked(int64_t now_ns) {
+  const uint32_t age = age_ms_since(now_ns, ptp.engine.last_accepted_time_ns);
+  if (!ptp.external_rate_valid || age == UINT32_MAX) return age;
+  return age > PTP_EXTERNAL_CARRY_MS ? age - PTP_EXTERNAL_CARRY_MS : 0U;
+}
+
+/* The offset audio uses at now_ns. A speaker carries the Gateway's last
+ * offset forward on its rate. Caller holds ptp_state_mux. */
+static int64_t output_offset_locked(int64_t now_ns) {
+  const ptp_clock_engine_t *e = &ptp.engine;
+  if (!ptp.external_rate_valid || now_ns <= e->last_accepted_time_ns)
+    return e->output_offset_ns;
+  int64_t dt = now_ns - e->last_accepted_time_ns;
+  if (dt > PTP_EXTERNAL_CARRY_NS) dt = PTP_EXTERNAL_CARRY_NS;
+  return e->output_offset_ns + dt * ptp.external_rate_ppb / 1000000000LL;
+}
+
+void ptp_clock_clear(void) {
+  taskENTER_CRITICAL(&ptp_state_mux);
+  ptp_clear_estimators_locked();
+  taskEXIT_CRITICAL(&ptp_state_mux);
 }
 
 /* Realtime readiness of the current estimator; caller holds ptp_state_mux. */
@@ -754,13 +795,14 @@ void ptp_clock_get_snapshot(ptp_clock_snapshot_t *snapshot) {
    * here. Audio can then continue from its cached local anchor without treating
    * stale PTP as newly qualified. */
   if (!ptp.realtime_mode && ptp.locked && ptp.last_sync_ms > 0 &&
-      (now_ms - ptp.last_sync_ms) > LOCK_TIMEOUT_MS) {
+      (now_ms - ptp.last_sync_ms) >
+          LOCK_TIMEOUT_MS + (ptp.external_rate_valid ? PTP_EXTERNAL_CARRY_MS : 0U)) {
     ptp.locked = false;
     ptp.lock_candidate_start_ms = 0;
   }
 
   const ptp_clock_engine_t *e = &ptp.engine;
-  snapshot->sample_age_ms = age_ms_since(now_ns, e->last_accepted_time_ns);
+  snapshot->sample_age_ms = sample_age_locked(now_ns);
   snapshot->mastership_age_ms =
       e->valid ? age_ms_since(now_ns, e->mastership_start_time_ns) : 0U;
   if (snapshot->mastership_age_ms == UINT32_MAX) snapshot->mastership_age_ms = 0;
@@ -770,17 +812,33 @@ void ptp_clock_get_snapshot(ptp_clock_snapshot_t *snapshot) {
       : ptp.locked;
   snapshot->valid = ptp.realtime_mode ? snapshot->locked : e->valid;
   snapshot->source_mixed = ptp.source_mixed;
-  snapshot->expected_clock_id = ptp.expected_clock_id;
   snapshot->source_clock_id = e->source_clock_id;
   snapshot->grandmaster_clock_id = e->grandmaster_clock_id;
   snapshot->epoch = ptp.realtime_mode
       ? (e->grandmaster_clock_id ? ptp.gm_changes + 1U : 0U) : e->epoch;
   snapshot->raw_offset_ns = e->raw_offset_ns;
-  snapshot->filtered_offset_ns = e->output_offset_ns;
+  snapshot->filtered_offset_ns = output_offset_locked(now_ns);
   snapshot->sample_count = e->accepted_samples;
+  snapshot->offset_rate_valid = ptp.external_rate_valid && e->valid;
+  snapshot->offset_rate_ppb = ptp.external_rate_ppb;
   taskEXIT_CRITICAL(&ptp_state_mux);
   snapshot->raw_filter_delta_ns =
       snapshot->raw_offset_ns - snapshot->filtered_offset_ns;
+}
+
+uint32_t ptp_clock_read_samples(uint32_t *cursor, ptp_clock_sample_t *out,
+                                uint32_t max) {
+  if (!cursor || !out) return 0;
+  uint32_t n = 0;
+  taskENTER_CRITICAL(&ptp_state_mux);
+  if (s_samples_total - *cursor > PTP_CLOCK_SAMPLES)
+    *cursor = s_samples_total - PTP_CLOCK_SAMPLES;
+  while (*cursor != s_samples_total && n < max) {
+    out[n++] = s_samples[*cursor % PTP_CLOCK_SAMPLES];
+    (*cursor)++;
+  }
+  taskEXIT_CRITICAL(&ptp_state_mux);
+  return n;
 }
 
 void ptp_clock_start_timing(bool realtime, uint32_t timing_peer_ip) {
@@ -790,32 +848,45 @@ void ptp_clock_start_timing(bool realtime, uint32_t timing_peer_ip) {
   /* NQPTP development handle_control_port_messages(T): clear the timing
    * records, select the RTSP sender, then begin timing (B), even when the IP
    * has not changed. Reference: 0a88cd7ca9325f023ca5d891714695167672bdb9.
-   * Exception: the same sender in the same mode, whose samples never stopped
-   * and whose estimate is settled. Some apps change tracks as TEARDOWN +
-   * SETUP ~60 ms apart; a reset there started every track on ~1 s of
-   * samples, 1-2 ms off, and the servo needed ~30 s to pull it back (seen on
-   * the board). A new sender, a mode change, a gap or a young estimate still
-   * start from scratch; GM changes and clock steps are handled by the
-   * engine itself. */
+   * Exception: the same sender, whose samples never stopped and whose
+   * estimate is settled, also when it switches between realtime and
+   * buffered: both use this one estimator of the same clock. Some apps change
+   * tracks as TEARDOWN + SETUP ~60 ms apart; a reset there started every
+   * track on ~1 s of samples, 1-2 ms off, and the servo needed ~30 s to pull
+   * it back (seen on the board). Apple TV also plays a realtime stream for a
+   * fraction of a second between buffered ones; a reset there gave a Gateway
+   * an estimate whose output still slewed to its filter at 250 ppm, and its
+   * line learned that as the sender's rate (seen on the board). A new sender,
+   * a gap or a young estimate still start from scratch; GM changes and clock
+   * steps are handled by the engine itself. */
   const ptp_clock_engine_t *e = &ptp.engine;
   const uint32_t sample_age_ms = age_ms_since(now_ns, e->last_accepted_time_ns);
   const uint32_t mastership_ms = age_ms_since(now_ns, e->mastership_start_time_ns);
   const bool keep = e->valid && timing_peer_ip != 0 &&
                     ptp.timing_peer_ip == timing_peer_ip &&
-                    ptp.realtime_mode == realtime &&
                     sample_age_ms <= PTP_SAMPLE_STALE_MS &&
                     mastership_ms != UINT32_MAX &&
                     mastership_ms >= PTP_KEEP_MIN_MASTERSHIP_MS;
+  const bool mode_changed = ptp.realtime_mode != realtime;
   const uint32_t kept_samples = e->accepted_samples;
   ptp.realtime_mode = realtime;
   ptp.timing_peer_ip = timing_peer_ip;
-  if (!keep) ptp_clear_estimators_locked();
+  if (!keep) {
+    ptp_clear_estimators_locked();
+  } else if (mode_changed) {
+    /* The buffered lock is only qualified in buffered mode: earn it again. */
+    ptp.locked = false;
+    ptp.lock_candidate_start_ms = 0;
+  }
   TaskHandle_t task_handle =
       __atomic_load_n(&ptp.task_handle, __ATOMIC_ACQUIRE);
   taskEXIT_CRITICAL(&ptp_state_mux);
   if (keep) {
-    AP_LOGI(TAG, "PTP: same sender, settled estimate kept at stream SETUP "
+    AP_LOGI(TAG, "PTP: same sender, settled estimate kept at stream SETUP%s "
                  "(%lu s, %lu samples)",
+            mode_changed ? (realtime ? " (buffered -> realtime)"
+                                     : " (realtime -> buffered)")
+                         : "",
             (unsigned long)(mastership_ms / 1000U), (unsigned long)kept_samples);
   }
   if (task_handle && ptp_is_running()) {
@@ -823,15 +894,6 @@ void ptp_clock_start_timing(bool realtime, uint32_t timing_peer_ip) {
                                          : PTP_TASK_PRIORITY_LEGACY);
   }
   xSemaphoreGive(lifecycle);
-}
-
-void ptp_clock_note_realtime_d7(uint64_t clock_id) {
-  if (clock_id == 0) return;
-  taskENTER_CRITICAL(&ptp_state_mux);
-  if (ptp.realtime_mode) {
-    ptp.expected_clock_id = clock_id; /* anchor hint only; no realtime filtering */
-  }
-  taskEXIT_CRITICAL(&ptp_state_mux);
 }
 
 void ptp_clock_get_realtime_snapshot(ptp_realtime_snapshot_t *snapshot) {
@@ -843,10 +905,10 @@ void ptp_clock_get_realtime_snapshot(ptp_realtime_snapshot_t *snapshot) {
   snapshot->realtime_mode = ptp.realtime_mode;
   snapshot->master_clock_id = e->grandmaster_clock_id;
   snapshot->source_clock_id = e->source_clock_id;
-  snapshot->master_offset_ns = e->output_offset_ns;
+  snapshot->master_offset_ns = output_offset_locked(now_ns);
   snapshot->sample_count = e->accepted_samples;
   snapshot->gm_change_count = ptp.gm_changes;
-  snapshot->sample_age_ms = age_ms_since(now_ns, e->last_accepted_time_ns);
+  snapshot->sample_age_ms = sample_age_locked(now_ns);
   const uint32_t mastership_age_ms =
       e->valid ? age_ms_since(now_ns, e->mastership_start_time_ns) : UINT32_MAX;
   snapshot->mastership_age_ms =
@@ -904,18 +966,11 @@ void ptp_clock_set_external(const ptp_clock_external_t *ext) {
   e->mastership_start_time_ns =
       ext->sample_time_ns - (int64_t)ext->mastership_age_ms * 1000000LL;
   e->accepted_samples = ext->sample_count;
+  ptp.external_rate_ppb = ext->offset_rate_ppb;
+  ptp.external_rate_valid = true;
   ptp.realtime_mode = ext->realtime;
   ptp.locked = ext->locked;
   ptp.lock_candidate_start_ms = 0;
   ptp.last_sync_ms = (uint32_t)(ext->sample_time_ns / 1000000LL);
-  taskEXIT_CRITICAL(&ptp_state_mux);
-}
-
-void ptp_clock_set_master_clock_id(uint64_t clock_id) {
-  /* Shairport set_ptp_anchor_info only stores the media anchor. It never
-   * resets NQPTP or selects packets by the anchor's grandmaster identity.
-   * Keep the hint for diagnostics; T <IP> owns timing-source admission. */
-  taskENTER_CRITICAL(&ptp_state_mux);
-  ptp.expected_clock_id = clock_id;
   taskEXIT_CRITICAL(&ptp_state_mux);
 }

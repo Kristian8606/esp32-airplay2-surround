@@ -87,42 +87,6 @@ size_t plist_end(plist_t *p);
 // Binary plist parser (for AirPlay 2 SETUP)
 // ========================================
 
-#define BPLIST_PEER_MAX_ADDRESSES 4
-#define BPLIST_PEER_ADDRESS_MAX   64
-
-/**
- * Parsed AirPlay 2 PTP peer entry.
- *
- * SETPEERS uses a top-level array of address strings. SETPEERSX uses a
- * top-level array of dictionaries whose useful timing fields are Addresses
- * and, on newer senders, ClockID. Keep this representation independent from
- * sockets so the plist parser remains portable and easy to host-test.
- */
-typedef struct {
-  char addresses[BPLIST_PEER_MAX_ADDRESSES][BPLIST_PEER_ADDRESS_MAX];
-  size_t address_count;
-  uint64_t clock_id;
-  bool has_clock_id;
-} bplist_peer_info_t;
-
-/**
- * Parse an AirPlay 2 SETPEERS / SETPEERSX binary-plist body.
- *
- * @param plist Binary plist data.
- * @param plist_len Length of plist.
- * @param extended false for SETPEERS, true for SETPEERSX.
- * @param out Output peer array (may be NULL when out_capacity is 0).
- * @param out_capacity Number of entries available in out.
- * @param out_count Number of peer entries present in the plist. This can be
- *                  larger than out_capacity; only the first out_capacity are
- *                  written.
- * @return true when the top-level peer-list structure is valid.
- */
-bool bplist_get_peer_list(const uint8_t *plist, size_t plist_len,
-                          bool extended, bplist_peer_info_t *out,
-                          size_t out_capacity, size_t *out_count);
-
-
 /**
  * Find a data value by key anywhere in a binary plist
  * @param plist Binary plist data

@@ -2,6 +2,7 @@
 #include "audio_receiver.h"
 #include "audio_diag.h"
 #include "amp_control.h"
+#include "gw_fw.h"
 #include "gw_speakers.h"
 #include "dns_server.h"
 #include "hap.h"
@@ -102,6 +103,8 @@ void app_main(void) {
     }
     mdns_airplay_init();
     ESP_ERROR_CHECK(rtsp_server_start());
+    /* Speaker firmware to hand out; without it speakers update by hand. */
+    (void)gw_fw_init();
     /* Without the listener AirPlay still works; speakers just cannot join. */
     esp_err_t gw_err = gw_speakers_start();
     if (gw_err != ESP_OK) {

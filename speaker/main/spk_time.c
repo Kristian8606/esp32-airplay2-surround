@@ -15,6 +15,7 @@ static const char *TAG = "spk_time";
 #define SPK_TIME_BSSID_EVERY  16U /* TIME messages between BSSID reads */
 #define SPK_TIME_WARN_MS      10000
 #define SPK_TIME_LOG_MS       10000
+#define SPK_TIME_GAP_LOG_MS   1000 /* a longer gap between TIMEs is logged */
 /* The Gateway's instant lies in the past by the message's transport time.
  * Outside this window the two TSF readings do not belong together. */
 #define SPK_TIME_MIN_DELAY_NS (-5000000LL)
@@ -27,6 +28,7 @@ static bool s_bssid_known;
 static uint32_t s_msgs;
 static int64_t s_warn_us;
 static int64_t s_log_us;
+static int64_t s_last_time_us; /* last TIME message */
 static int64_t s_delay_min_ns = INT64_MAX;
 static int64_t s_delay_max_ns = INT64_MIN;
 
@@ -57,6 +59,12 @@ bool spk_time_status(uint32_t *tsf_rms_ns) {
 
 void spk_time_handle(const surround_time_t *m) {
   const int64_t now_us = esp_timer_get_time();
+  if (s_published && s_last_time_us != 0 &&
+      now_us - s_last_time_us > SPK_TIME_GAP_LOG_MS * 1000LL) {
+    AP_LOGI(TAG, "TIME again after %u ms: the time ran on the last line meanwhile",
+            (unsigned)((now_us - s_last_time_us) / 1000));
+  }
+  s_last_time_us = now_us;
   int64_t local_ns = 0, tsf_ns = 0;
   if (!tsf_fit_read_sample(&local_ns, &tsf_ns)) return;
 
@@ -102,12 +110,22 @@ void spk_time_handle(const surround_time_t *m) {
     return;
   }
 
+  /* The line's rate against the TSF, plus the TSF's against this clock. */
+  int64_t tsf_a = 0, tsf_b = 0;
+  int64_t offset_rate_ppb = m->rate_ppb;
+  if (tsf_fit_tsf_at(&s_fit, at_ns, &tsf_a) &&
+      tsf_fit_tsf_at(&s_fit, at_ns + 1000000000LL, &tsf_b)) {
+    const int64_t tsf_ppb = tsf_b - tsf_a - 1000000000LL;
+    offset_rate_ppb += tsf_ppb + (int64_t)m->rate_ppb * tsf_ppb / 1000000000LL;
+  }
+
   const uint32_t fit_age_ms = tsf_fit_age_ms(&s_fit, local_ns);
   const ptp_clock_external_t ext = {
       .source_clock_id = m->source_clock_id,
       .grandmaster_clock_id = m->grandmaster_clock_id,
       .offset_ns = m->ptp_ns - at_ns,
       .sample_time_ns = at_ns,
+      .offset_rate_ppb = (int32_t)offset_rate_ppb,
       .mastership_age_ms = m->mastership_age_ms < fit_age_ms
                                ? m->mastership_age_ms : fit_age_ms,
       .sample_count = m->sample_count,
@@ -128,12 +146,13 @@ void spk_time_handle(const surround_time_t *m) {
     s_log_us = now_us;
     ESP_LOGI(TAG,
              "TIME tsf fit %u samples %+.3f ppm rms %.2f us restarts %u | "
-             "delay %.1f..%.1f ms | offset=%" PRId64 " ns gm=%016" PRIx64
-             " locked=%d",
+             "delay %.1f..%.1f ms | offset=%" PRId64 " ns %+.3f ppm | line epoch "
+             "%u %+.3f ppm | gm=%016" PRIx64 " locked=%d",
              (unsigned)s_fit.count, s_fit.slope * 1e6, s_fit.rms_ns / 1000.0,
              (unsigned)s_fit.restarts, (double)s_delay_min_ns / 1e6,
              (double)s_delay_max_ns / 1e6, ext.offset_ns,
-             m->grandmaster_clock_id, ext.locked);
+             (double)ext.offset_rate_ppb / 1000.0, (unsigned)m->epoch,
+             (double)m->rate_ppb / 1000.0, m->grandmaster_clock_id, ext.locked);
     s_delay_min_ns = INT64_MAX;
     s_delay_max_ns = INT64_MIN;
   }

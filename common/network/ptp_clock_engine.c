@@ -151,13 +151,6 @@ bool ptp_clock_engine_set_domain(ptp_clock_engine_t *engine,
   return true;
 }
 
-void ptp_clock_engine_reset_filter(ptp_clock_engine_t *engine,
-                                   bool bump_epoch) {
-  if (!engine) return;
-  if (bump_epoch) engine->epoch = next_epoch(engine->epoch);
-  clear_filter_state(engine);
-}
-
 static void fill_result(const ptp_clock_engine_t *engine, int64_t old_output,
                         ptp_clock_engine_sample_t *r) {
   r->accepted = true;

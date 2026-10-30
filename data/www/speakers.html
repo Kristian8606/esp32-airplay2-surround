@@ -122,8 +122,16 @@ select:disabled,input:disabled{opacity:.45}
  <table class='cal-table' id='cal-table' style='display:none'><thead><tr><th>Role</th><th>Speaker</th><th>Distance</th><th>Delay</th><th>Level</th></tr></thead><tbody id='cal-rows'></tbody></table>
  <div class='cal-actions' id='cal-actions' style='display:none'><span class='msg'>Nothing changes until you apply. The farthest speaker gets 0 ms, the quietest 0 dB.</span><span class='cal-btns'><button class='btn sec' id='cal-discard'>Discard</button><button class='btn' id='cal-apply'>Apply to speakers</button></span></div>
 </div>
+<div class='panel cal' id='fwbox'>
+ <div class='cal-top'>
+  <div><h3>Speaker firmware</h3><p>Upload the speaker firmware here once. Every speaker with another build installs it from the Gateway by itself, one at a time, right away: a speaker that is playing stops for its update, restarts and plays again from the next track, skip or seek.</p></div>
+  <div class='cal-btns'><input type='file' id='fw-file' accept='.bin' style='display:none'><button class='btn sec' id='fw-pick'>Choose .bin</button><button class='btn' id='fw-up' disabled>Upload</button></div>
+ </div>
+ <div class='cal-bar'><div id='fw-bar'></div></div>
+ <div class='cal-msg' id='fw-msg'></div>
+</div>
 <div class='grid' id='list'><div class='panel empty'>Loading...</div></div>
-<div class='panel help'><b>Stereo</b> plays on the front pair and the subwoofer only; centre and surrounds stay silent (5.1 and 7.1 play every role). <b>Level:</b> lower the louder speakers, 0 dB is the loudest. <b>Delay:</b> play later; 1 m of extra distance to the listener is about 2.9 ms, so delay the closer speakers. The <b>EQ</b> is set on each speaker's own page. A speaker shows up here by itself once it is on the same Wi-Fi as the Gateway.</div>
+<div class='panel help'><b>Stereo</b> plays on the front pair and the subwoofer only; centre and surrounds stay silent. 5.1 and 7.1 play each channel on its own speaker only: with 5.1 the rear pair is silent, and with 7.1 the rear channels are not heard if there is no rear speaker. <b>Level:</b> lower the louder speakers, 0 dB is the loudest. <b>Delay:</b> play later; 1 m of extra distance to the listener is about 2.9 ms, so delay the closer speakers. The <b>EQ</b> is set on each speaker's own page. A speaker shows up here by itself once it is on the same Wi-Fi as the Gateway.</div>
 </div><script>
 const ROLES=[[-1,'Mono mix'],[0,'Front Left (L)'],[1,'Front Right (R)'],[2,'Centre (C)'],[3,'Subwoofer (LFE)'],[4,'Side Left (Ls)'],[5,'Side Right (Rs)'],[6,'Rear Left (Lrs)'],[7,'Rear Right (Rrs)']];
 /* The tile is named after the role it plays; the device name stays below. */
@@ -168,13 +176,15 @@ function stereoRoute(role){
 /* True while the speaker actually makes sound. */
 function audible(p,role){
  if(!p||!p.active||!p.playing)return false;
+ if(p.label==='silent')return false;
  return !(p.label===undefined&&p.channels<=2&&stereoRoute(role)==='silent');
 }
 function playHtml(p,role){
  if(!p)return chip('c-dim','no status yet');
  if(!p.active)return chip('c-dim','idle')+(p.time?'':chip('c-dim','no sender time'));
  let h='';
- if(p.label!==undefined)h+=chip('c-ch',p.output_channel<0?'plays: mono mix':'plays: '+p.label);
+ if(p.label==='silent')h+=chip('c-dim','silent: no '+(TITLE[role]||'such')+' channel in this stream');
+ else if(p.label!==undefined)h+=chip('c-ch',p.output_channel<0?'plays: mono mix':'plays: '+p.label);
  else if(p.channels>2)h+=chip('c-ch','plays: mix');
  else{const r=stereoRoute(role);h+=chip(r==='silent'?'c-dim':'c-ch','plays: '+r);}
  const fmt=[p.codec||'?',p.sample_rate?rate(p.sample_rate):''];
@@ -194,8 +204,10 @@ function update(c,s,dup,common){
  const b=c.el.querySelector('.badge'),wait=s.state.indexOf('waiting')===0;
  b.textContent=wait?'waits for skip':(s.audio?'streaming':'connected');b.className='badge '+(wait?'wait':(s.audio?'on':''));
  const odd=common&&s.firmware!==common;
+ /* With a firmware on the Gateway, its build is the reference. */
+ const fwState=s.fw_update,fwBad=fwState?fwState!=='current':odd;
  c.el.querySelector('.meta').innerHTML='<b>'+esc(s.name||s.ip)+'</b> · '+esc(s.ip);
- const fw=c.el.querySelector('.fw');fw.textContent='fw '+(s.firmware||'?');fw.className='fw'+(odd?' odd':'');fw.title=odd?'Different build from the other speakers':'';
+ const fw=c.el.querySelector('.fw');fw.textContent='fw '+(s.firmware||'?')+(FWS[fwState]||'');fw.className='fw'+(fwBad?' odd':'');fw.title=fwBad?'Another build than '+(fwState?'the Gateway holds':'the other speakers'):'';
  c.el.querySelector('.links').innerHTML="<a href='http://"+esc(s.ip)+"/' target='_blank'>Page</a><a href='http://"+esc(s.ip)+"/eq' target='_blank'>EQ</a>";
  c.el.querySelector('.rb').textContent=short(s.channel);
  c.el.querySelector('.play').innerHTML=playHtml(s.playback,s.channel);
@@ -208,7 +220,10 @@ function update(c,s,dup,common){
  const notes=[];
  if(have&&!s.multichannel)notes.push('This speaker was built without multichannel support: it ignores the role and plays the stereo mix.');
  if(dup)notes.push('Another speaker has the same role.');
- if(odd)notes.push('Different firmware build from the other speakers ('+common+'): update it.');
+ if(fwState==='failed')notes.push('Installing the firmware from the Gateway failed three times: update this speaker on its own page.');
+ else if(fwState==='halted')notes.push('The firmware update stopped at another speaker that did not come back with it (see Speaker firmware below).');
+ else if(fwState==='manual')notes.push('This firmware is too old to update from the Gateway: install the new one once on its own page.');
+ else if(!fwState&&odd)notes.push('Different firmware build from the other speakers ('+common+'): upload the speaker firmware below.');
  c.note.style.display=notes.length?'block':'none';c.note.textContent=notes.join(' ');
  c.el.classList.toggle('warn',notes.length>0);
 }
@@ -239,6 +254,7 @@ function updateNow(list){
 }
 async function load(){
  let d;try{const r=await fetch('/api/speakers',{cache:'no-store'});d=await r.json();}catch(e){return;}
+ fwAllCurrent=d.speakers.length>0&&d.speakers.every(s=>s.fw_update==='current');fwButton();
  const list=document.getElementById('list'),seen={},count={};
  d.speakers.forEach(s=>{if(s.channel!==undefined&&s.channel>=0)count[s.channel]=(count[s.channel]||0)+1;});
  /* The build most speakers run; the others are marked. */
@@ -268,6 +284,58 @@ async function save(c){
  }catch(e){c.msg.className='msg err';c.msg.textContent='Error';}
  c.btn.disabled=false;
 }
+/* ---- Speaker firmware held by the Gateway ---- */
+const FWS={pending:' \u00b7 will update',updating:' \u00b7 updating\u2026',failed:' \u00b7 update failed',halted:' \u00b7 update stopped',manual:' \u00b7 update by hand'};
+let fwUploading=false;
+/* The Gateway's stored build, whether every speaker runs it, and the build
+ * of the chosen file: Upload stays off for the build they all have. */
+let fwStored=null,fwAllCurrent=false,fwFileBuild=null;
+function mb(b){return (b/1048576).toFixed(2)+' MB';}
+/* The id a speaker reports (firmware_id.c, cut like gw_fw.c): esp_app_desc_t
+ * at 32 (image + segment header): version at +16, app_elf_sha256 at +144. */
+async function fwBuildOf(f){
+ try{const b=new Uint8Array(await f.slice(0,256).arrayBuffer());
+  if(b.length<256||b[0]!==0xE9||new DataView(b.buffer).getUint32(32,true)!==0xABCD5432)return null;
+  let v='';for(let i=48;i<80&&b[i];i++)v+=String.fromCharCode(b[i]);
+  const h=Array.from(b.slice(176,180),x=>x.toString(16).padStart(2,'0')).join('');
+  return (v+' '+h).slice(0,23);}catch(e){return null;}
+}
+function fwSame(){return fwAllCurrent&&fwStored!==null&&fwFileBuild===fwStored;}
+function fwButton(){
+ const btn=document.getElementById('fw-up'),f=document.getElementById('fw-file').files[0];
+ btn.disabled=fwUploading||!f||fwSame();
+ btn.title=fwSame()?'Every speaker already runs '+fwStored:'';
+}
+async function fwLoad(){
+ if(fwUploading)return;
+ let d;try{const r=await fetch('/api/speakers/firmware',{cache:'no-store'});d=await r.json();}catch(e){return;}
+ const msg=document.getElementById('fw-msg');msg.className='cal-msg';
+ let t=d.stored?'The Gateway holds '+d.build+' ('+mb(d.size)+').':'The Gateway holds no speaker firmware yet ('+mb(d.capacity)+' fit).';
+ fwStored=d.stored?d.build:null;fwButton();
+ if(d.stored&&fwAllCurrent&&!d.updating)t+=' Every speaker runs it.';
+ if(fwSame())t+=' The chosen file is this same build: nothing to upload.';
+ if(d.updating)t+=' Installing on '+d.updating.name+' ('+d.updating.ip+') for '+d.updating.seconds+' s\u2026';
+ if(d.halted_by){t+=' Updating stopped: '+d.halted_by+' did not come back with this firmware, so no other speaker gets it. Check that speaker, then upload the firmware again to continue.';msg.className='cal-msg err';}
+ msg.textContent=t;
+ document.getElementById('fw-bar').style.width=d.updating?'100%':'0';
+}
+document.getElementById('fw-pick').onclick=()=>document.getElementById('fw-file').click();
+document.getElementById('fw-file').onchange=async e=>{const f=e.target.files[0];document.getElementById('fw-pick').textContent=f?f.name:'Choose .bin';
+ fwFileBuild=f?await fwBuildOf(f):null;fwButton();fwLoad();};
+document.getElementById('fw-up').onclick=()=>{
+ const f=document.getElementById('fw-file').files[0];if(!f)return;
+ const msg=document.getElementById('fw-msg'),bar=document.getElementById('fw-bar'),btn=document.getElementById('fw-up');
+ if(!/speaker/i.test(f.name)&&!confirm(f.name+' does not look like a speaker firmware (airplay-speaker_*.bin). Upload anyway?'))return;
+ btn.disabled=true;fwUploading=true;msg.className='cal-msg';msg.textContent='Uploading '+f.name+'\u2026';
+ const x=new XMLHttpRequest();x.open('POST','/api/speakers/firmware');
+ x.upload.onprogress=e=>{if(e.lengthComputable)bar.style.width=(100*e.loaded/e.total)+'%';};
+ x.onload=()=>{fwUploading=false;fwButton();let d={};try{d=JSON.parse(x.responseText);}catch(e){}
+  if(d.success){msg.className='cal-msg';msg.textContent='Stored '+d.build+'. Speakers with another build update one by one now.';}
+  else{msg.className='cal-msg err';msg.textContent=d.error||('Upload failed (HTTP '+x.status+')');}
+  bar.style.width='0';setTimeout(fwLoad,1500);load();};
+ x.onerror=()=>{fwUploading=false;fwButton();msg.className='cal-msg err';msg.textContent='Upload failed';bar.style.width='0';};
+ x.setRequestHeader('Content-Type','application/octet-stream');x.send(f);
+};
 /* ---- Room calibration ---- */
 let calTimer=null,calStream=false,calWasBusy=false;
 /* Results folded away: remembered in this browser only. */
@@ -326,5 +394,5 @@ document.getElementById('cal-start').onclick=()=>{
 document.getElementById('cal-apply').onclick=()=>calPost('apply');
 document.getElementById('cal-discard').onclick=()=>calPost('discard');
 fetch('/api/system/info').then(r=>r.json()).then(d=>{const i=d.info||{};document.getElementById('gw-fw').textContent='Gateway fw '+(i.firmware_build||i.firmware_version||'?');}).catch(()=>{});
-buildRoom();load();setInterval(load,3000);calLoad();
+buildRoom();load();setInterval(load,3000);calLoad();fwLoad();setInterval(fwLoad,3000);
 </script></body></html>

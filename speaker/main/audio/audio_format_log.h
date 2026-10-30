@@ -28,6 +28,8 @@ static inline void audio_log_stereo_playback(
   ESP_LOGW(tag, "================================================");
 }
 
+/* decoded_channel: the channel played, -1 = mono mix, -2 = silent (the
+ * speaker's channel is not in this stream). */
 static inline void audio_log_surround_playback(
     const char *tag, int sample_rate, int channels,
     const char *requested_speaker, int decoded_channel) {
@@ -36,6 +38,10 @@ static inline void audio_log_surround_playback(
   if (decoded_channel >= 0) {
     ESP_LOGW(tag, "NOW PLAYING | AAC-LC | %d Hz | " AUDIO_AAC_INPUT_BITS
                   " | %s (%dch) | %s",
+             sample_rate, layout, channels, requested_speaker);
+  } else if (decoded_channel == -2) {
+    ESP_LOGW(tag, "NOW PLAYING | AAC-LC | %d Hz | " AUDIO_AAC_INPUT_BITS
+                  " | %s (%dch) | %s: not in this stream, silent",
              sample_rate, layout, channels, requested_speaker);
   } else {
     ESP_LOGW(tag, "NOW PLAYING | AAC-LC | %d Hz | " AUDIO_AAC_INPUT_BITS

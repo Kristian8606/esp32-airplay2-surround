@@ -20,6 +20,7 @@ set(SPEAKER_SRCS
     "audio/audio_crypto.c"
     "spk_link.c"
     "spk_time.c"
+    "spk_update.c"
 )
 # Output latency: the pure analysis is always built (tiny), the ADC
 # capture only with the wired measurement option.

@@ -515,6 +515,8 @@ esp_err_t gw_calib_start(bool mic_test_only) {
 #endif
 }
 
+bool gw_calib_running(void) { return __atomic_load_n(&s_running, __ATOMIC_RELAXED); }
+
 void gw_calib_get(gw_cal_status_t *out) {
   if (!init_once()) {
     memset(out, 0, sizeof(*out));

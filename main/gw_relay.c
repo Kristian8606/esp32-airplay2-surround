@@ -42,6 +42,13 @@ static const char *TAG = "gw_relay";
 #define GW_RELAY_CONNECT_TIMEOUT_MS 3000
 #define GW_RELAY_RETRY_MS    1000
 #define GW_RELAY_STALL_LOG_MS 5000
+/* A playing speaker takes audio at least at real time: one that took none
+ * for this long while another took the whole chunk is stuck (gw_relay.h). */
+#define GW_RELAY_STALL_DROP_MS  10000
+/* ...and is connected again after this. The others refill at up to
+ * GW_RELAY_PACE_FACTOR meanwhile, so a speaker that stays stuck costs them
+ * only a part of each cycle. */
+#define GW_RELAY_STALL_RETRY_MS 30000
 /* Fill pacing. The sender sends a new track's audio as fast as the network
  * takes it (~300 KB/s per speaker seen), and the Gateway sends it again to
  * every speaker: with five speakers the Wi-Fi was busy enough that the
@@ -115,6 +122,10 @@ static struct {
   uint8_t chunk[GW_RELAY_CHUNK];
   size_t chunk_len;
   bool chunk_pending;
+  /* The sender plays (gw_relay_set_playing), since when (relay task). */
+  bool playing;
+  bool was_playing;
+  int64_t playing_since_us;
 } s = {.listen_sock = -1, .client_sock = -1};
 
 static uint32_t read_be32(const uint8_t *p) {
@@ -416,21 +427,48 @@ static bool chunk_delivered(void) {
   return true;
 }
 
+/* Another live speaker already took the whole current chunk: the stream
+ * waits only for the ones that did not. */
+static bool other_took_chunk(size_t self) {
+  for (size_t i = 0; i < SURROUND_MAX_SPEAKERS; ++i) {
+    const relay_target_t *t = &s.tgt[i];
+    if (i != self && t->state == TGT_LIVE && t->off >= s.chunk_len) return true;
+  }
+  return false;
+}
+
 static void check_targets(int64_t now_us) {
+  const bool playing = __atomic_load_n(&s.playing, __ATOMIC_ACQUIRE);
+  if (playing && !s.was_playing) s.playing_since_us = now_us;
+  s.was_playing = playing;
   for (size_t i = 0; i < SURROUND_MAX_SPEAKERS; ++i) {
     relay_target_t *t = &s.tgt[i];
     if (t->state == TGT_CONNECTING &&
         now_us - t->since_us > GW_RELAY_CONNECT_TIMEOUT_MS * 1000LL) {
       close_target(t, "connect timed out", true);
-    } else if (t->state == TGT_LIVE && s.chunk_pending &&
-               t->off < s.chunk_len && !t->stall_logged &&
-               now_us - t->blocked_since_us >
-                   GW_RELAY_STALL_LOG_MS * 1000LL) {
+      continue;
+    }
+    if (t->state != TGT_LIVE || !s.chunk_pending || t->off >= s.chunk_len) continue;
+    if (!t->stall_logged &&
+        now_us - t->blocked_since_us > GW_RELAY_STALL_LOG_MS * 1000LL) {
       /* Normal while paused with full FIFOs; otherwise this speaker holds
        * back the others. */
       AP_LOGW(TAG, "speaker %s has not taken audio for %d s; the stream waits",
               t->want.name, GW_RELAY_STALL_LOG_MS / 1000);
       t->stall_logged = true;
+    }
+    /* Stalled while the sender plays: counted from the later of its last
+     * progress and the start of playing (a resume after a pause). */
+    const int64_t since = t->blocked_since_us > s.playing_since_us
+                              ? t->blocked_since_us : s.playing_since_us;
+    if (playing && now_us - since > GW_RELAY_STALL_DROP_MS * 1000LL &&
+        other_took_chunk(i)) {
+      AP_LOGW(TAG, "speaker %s took no audio for %d s while the others did: "
+                   "dropped from the stream so they keep playing, again in %d s",
+              t->want.name, GW_RELAY_STALL_DROP_MS / 1000,
+              GW_RELAY_STALL_RETRY_MS / 1000);
+      close_target(t, "stalled", true);
+      t->since_us = now_us + GW_RELAY_STALL_RETRY_MS * 1000LL;
     }
   }
 }
@@ -569,8 +607,8 @@ static void relay_task(void *arg) {
         FD_ISSET(sel_client, &rd)) {
       receive_chunk(now_us);
     }
+    check_targets(now_us); /* may drop a stalled speaker */
     if (s.chunk_pending && chunk_delivered()) s.chunk_pending = false;
-    check_targets(now_us);
 
     if (n > 0 && FD_ISSET(s.listen_sock, &rd)) accept_client();
 
@@ -630,3 +668,7 @@ void gw_relay_stop(void) {
 }
 
 bool gw_relay_is_idle(void) { return !s.running && !s.task; }
+
+void gw_relay_set_playing(bool playing) {
+  __atomic_store_n(&s.playing, playing, __ATOMIC_RELEASE);
+}

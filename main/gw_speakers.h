@@ -41,9 +41,23 @@ typedef struct {
   bool audio; /* has an audio port (a stream is on) */
   bool status_valid; /* a recent STATUS */
   surround_status_t status;
+  /* Firmware from the Gateway (gw_fw.c), NULL while it holds none:
+   * "current", "pending", "updating", "failed", "halted" (the rollout
+   * stopped at another speaker) or "manual" (too old to update itself). */
+  const char *fw_update;
 } gw_speaker_info_t;
 
 size_t gw_speakers_list(gw_speaker_info_t out[SURROUND_MAX_SPEAKERS]);
+
+/* The speaker installing the Gateway's firmware right now, if any (it may be
+ * one that gw_speakers_list() does not show: an older protocol). */
+typedef struct {
+  bool active;
+  char name[24];
+  char ip[16];
+  uint32_t seconds; /* since FW_UPDATE */
+} gw_fw_busy_t;
+void gw_speakers_fw_busy(gw_fw_busy_t *out);
 
 /* Send SET_CONFIG to the speaker with this MAC; it answers CONFIG, which the
  * next gw_speakers_list() shows. ESP_ERR_NOT_FOUND when not connected. */
@@ -56,9 +70,8 @@ esp_err_t gw_speakers_set_config(const uint8_t mac[6],
 esp_err_t gw_speakers_cal_play(const uint8_t mac[6],
                                const surround_cal_play_t *m);
 
-/* This ESP's clock (esp_timer, ns) and the access point's TSF, through the
- * line the TIME messages use. False until it has enough samples. */
-bool gw_speakers_local_to_tsf(int64_t local_ns, int64_t *tsf_ns);
+/* The access point's TSF to this ESP's clock (esp_timer, ns), through the
+ * fit the TIME messages use. False until it has enough samples. */
 bool gw_speakers_tsf_to_local(int64_t tsf_ns, int64_t *local_ns);
 
 /* Where the relay copies the buffered audio stream, one entry per speaker

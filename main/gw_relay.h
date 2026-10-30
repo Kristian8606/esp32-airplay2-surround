@@ -26,3 +26,11 @@ esp_err_t gw_relay_start(uint16_t requested_port, uint16_t *bound_port);
  * relay task to exit. */
 void gw_relay_stop(void);
 bool gw_relay_is_idle(void);
+
+/* The sender plays (gw_proxy.c, from SET_PLAYING / PAUSE / STOP). Only while
+ * it plays must every speaker take audio: then one that took none for
+ * GW_RELAY_STALL_DROP_MS while the others took theirs is dropped from the
+ * stream (connected again after GW_RELAY_STALL_RETRY_MS), so it does not
+ * hold back the rest until their buffers run dry. While paused full FIFOs
+ * are normal. */
+void gw_relay_set_playing(bool playing);

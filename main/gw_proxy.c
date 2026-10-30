@@ -207,6 +207,7 @@ void audio_receiver_stop(void) {
   s.playing = false;
   s.buffered_port = 0;
   taskEXIT_CRITICAL(&s_mux);
+  gw_relay_set_playing(false);
   if (had_session) {
     AP_LOGI(TAG, "FWD stop");
     gw_speakers_send(SURROUND_MSG_STOP, NULL, 0);
@@ -277,6 +278,7 @@ void audio_receiver_pause(void) {
   taskENTER_CRITICAL(&s_mux);
   s.playing = false;
   taskEXIT_CRITICAL(&s_mux);
+  gw_relay_set_playing(false);
   AP_LOGI(TAG, "FWD pause");
   gw_speakers_send(SURROUND_MSG_PAUSE, NULL, 0);
 }
@@ -285,6 +287,7 @@ void audio_receiver_set_playing(bool playing) {
   taskENTER_CRITICAL(&s_mux);
   s.playing = playing;
   taskEXIT_CRITICAL(&s_mux);
+  gw_relay_set_playing(playing);
   AP_LOGI(TAG, "FWD set_playing %d", playing ? 1 : 0);
   const surround_playing_t m = {.playing = playing ? 1U : 0U};
   gw_speakers_send(SURROUND_MSG_SET_PLAYING, &m, sizeof(m));
@@ -292,9 +295,6 @@ void audio_receiver_set_playing(bool playing) {
 
 void audio_receiver_set_anchor_time(uint64_t clock_id, uint64_t network_time_ns,
                                     uint32_t rtp_time) {
-  /* The speaker's receiver names the anchor's clock as the PTP master; the
-   * Gateway must follow the same grandmaster for the time it sends later. */
-  if (clock_id) ptp_clock_set_master_clock_id(clock_id);
   ptp_clock_snapshot_t ps = {0};
   ptp_clock_get_snapshot(&ps);
   uint64_t local_ns = 0;
