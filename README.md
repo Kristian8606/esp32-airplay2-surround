@@ -45,7 +45,8 @@ system.
   Fraunhofer FDK AAC decoder that synthesises just one channel.
 - 🔗 **Speakers belong to the system**: a speaker is not an AirPlay
   receiver of its own and never shows up on an iPhone; it just follows the
-  Gateway. (A board that is its own AirPlay receiver is the `main` branch.)
+  Gateway. (A board that is its own AirPlay receiver is the `standalone`
+  branch.)
 
 > [!NOTE]
 > **The project is under active development.** A Gateway and two speakers
@@ -321,12 +322,12 @@ then open a terminal with the ESP-IDF environment loaded
 
 ### 2. Get the code
 
-The Gateway lives on the **`gateway` branch** of the surround repository
-(the `main` branch is the earlier design, where every board is its own
-AirPlay receiver):
+The Gateway is the **`main` branch** of the surround repository (the
+earlier design, where every board is its own AirPlay receiver, is the
+`standalone` branch):
 
 ```bash
-git clone -b gateway https://github.com/Kristian8606/esp32-airplay2-surround.git
+git clone https://github.com/Kristian8606/esp32-airplay2-surround.git
 cd esp32-airplay2-surround
 ```
 
@@ -875,10 +876,10 @@ afterwards).
   led_strip) come through the ESP-IDF component manager under their own
   licenses.
 
-Grows out of the `main` branch of
+Grows out of the `standalone` branch of
 [esp32-airplay2-surround](https://github.com/Kristian8606/esp32-airplay2-surround),
 where every board is its own AirPlay receiver playing one channel, and
-[airplay-esp32](https://github.com/rbouteiller/airplay-esp32.git), the stereo
+[airplay-esp32](https://github.com/Kristian8606/airplay-esp32), the stereo
 AirPlay 2 receiver for the ESP32-S3. AAC decoding through
 [fdk-aac](https://github.com/mstorsjo/fdk-aac).
 
