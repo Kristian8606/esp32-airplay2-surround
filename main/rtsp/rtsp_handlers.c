@@ -1664,7 +1664,6 @@ static void handle_setrateanchortime(int socket, rtsp_conn_t *conn,
       ptp_realtime_snapshot_t ps = {0};
       ptp_clock_get_realtime_snapshot(&ps);
       if (ps.realtime_mode) {
-        ptp_clock_set_master_clock_id(clock_id); /* observation/hint only */
         uint64_t local_ns = 0;
         if (ptp_clock_realtime_snapshot_to_local(&ps, clock_id, network_time_ns,
                                               &local_ns)) {
