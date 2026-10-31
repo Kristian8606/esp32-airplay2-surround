@@ -33,6 +33,9 @@ system.
   RTSP and the Apple TV's clock are handled once, by the Gateway.
 - ⏱️ **Microsecond clock alignment** between speakers through the access
   point's beacon timer (TSF). No extra hardware, no cables.
+- 🎤 **Room calibration** with an optional INMP441 microphone on the
+  Gateway: distance, delay and level of every speaker measured from your
+  seat, applied with one click.
 - 🎛️ **One page for all speakers**: role, level and delay of every speaker,
   and a live view of what each one plays. Each speaker keeps its own
   2 × 24-band parametric EQ / crossover, loudness and latency settings.
@@ -534,34 +537,59 @@ role.
 
 ### Room calibration
 
-With an INMP441 microphone on the Gateway, the speakers page measures every
-speaker from your seat and suggests its **delay** and **level**:
+An optional **INMP441 microphone** on the Gateway (wiring in
+[The Gateway](#the-gateway)) measures every speaker from your seat and
+suggests its **delay** and **level**, in about 2 s per speaker:
 
 1. Put the Gateway with its microphone at your listening seat, at ear
-   height, on a power bank if needed. Keep the room quiet.
-2. If the Apple TV is connected, **Calibrate** disconnects it for the
-   measurement (the speakers can only chirp between streams). Afterwards
-   pick the Gateway again as its audio output.
-3. **Test mic** checks the microphone and shows the room noise.
-4. **Calibrate**: each speaker in turn plays four short chirps through its
-   own EQ (a 2-way speaker's crossover protects the tweeter), quietly first
-   and louder only if the microphone does not hear them clearly.
-5. The table shows every speaker's distance, suggested delay (the farthest
-   gets 0 ms) and level (the quietest gets 0 dB). **Apply to speakers**
-   saves them like a manual edit; **Discard** changes nothing.
+   height (a power bank will do). Keep the room quiet.
+2. **Test mic** checks the microphone and shows the room noise; −60 dBFS
+   or quieter is good. Music may keep playing meanwhile.
+3. **Calibrate**: if the Apple TV is connected, it is disconnected for the
+   measurement (the speakers can only chirp between streams); afterwards
+   pick the Gateway again as its audio output. Each speaker in turn plays
+   four short chirps (300 Hz–8 kHz, 20 ms; the subwoofer 30–150 Hz, 200 ms)
+   through its own EQ, so a 2-way speaker's crossover protects the tweeter:
+   at −30 dBFS first, louder (up to −12 dBFS) only if the microphone does
+   not hear them clearly.
+4. The table shows every speaker's **distance**, suggested **delay** (the
+   farthest gets 0 ms, the others 2.9 ms per metre they are closer) and
+   **level** (the quietest gets 0 dB, the others are turned down to it).
+   **Apply to speakers** saves them like a manual edit; **Discard** changes
+   nothing.
 
-The microphone is checked first, while music may still play. Without a
-microphone signal the speakers still play their chirps one after another
-(so you hear that each one works), and the panel says nothing was measured.
+| In the table | Meaning |
+|---|---|
+| **± cm** after a distance | how much the four chirps disagree; a few cm is normal |
+| **± dB** after a level | the same for the level |
+| *Level not repeatable (… dB over the chirps): measure again* | the four levels differ by more than 2 dB, usually from room noise; measure again in quiet |
+| *Not heard clearly* | the chirps did not stand out of the noise even at −12 dBFS, or their timing disagrees by more than 0.5 ms |
+| *Hint: the chirp came back inverted* | + and − may be swapped (or a 2-way speaker's tweeter is wired so); only a hint, nothing is changed |
+| *Subwoofer: level and delay by ear* | its low chirp gives a delay, but no level |
+
+Two runs in a quiet room should agree within a few centimetres and about
+0.5 dB; if they do not, measure again before applying.
+
+How it measures:
+
+- **Travel time without cables.** A speaker plays its chirps when it can
+  and reports when each one left it, on the access point's TSF (its output
+  latency included); the Gateway timestamps its recording on the same TSF.
+  The difference is the sound's travel time.
+- **The direct sound, not an echo.** The arrival is the first correlation
+  peak within 6 dB of the strongest one: the direct sound always comes
+  first, while a reflection off a wall can be louder.
+- **Level as the ear hears it:** the RMS of the chirp and the next 10 ms of
+  the room (full-range speakers above 200 Hz), the median of the four.
+
+*No signal from the microphone: check its wiring* means the Gateway clocks
+the microphone but reads a constant value: check VDD → 3V3, GND, L/R → GND
+(otherwise it sends on the other channel), SD → GPIO 4, SCK → GPIO 5,
+WS → GPIO 6. Without a microphone signal the speakers still play their
+chirps one after another (so you hear that each one works), and the panel
+says nothing was measured.
 
 <a href="images/speakers-page-calibration.png"><img src="images/speakers-page-calibration.png" alt="Room calibration panel after a run without a microphone: every speaker played its chirps, nothing measured" width="100%"></a>
-
-How it measures: a speaker does not have to chirp at an exact moment. It
-plays when it can and reports when each chirp left it, on the access point's
-TSF (its output latency included); the Gateway finds the chirps in its
-recording on the same TSF. The difference is the sound's travel time, with
-no cable to any speaker. The subwoofer gets a low chirp and a delay, but its
-level is left for you to set by ear.
 
 ### Other pages (every board)
 
@@ -768,7 +796,10 @@ are listed in
 - **Experimental.** Tested with one Apple TV, a Gateway and two speakers
   playing together (three connected): 7.1 and stereo AAC, skip, seek, pause,
   volume, role and level changes while playing, a second sender taking over.
-- **Room calibration** is written but not yet tested with a microphone.
+- **Room calibration** is tested with an INMP441 and up to six speakers.
+  An echo more than 6 dB louder than the direct sound (a speaker behind an
+  obstacle) still misleads its timing, and the subwoofer's level is left
+  to the ear.
 - **Not yet tested:** realtime (screen mirroring, system audio) through the
   Gateway, the stereo routing to front pair and subwoofer, oscilloscope
   measurements, more than three speakers, a weak Wi-Fi signal.
