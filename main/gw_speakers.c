@@ -24,6 +24,7 @@
 #include "ptp_clock_engine.h"
 #include "settings.h"
 #include "socket_utils.h"
+#include "gw_ptp_probe.h"
 #include "gw_timeline.h"
 #include "tsf_fit.h"
 
@@ -669,6 +670,9 @@ static void time_tick(int64_t now_us) {
     m.ptp_ns = line.ptp_ns;
     m.rate_ppb = line.rate_ppb;
     m.epoch = line.epoch;
+    /* A speaker starts once this age passes its readiness (400 ms): count it
+     * from when the line became ready, not from the PTP mastership. */
+    if (m.mastership_age_ms > line.ready_ms) m.mastership_age_ms = line.ready_ms;
     s_time_last = m;
     s_time_last_us = now_us;
   } else if (!tsf_restarted && gw_timeline_hold(m.tsf_ns, &line)) {
@@ -699,6 +703,7 @@ static void time_tick(int64_t now_us) {
 
   if (now_us - s_time_log_us >= GW_TIME_LOG_MS * 1000LL) {
     s_time_log_us = now_us;
+    gw_ptp_probe_log();
     int64_t best_ns = 0;
     uint32_t syncs = 0;
     if (gw_timeline_take_best(&best_ns, &syncs)) {
@@ -716,7 +721,7 @@ static void time_tick(int64_t now_us) {
              "TIME tsf fit %u samples %+.3f ppm rms %.2f us restarts %u | PTP "
              "valid=%d locked=%d realtime=%d gm=%016" PRIx64 " offset=%" PRId64
              " ns | line epoch %u rate %+.3f ppm%s, envelope %+.3f ms from it over "
-             "%.0f s%s, PTP filter %+.3f ms from it",
+             "%.0f s%s%s, PTP filter %+.3f ms from it",
              (unsigned)s_tsf.count, s_tsf.slope * 1e6, s_tsf.rms_ns / 1000.0,
              (unsigned)s_tsf.restarts, (m.flags & SURROUND_TIME_PTP_VALID) != 0,
              (m.flags & SURROUND_TIME_PTP_LOCKED) != 0, ps.realtime_mode,
@@ -724,6 +729,7 @@ static void time_tick(int64_t now_us) {
              (double)line.rate_ppb / 1000.0, line.fitted ? " (fitted)" : "",
              (double)line.err_ns / 1e6, line.span_ms / 1000.0,
              line.settling ? " (settling)" : "",
+             line.ready_ms == 0U && line.epoch != 0U ? " (not ready)" : "",
              (m.flags & SURROUND_TIME_PTP_VALID) && filter_ns != 0
                  ? (double)(filter_ns - m.ptp_ns) / 1e6 : 0.0);
   }

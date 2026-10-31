@@ -278,11 +278,19 @@ static void update_lock_locked(const ptp_clock_engine_sample_t *r,
 #define PTP_CLOCK_SAMPLES 64U
 static ptp_clock_sample_t s_samples[PTP_CLOCK_SAMPLES];
 static uint32_t s_samples_total;
+static ptp_clock_sync_probe_t s_sync_probe;
+
+void ptp_clock_set_sync_probe(ptp_clock_sync_probe_t probe) {
+  __atomic_store_n(&s_sync_probe, probe, __ATOMIC_RELEASE);
+}
 
 /* Feed one paired Sync/Follow_Up offset. Caller holds ptp_state_mux. */
 static void add_sample_locked(int64_t raw_offset_ns, int64_t reception_ns,
                               int64_t rx_lag_ns, uint16_t seq,
                               ptp_step_log_t *step_ev) {
+  const ptp_clock_sync_probe_t probe =
+      __atomic_load_n(&s_sync_probe, __ATOMIC_ACQUIRE);
+  if (probe) probe(seq, reception_ns, raw_offset_ns);
   const ptp_clock_engine_sample_t r = ptp_clock_engine_add_sample(
       &ptp.engine, raw_offset_ns, reception_ns);
   if (!r.accepted) return;

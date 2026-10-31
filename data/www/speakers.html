@@ -103,6 +103,8 @@ select:disabled,input:disabled{opacity:.45}
 .cal-table td{border-top:1px solid var(--line);padding:8px 6px;text-align:right;white-space:nowrap}
 .cal-table .dev{color:var(--muted);font-size:11px;margin-left:6px}
 .cal-table td.note{text-align:left;white-space:normal;color:#f7c46c;font-size:12px}
+.cal-table td.hint{text-align:left;white-space:normal;color:var(--muted,#8d8d93);font-size:12px}
+.cal-table .pm{color:var(--muted,#8d8d93);font-size:11px;margin-left:4px}
 .cal-actions{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
 .help b{color:var(--text);font-weight:500}
 @media(max-width:560px){.header h1{font-size:24px}.node{width:70px}.node .dot{width:36px;height:36px;font-size:11px}.node .who{font-size:9px;max-width:70px}.room{aspect-ratio:1/1}.room .seat{top:58%}}
@@ -370,8 +372,12 @@ function calRender(c){
  rows.innerHTML=c.speakers.map((o,i)=>{
   const wait=busy&&i+1>=c.step&&!o.measured;
   const cell=v=>wait?(i+1===c.step?'\u2026':'\u2014'):v;
-  return "<tr><td><b>"+esc(short(o.channel))+"</b></td><td>"+esc(title(o.channel,o.name))+"<span class='dev'>"+esc(o.name)+"</span></td><td>"+cell(o.distance_m!==undefined?o.distance_m.toFixed(2)+' m':'\u2014')+"</td><td>"+cell(fmt(o.delay_ms,1,'ms'))+"</td><td>"+cell(o.trim_db!==undefined?fmt(o.trim_db,1,'dB'):'\u2014')+"</td></tr>"+
-   (o.note&&!wait?"<tr><td></td><td class='note' colspan='4'>"+esc(o.note)+"</td></tr>":'');
+  /* The spread over the chirps: travel time as distance, and level. */
+  const pmD=o.spread_ms!==undefined?"<span class='pm'>\u00b1"+Math.round(o.spread_ms*34.3/2)+" cm</span>":'';
+  const pmL=o.level_spread_db!==undefined&&o.trim_db!==undefined?"<span class='pm'>\u00b1"+(o.level_spread_db/2).toFixed(1)+"</span>":'';
+  return "<tr><td><b>"+esc(short(o.channel))+"</b></td><td>"+esc(title(o.channel,o.name))+"<span class='dev'>"+esc(o.name)+"</span></td><td>"+cell(o.distance_m!==undefined?o.distance_m.toFixed(2)+' m'+pmD:'\u2014')+"</td><td>"+cell(fmt(o.delay_ms,1,'ms'))+"</td><td>"+cell(o.trim_db!==undefined?fmt(o.trim_db,1,'dB')+pmL:'\u2014')+"</td></tr>"+
+   (o.note&&!wait?"<tr><td></td><td class='note' colspan='4'>"+esc(o.note)+"</td></tr>":'')+
+   (o.inverted&&!wait?"<tr><td></td><td class='hint' colspan='4'>Hint: the chirp came back inverted. Either + and \u2212 are swapped, or the speaker is a 2-way design with its tweeter wired so. If voices sound thin from it, try swapping.</td></tr>":'');
  }).join('');
  document.getElementById('cal-actions').style.display=c.state==='done'&&!c.mic_test&&show?'':'none';
  clearTimeout(calTimer);calTimer=setTimeout(calLoad,busy?1000:3000);

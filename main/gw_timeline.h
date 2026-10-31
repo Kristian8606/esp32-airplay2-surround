@@ -24,7 +24,9 @@
  *    difference back at most GW_TIMELINE_MAX_CORR_PPB and bends at most
  *    GW_TIMELINE_SLEW_PPB_S, so a speaker never sees a step;
  *  - it steps only for a new sender or clock domain, a TSF restart or a
- *    difference beyond GW_TIMELINE_STEP_NS (each starts a new epoch).
+ *    difference beyond GW_TIMELINE_STEP_NS (each starts a new epoch);
+ *  - it is ready for a speaker to start on once its samples cover three
+ *    seconds (ready_ms): the first few Syncs alone lie milliseconds low.
  * Speakers task only. */
 
 #include <stdbool.h>
@@ -38,6 +40,9 @@ typedef struct {
   bool settling;    /* following the estimate directly after a step */
   bool fitted;      /* the rate is measured, not the remembered one */
   uint32_t span_ms; /* time covered by the samples */
+  /* How long the line has been ready to start a speaker on (its samples
+   * cover GW_TIMELINE_READY_NS); 0 before. */
+  uint32_t ready_ms;
 } gw_timeline_out_t;
 
 /* One measured Sync: the sender's clock read `ptp_ns` no later than the TSF

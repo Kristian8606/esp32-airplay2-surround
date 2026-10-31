@@ -38,6 +38,12 @@ static const char *TAG = "gw_timeline";
 /* After a step the line follows the estimate directly this long: the first
  * timely Syncs raise it by milliseconds. */
 #define GW_TIMELINE_SETTLE_NS     10000000000LL
+/* A line from fewer seconds of Syncs is not ready for a speaker to start on:
+ * most Syncs arrive milliseconds late over Wi-Fi (median 3 to 5 ms, p90
+ * 22 ms, seen on the board), so the best of the first few lies milliseconds
+ * low and the next timely ones raise the line. The best of three seconds
+ * (some 24 Syncs) is close to the true time. */
+#define GW_TIMELINE_READY_NS      3000000000LL
 /* Past settling the line runs on the estimate's rate plus P = difference /
  * GW_TIMELINE_TP_S, at most GW_TIMELINE_MAX_CORR_PPB, and its rate changes
  * at most GW_TIMELINE_SLEW_PPB_S: a speaker sees its reference bend, never
@@ -83,6 +89,9 @@ static struct {
   int32_t rate_ppb;
   int64_t start_tsf_ns;
   bool holding; /* gw_timeline_hold() since the last estimate */
+  /* The samples have covered GW_TIMELINE_READY_NS, since ready_tsf_ns. */
+  bool ready;
+  int64_t ready_tsf_ns;
   /* gw_timeline_take_best(): the highest Sync minus the line since. */
   int64_t best_ns;
   uint32_t best_count;
@@ -110,6 +119,7 @@ static void clear_samples(void) {
   s.head = 0;
   s.count = 0;
   s.cur_valid = false;
+  s.ready = false;
 }
 
 /* Is c on or above the line through a and b? */
@@ -259,6 +269,11 @@ bool gw_timeline_update(int64_t tsf_ns, bool tsf_restarted,
   }
   s.holding = false;
 
+  if (!s.ready && e.span_ns >= GW_TIMELINE_READY_NS) {
+    s.ready = true;
+    s.ready_tsf_ns = tsf_ns;
+  }
+
   const int64_t est_ns = tsf_ns + llround(estimate_y(&e, tsf_ns));
   const int32_t est_rate_ppb = (int32_t)llround(e.rate * 1e9);
   if (!s.valid || s.domain != s.sample_domain || tsf_ns <= s.base_tsf_ns) {
@@ -303,6 +318,8 @@ bool gw_timeline_update(int64_t tsf_ns, bool tsf_restarted,
   out->settling = settling;
   out->fitted = e.fitted;
   out->span_ms = (uint32_t)(e.span_ns / 1000000LL);
+  out->ready_ms =
+      s.ready ? (uint32_t)((tsf_ns - s.ready_tsf_ns) / 1000000LL) : 0U;
   return true;
 }
 
@@ -344,5 +361,6 @@ bool gw_timeline_hold(int64_t tsf_ns, gw_timeline_out_t *out) {
   out->settling = false;
   out->fitted = false;
   out->span_ms = 0;
+  out->ready_ms = 0;
   return true;
 }

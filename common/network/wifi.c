@@ -10,6 +10,7 @@
 #include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_timer.h"
+#include "lwip/esp_netif_net_stack.h"
 #include "nvs_flash.h"
 
 #include "wifi.h"
@@ -439,11 +440,35 @@ static void wifi_init_base(void) {
   s_wifi_initialized = true;
 }
 
+static wifi_sta_rx_probe_t s_sta_rx_probe;
+
+void wifi_set_sta_rx_probe(wifi_sta_rx_probe_t probe) { s_sta_rx_probe = probe; }
+
+static esp_err_t sta_input_probed(void *h, void *buffer, size_t len,
+                                  void *l2_buff) {
+  s_sta_rx_probe(buffer, len);
+  return wlanif_input(h, buffer, len, l2_buff);
+}
+
+/* esp_netif_create_default_wifi_sta(), with the probe in front of lwIP. */
+static esp_netif_t *create_sta_netif(void) {
+  if (!s_sta_rx_probe) return esp_netif_create_default_wifi_sta();
+  static const struct esp_netif_netstack_config stack = {
+      .lwip = {.init_fn = wlanif_init_sta, .input_fn = sta_input_probed}};
+  esp_netif_config_t cfg = ESP_NETIF_DEFAULT_WIFI_STA();
+  cfg.stack = &stack;
+  esp_netif_t *netif = esp_netif_new(&cfg);
+  assert(netif);
+  ESP_ERROR_CHECK(esp_netif_attach_wifi_station(netif));
+  ESP_ERROR_CHECK(esp_wifi_set_default_wifi_sta_handlers());
+  return netif;
+}
+
 void wifi_init_apsta(const char *ap_ssid, const char *ap_password) {
   wifi_init_base();
 
   if (!s_sta_netif) {
-    s_sta_netif = esp_netif_create_default_wifi_sta();
+    s_sta_netif = create_sta_netif();
     char dev_name[65];
     settings_get_device_name(dev_name, sizeof(dev_name));
     wifi_set_hostname(dev_name);

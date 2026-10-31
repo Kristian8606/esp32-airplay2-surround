@@ -245,7 +245,11 @@ static esp_err_t calibration_get_handler(httpd_req_t *req) {
       cJSON_AddNumberToObject(j, "distance_m", roundf(o->distance_m * 100.0f) / 100.0f);
       cJSON_AddNumberToObject(j, "tof_ms", roundf(o->tof_ms * 100.0f) / 100.0f);
       cJSON_AddNumberToObject(j, "level_db", roundf(o->level_db * 10.0f) / 10.0f);
+      cJSON_AddNumberToObject(j, "level_spread_db",
+                              roundf(o->level_spread_db * 10.0f) / 10.0f);
+      cJSON_AddNumberToObject(j, "spread_ms", roundf(o->spread_ms * 100.0f) / 100.0f);
       cJSON_AddNumberToObject(j, "match", roundf(o->match * 100.0f) / 100.0f);
+      if (o->inverted) cJSON_AddBoolToObject(j, "inverted", true);
     }
     if (o->has_suggestion) cJSON_AddNumberToObject(j, "delay_ms", o->delay_ms);
     if (o->has_trim) cJSON_AddNumberToObject(j, "trim_db", o->trim_db);

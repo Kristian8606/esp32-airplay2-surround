@@ -3,6 +3,7 @@
 #include "audio_diag.h"
 #include "amp_control.h"
 #include "gw_fw.h"
+#include "gw_ptp_probe.h"
 #include "gw_speakers.h"
 #include "dns_server.h"
 #include "hap.h"
@@ -66,6 +67,7 @@ void app_main(void) {
 
   const bool provisioning_only = !settings_has_wifi_credentials();
 
+  wifi_set_sta_rx_probe(gw_ptp_probe_on_frame);
   wifi_init_apsta(NULL, NULL);
   ESP_ERROR_CHECK(web_server_start(80));
 
@@ -83,6 +85,7 @@ void app_main(void) {
    * when diagnostics are disabled or no category is selected. */
   (void)AUDIO_DIAG_INIT();
   ESP_ERROR_CHECK(ptp_clock_init());
+  ptp_clock_set_sync_probe(gw_ptp_probe_on_sync);
   ESP_ERROR_CHECK(hap_init());
   led_init();
 

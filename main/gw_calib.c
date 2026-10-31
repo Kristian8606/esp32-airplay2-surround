@@ -40,6 +40,20 @@ static const char *TAG = "gw_calib";
 #define CAL_MIN_MATCH       0.35f
 #define CAL_MAX_SPREAD_WIDE_MS 0.5f
 #define CAL_MAX_SPREAD_LOW_MS  3.0f
+/* The direct sound: the first correlation within -6 dB of the strongest
+ * (find_chirp). The chirps' own side lobes of the same sign stay below
+ * -15 dB. An echo more than 6 dB louder than the direct sound still wins. */
+#define CAL_FIRST_ARRIVAL_RATIO 0.5f
+/* Level: the RMS from the chirp's arrival over its length and this much of
+ * the room after it, as a receiver's noise test measures what the ear
+ * hears. The matched filter's peak, used before, also follows the speaker's
+ * phase and the room's reflections: the same centre speaker measured -10.5
+ * and -4.5 dB in two runs. Wide chirps are high-passed first (room rumble). */
+#define CAL_LEVEL_TAIL_WIDE_S 0.010
+#define CAL_LEVEL_TAIL_LOW_S  0.050
+#define CAL_LEVEL_HP_HZ       200.0
+/* A level spread over the chirps beyond this is not trusted. */
+#define CAL_MAX_LEVEL_SPREAD_DB 2.0f
 /* Levels tried, quietest first, until the chirp is heard clearly. */
 static const int8_t k_levels_db[] = {-30, -24, -18, -12};
 /* Without a microphone the chirps are only played once, at this level. */
@@ -133,7 +147,6 @@ typedef struct {
   bool found;
   double index;  /* fractional, at the analysis rate */
   float match;   /* normalised correlation, signed */
-  double amplitude;
 } chirp_hit_t;
 
 static double correlate(const float *x, const float *ref, uint32_t len) {
@@ -142,44 +155,103 @@ static double correlate(const float *x, const float *ref, uint32_t len) {
   return acc;
 }
 
-/* Matched filter over x[0..n): the best fit of the reference. */
+/* Matched filter over x[0..n): the arrival of the direct sound. The best
+ * fit, used before for the time, can be a reflection: normalised by the
+ * energy under it, an echo off a wall can fit the chirp's shape better than
+ * the direct sound, and one louder than it wins anyway. The direct sound
+ * always arrives first. So the time is the strongest correlation, then the
+ * first lag of the same sign within CAL_FIRST_ARRIVAL_RATIO of it, and the
+ * peak of that run. `match` stays the best fit: how clearly the chirp is
+ * heard at all. */
 static chirp_hit_t find_chirp(const float *x, uint32_t n, const float *ref,
                               uint32_t len, double ref_energy) {
   chirp_hit_t hit = {0};
   if (n <= len + 2U) return hit;
   const uint32_t lags = n - len;
+  float *c = heap_caps_malloc((lags + 1U) * sizeof(float),
+                              MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!c) return hit;
+  uint32_t strongest = 0;
   double ex = 0.0; /* energy of x under the reference, sliding */
   for (uint32_t j = 0; j < len; ++j) ex += (double)x[j] * x[j];
-  double best = 0.0, best_c = 0.0;
-  uint32_t best_lag = 0;
+  double best_fit = 0.0;
   for (uint32_t lag = 0; lag <= lags; ++lag) {
     if (lag > 0) {
       ex += (double)x[lag + len - 1] * x[lag + len - 1] -
             (double)x[lag - 1] * x[lag - 1];
     }
-    const double c = correlate(x + lag, ref, len);
-    const double norm = ex > 0.0 ? c / sqrt(ex * ref_energy) : 0.0;
-    if (fabs(norm) > fabs(best)) {
-      best = norm;
-      best_c = c;
-      best_lag = lag;
-    }
+    c[lag] = (float)correlate(x + lag, ref, len);
+    if (fabsf(c[lag]) > fabsf(c[strongest])) strongest = lag;
+    const double fit = ex > 0.0 ? c[lag] / sqrt(ex * ref_energy) : 0.0;
+    if (fabs(fit) > fabs(best_fit)) best_fit = fit;
   }
-  hit.found = best != 0.0;
-  hit.match = (float)best;
-  hit.amplitude = fabs(best_c) / ref_energy;
+  if (c[strongest] == 0.0f) {
+    heap_caps_free(c);
+    return hit;
+  }
+  /* The same sign: the chirp's opposite half cycle next to the peak is not
+   * an arrival (-10 dB for the wide chirp, -5 dB for the subwoofer's). */
+  const float sign = c[strongest] > 0.0f ? 1.0f : -1.0f;
+  const float floor_c = fabsf(c[strongest]) * CAL_FIRST_ARRIVAL_RATIO;
+  uint32_t lag = 0;
+  while (lag < strongest && sign * c[lag] < floor_c) ++lag;
+  uint32_t best_lag = lag;
+  for (; lag <= lags && sign * c[lag] >= floor_c; ++lag) {
+    if (sign * c[lag] > sign * c[best_lag]) best_lag = lag;
+  }
+
+  hit.found = true;
+  /* Signed like the arrival: a best fit of the other sign (an inverted
+   * echo) does not make the speaker inverted. */
+  hit.match = (float)(sign * fabs(best_fit));
   /* A parabola through the peak and its neighbours: sub-sample timing. */
   double frac = 0.0;
   if (best_lag > 0U && best_lag < lags) {
-    const double a = fabs(correlate(x + best_lag - 1U, ref, len));
-    const double b = fabs(best_c);
-    const double c = fabs(correlate(x + best_lag + 1U, ref, len));
-    const double den = a - 2.0 * b + c;
-    if (den < 0.0) frac = 0.5 * (a - c) / den;
+    const double a = sign * c[best_lag - 1U];
+    const double b = sign * c[best_lag];
+    const double d = sign * c[best_lag + 1U];
+    const double den = a - 2.0 * b + d;
+    if (den < 0.0) frac = 0.5 * (a - d) / den;
     if (frac < -0.5 || frac > 0.5) frac = 0.0;
   }
   hit.index = (double)best_lag + frac;
+  heap_caps_free(c);
   return hit;
+}
+
+/* Mean square of x[from, from + len) after a 2nd-order Butterworth high-pass
+ * at hp_hz (0: only the mean removed). The filter runs from x[0], so it has
+ * settled by `from`. */
+static double band_mean_square(const float *x, uint32_t n, uint32_t from,
+                               uint32_t len, uint32_t rate, double hp_hz) {
+  if (from >= n) return 0.0;
+  if (from + len > n) len = n - from;
+  if (len == 0U) return 0.0;
+  double b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
+  if (hp_hz > 0.0) {
+    const double w = 2.0 * M_PI * hp_hz / (double)rate;
+    const double alpha = sin(w) / (2.0 * M_SQRT1_2);
+    const double c = cos(w), a0 = 1.0 + alpha;
+    b0 = (1.0 + c) / 2.0 / a0;
+    b1 = -(1.0 + c) / a0;
+    b2 = b0;
+    a1 = -2.0 * c / a0;
+    a2 = (1.0 - alpha) / a0;
+  }
+  double mean = 0.0;
+  for (uint32_t i = 0; i < from + len; ++i) mean += x[i];
+  mean /= (double)(from + len);
+  double x1 = 0, x2 = 0, y1 = 0, y2 = 0, sq = 0;
+  for (uint32_t i = 0; i < from + len; ++i) {
+    const double v = (double)x[i] - mean;
+    const double y = b0 * v + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+    x2 = x1;
+    x1 = v;
+    y2 = y1;
+    y1 = y;
+    if (i >= from) sq += y * y;
+  }
+  return sq / (double)len;
 }
 
 static int cmp_double(const void *a, const void *b) {
@@ -255,8 +327,10 @@ static bool measure_once(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
   const uint32_t win = (uint32_t)ceil(
       ((low ? CAL_SEARCH_LOW_S : CAL_SEARCH_WIDE_S) + CAL_SEARCH_EARLY_S) * rate) + len;
   float *seg = heap_caps_malloc(win * sizeof(float), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  double tof[SURROUND_CAL_BURSTS_MAX], amp[SURROUND_CAL_BURSTS_MAX],
+  double tof[SURROUND_CAL_BURSTS_MAX], lev[SURROUND_CAL_BURSTS_MAX],
       match[SURROUND_CAL_BURSTS_MAX];
+  const uint32_t level_len =
+      len + (uint32_t)((low ? CAL_LEVEL_TAIL_LOW_S : CAL_LEVEL_TAIL_WIDE_S) * rate);
   int hits = 0, inverted = 0;
   for (int k = 0; ref && seg && x && k < s_result.n; ++k) {
     int64_t emit_local = 0;
@@ -279,7 +353,10 @@ static bool measure_once(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
     int64_t arrival_local = 0;
     if (!gw_mic_sample_time_ns((double)s0 + hit.index * dec, &arrival_local)) continue;
     tof[hits] = (double)(arrival_local - emit_local) / 1e6;
-    amp[hits] = hit.amplitude;
+    lev[hits] = 10.0 * log10(band_mean_square(seg, win, (uint32_t)hit.index,
+                                              level_len, rate,
+                                              low ? 0.0 : CAL_LEVEL_HP_HZ) +
+                             1e-24);
     match[hits] = fabs(hit.match);
     if (hit.match < 0.0f) inverted++;
     hits++;
@@ -290,15 +367,18 @@ static bool measure_once(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
     snprintf(o->note, sizeof(o->note), "Not found in the recording");
     return false;
   }
-  double tmin = tof[0], tmax = tof[0];
+  double tmin = tof[0], tmax = tof[0], lmin = lev[0], lmax = lev[0];
   for (int i = 1; i < hits; ++i) {
     if (tof[i] < tmin) tmin = tof[i];
     if (tof[i] > tmax) tmax = tof[i];
+    if (lev[i] < lmin) lmin = lev[i];
+    if (lev[i] > lmax) lmax = lev[i];
   }
   o->low = low;
   o->tof_ms = (float)median(tof, hits);
   o->distance_m = o->tof_ms * CAL_SOUND_M_PER_MS;
-  o->level_db = to_db(median(amp, hits)) - (float)level_db;
+  o->level_db = (float)median(lev, hits) - (float)level_db;
+  o->level_spread_db = (float)(lmax - lmin);
   o->match = (float)median(match, hits);
   o->spread_ms = (float)(tmax - tmin);
   o->inverted = !low && inverted * 2 > hits;
@@ -307,15 +387,20 @@ static bool measure_once(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
                 o->tof_ms > -1.0f;
   if (!o->measured) {
     snprintf(o->note, sizeof(o->note), "Not heard clearly (match %.2f)", (double)o->match);
+  } else if (!low && o->level_spread_db > CAL_MAX_LEVEL_SPREAD_DB) {
+    snprintf(o->note, sizeof(o->note),
+             "Level not repeatable (%.1f dB over the chirps): measure again",
+             (double)o->level_spread_db);
   } else {
     o->note[0] = '\0';
   }
   AP_LOGI(TAG,
           "%s at %d dBFS: %d/%d chirps, travel %.2f ms (%.2f m) spread %.2f ms, "
-          "level %.1f dB, match %.2f%s",
+          "level %.1f dB spread %.1f dB, match %.2f%s",
           o->name, level_db, hits, s_result.n, (double)o->tof_ms,
           (double)o->distance_m, (double)o->spread_ms, (double)o->level_db,
-          (double)o->match, o->inverted ? ", inverted" : "");
+          (double)o->level_spread_db, (double)o->match,
+          o->inverted ? ", inverted" : "");
   return o->measured;
 }
 
@@ -347,7 +432,6 @@ static void suggest(void) {
       if (t < SURROUND_TRIM_MIN_DB10 / 10.0f) t = SURROUND_TRIM_MIN_DB10 / 10.0f;
       o->trim_db = roundf(t * 2.0f) / 2.0f;
       o->has_trim = true;
-      if (o->inverted) snprintf(o->note, sizeof(o->note), "Polarity looks inverted: check + and -");
     }
   }
 }

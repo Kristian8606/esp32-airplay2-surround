@@ -196,7 +196,9 @@ typedef struct __attribute__((packed)) {
   int64_t ptp_ns;
   uint64_t source_clock_id;
   uint64_t grandmaster_clock_id;
-  uint32_t mastership_age_ms; /* of the Gateway's PTP estimate */
+  /* Of the Gateway's PTP estimate, at most how long its line has been ready
+   * (0 before: speakers start on it only past their PTP readiness). */
+  uint32_t mastership_age_ms;
   uint32_t sample_count;
   uint8_t bssid[6]; /* the access point whose TSF this is */
   uint8_t flags;    /* SURROUND_TIME_* */

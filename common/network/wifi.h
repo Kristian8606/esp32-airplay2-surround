@@ -3,6 +3,7 @@
 #include "esp_err.h"
 #include "esp_wifi_types.h"
 #include <stdbool.h>
+#include <stddef.h>
 
 /**
  * Initialize WiFi in both AP and STA modes
@@ -10,6 +11,14 @@
  * @param ap_password AP password (if NULL, uses default or open)
  */
 void wifi_init_apsta(const char *ap_ssid, const char *ap_password);
+
+/**
+ * Diagnostic: called with every frame the station interface receives, in the
+ * Wi-Fi task, before lwIP queues it (the frame starts with its Ethernet
+ * header). Set before wifi_init_apsta(); it must only record.
+ */
+typedef void (*wifi_sta_rx_probe_t)(const void *frame, size_t len);
+void wifi_set_sta_rx_probe(wifi_sta_rx_probe_t probe);
 
 /**
  * Block until WiFi is connected and has an IP address

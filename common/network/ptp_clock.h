@@ -74,6 +74,13 @@ typedef struct {
 uint32_t ptp_clock_read_samples(uint32_t *cursor, ptp_clock_sample_t *out,
                                 uint32_t max);
 
+/* Diagnostic: called for every measured Sync with its sequence number, the
+ * PTP task's reception stamp and the raw offset (sender - that stamp), with
+ * the PTP state lock held: it must only record. NULL turns it off. */
+typedef void (*ptp_clock_sync_probe_t)(uint16_t seq, int64_t task_rx_ns,
+                                       int64_t raw_offset_ns);
+void ptp_clock_set_sync_probe(ptp_clock_sync_probe_t probe);
+
 /**
  * Stream SETUP equivalent of Shairport/NQPTP T <RTSP client IP>, then B.
  * Starts one fresh timing record and selects that IP for both AAC and ALAC,

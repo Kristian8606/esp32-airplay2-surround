@@ -27,10 +27,13 @@ typedef struct {
   int8_t channel;     /* role, aac_speaker_t */
   bool measured;      /* heard clearly */
   bool low;           /* subwoofer chirp */
-  bool inverted;      /* the chirp came back upside down (wiring polarity) */
+  bool inverted;      /* the chirp came back upside down: a hint only (+/-
+                       * swapped, or a 2-way speaker's tweeter wired so) */
   float tof_ms;       /* travel time to the microphone */
   float distance_m;
-  float level_db;     /* level at the seat relative to the level played */
+  float level_db;     /* level at the seat relative to the level played:
+                       * RMS of the chirp and its first reflections */
+  float level_spread_db; /* level spread over the chirps */
   float match;        /* how well the recording matched the chirp, 0..1 */
   float spread_ms;    /* travel time spread over the chirps */
   bool has_suggestion;
