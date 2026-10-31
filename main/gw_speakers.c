@@ -20,12 +20,9 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "mdns.h"
-#include "ptp_clock.h"
-#include "ptp_clock_engine.h"
+#include "apple_clock.h"
 #include "settings.h"
 #include "socket_utils.h"
-#include "gw_ptp_probe.h"
-#include "gw_timeline.h"
 #include "tsf_fit.h"
 
 static const char *TAG = "gw_speakers";
@@ -121,11 +118,6 @@ static tsf_fit_t s_tsf_shared;
 static uint8_t s_bssid[6];
 static int64_t s_bssid_read_us;
 static int64_t s_time_log_us;
-/* The last TIME with sender time: its identity and flags go on while the
- * line holds over a gap (gw_timeline_hold). Speakers task only. */
-static surround_time_t s_time_last;
-static int64_t s_time_last_us;
-static uint32_t s_ptp_cursor; /* ptp_clock_read_samples() */
 /* Firmware from the Gateway, under s_lock: tries per speaker for the
  * current image, and the one install under way. */
 typedef struct {
@@ -587,9 +579,7 @@ static void accept_speaker(void) {
   AP_LOGI(TAG, "control connection from %s", sp->ip);
 }
 
-/* Speakers task: read the TSF once, extend the fit and tell every speaker
- * which sender PTP time the fitted TSF of this instant is, on the smooth
- * line of gw_timeline.c. */
+/* Map the one Apple clock line onto the unchanged TSF/TIME protocol. */
 static void time_tick(int64_t now_us) {
   int64_t local_ns = 0, tsf_ns = 0;
   if (!tsf_fit_read_sample(&local_ns, &tsf_ns)) return;
@@ -607,21 +597,6 @@ static void time_tick(int64_t now_us) {
   if (!tsf_fit_tsf_at(&s_tsf, local_ns, &tsf_now_ns)) return;
   m.tsf_ns = tsf_now_ns; /* packed member: no pointer to it */
 
-  /* The Syncs measured since the last tick, on the TSF: the line is fitted
-   * to them (gw_timeline.c), not to the PTP filter. */
-  ptp_clock_sample_t smp[16];
-  uint32_t n_smp;
-  while ((n_smp = ptp_clock_read_samples(&s_ptp_cursor, smp, 16)) > 0) {
-    for (uint32_t i = 0; i < n_smp; ++i) {
-      int64_t tsf_rx_ns = 0;
-      if (tsf_fit_tsf_at(&s_tsf, smp[i].local_ns, &tsf_rx_ns)) {
-        gw_timeline_add_sample(tsf_rx_ns, smp[i].remote_ns,
-                               smp[i].source_clock_id ^
-                                   (smp[i].grandmaster_clock_id * 31U));
-      }
-    }
-  }
-
   if (s_bssid_read_us == 0 ||
       now_us - s_bssid_read_us > GW_BSSID_REFRESH_MS * 1000LL) {
     wifi_ap_record_t ap;
@@ -632,64 +607,26 @@ static void time_tick(int64_t now_us) {
   }
   memcpy(m.bssid, s_bssid, sizeof(m.bssid));
 
-  ptp_clock_snapshot_t ps;
-  ptp_clock_get_snapshot(&ps);
-  uint64_t remote_ns = 0;
-  if (ps.realtime_mode) {
-    /* Realtime: the estimate RTSP and the realtime receiver use. */
-    ptp_realtime_snapshot_t rs;
-    ptp_clock_get_realtime_snapshot(&rs);
-    if (rs.master_ready && rs.master_clock_id != 0 &&
-        ptp_clock_engine_local_to_remote((uint64_t)local_ns, rs.master_offset_ns,
-                                         &remote_ns) &&
-        remote_ns <= (uint64_t)INT64_MAX) {
-      m.ptp_ns = (int64_t)remote_ns;
-      m.source_clock_id = rs.source_clock_id;
-      m.grandmaster_clock_id = rs.master_clock_id;
-      m.mastership_age_ms = rs.mastership_age_ms;
-      m.sample_count = rs.sample_count;
-      m.flags = SURROUND_TIME_PTP_VALID | SURROUND_TIME_PTP_LOCKED |
-                SURROUND_TIME_REALTIME;
-    }
-  } else if (ps.valid && ps.source_clock_id != 0 &&
-             ptp_clock_engine_local_to_remote((uint64_t)local_ns,
-                                              ps.filtered_offset_ns, &remote_ns) &&
-             remote_ns <= (uint64_t)INT64_MAX) {
-    m.ptp_ns = (int64_t)remote_ns;
-    m.source_clock_id = ps.source_clock_id;
-    m.grandmaster_clock_id = ps.grandmaster_clock_id;
-    m.mastership_age_ms = ps.mastership_age_ms;
-    m.sample_count = ps.sample_count;
-    m.flags = SURROUND_TIME_PTP_VALID | (ps.locked ? SURROUND_TIME_PTP_LOCKED : 0U);
-  }
-
-  gw_timeline_out_t line = {0};
-  const int64_t filter_ns = m.ptp_ns; /* the PTP filter, for the log */
-  if ((m.flags & SURROUND_TIME_PTP_VALID) &&
-      gw_timeline_update(m.tsf_ns, tsf_restarted, &line)) {
-    m.ptp_ns = line.ptp_ns;
-    m.rate_ppb = line.rate_ppb;
-    m.epoch = line.epoch;
-    /* A speaker starts once this age passes its readiness (400 ms): count it
-     * from when the line became ready, not from the PTP mastership. */
-    if (m.mastership_age_ms > line.ready_ms) m.mastership_age_ms = line.ready_ms;
-    s_time_last = m;
-    s_time_last_us = now_us;
-  } else if (!tsf_restarted && gw_timeline_hold(m.tsf_ns, &line)) {
-    /* A gap in the sender's PTP (late Syncs, the realtime estimate not ready
-     * for a moment): the speakers keep the same line instead of dropping
-     * their time all at once. */
-    const uint32_t gap_ms = (uint32_t)((now_us - s_time_last_us) / 1000LL);
-    m.ptp_ns = line.ptp_ns;
-    m.rate_ppb = line.rate_ppb;
-    m.epoch = line.epoch;
-    m.source_clock_id = s_time_last.source_clock_id;
-    m.grandmaster_clock_id = s_time_last.grandmaster_clock_id;
-    m.mastership_age_ms = s_time_last.mastership_age_ms + gap_ms;
-    m.sample_count = s_time_last.sample_count;
-    m.flags = s_time_last.flags;
-  } else {
-    gw_timeline_invalidate();
+  apple_clock_line_t al;
+  apple_clock_get(&al);
+  int64_t tsf_b_ns = 0;
+  if (al.ready &&
+      tsf_fit_tsf_at(&s_tsf, local_ns + 1000000000LL, &tsf_b_ns) &&
+      tsf_b_ns > m.tsf_ns) {
+    const int64_t a = apple_clock_at(&al, local_ns);
+    const int64_t b = apple_clock_at(&al, local_ns + 1000000000LL);
+    const int64_t dtsf = tsf_b_ns - m.tsf_ns;
+    const int64_t age_ms = (local_ns - al.ready_since_ns) / 1000000LL;
+    m.ptp_ns = a;
+    m.rate_ppb = (int32_t)(((b - a) - dtsf) * 1000000000LL / dtsf);
+    m.epoch = (uint16_t)al.epoch;
+    m.source_clock_id = al.source_clock_id;
+    m.grandmaster_clock_id = al.grandmaster_clock_id;
+    m.mastership_age_ms = age_ms <= 0 ? 0U : age_ms > UINT32_MAX
+                                              ? UINT32_MAX : (uint32_t)age_ms;
+    m.sample_count = al.samples;
+    m.flags = SURROUND_TIME_PTP_VALID | SURROUND_TIME_PTP_LOCKED |
+              (al.realtime ? SURROUND_TIME_REALTIME : 0U);
   }
 
   xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -703,35 +640,11 @@ static void time_tick(int64_t now_us) {
 
   if (now_us - s_time_log_us >= GW_TIME_LOG_MS * 1000LL) {
     s_time_log_us = now_us;
-    gw_ptp_probe_log();
-    int64_t best_ns = 0;
-    uint32_t syncs = 0;
-    if (gw_timeline_take_best(&best_ns, &syncs)) {
-      /* Short, so the log keeps the whole line. */
-      ESP_LOGI(TAG,
-               "APPLE TV vs LINE: best Sync %+.3f ms (of %u) | line epoch %u "
-               "%+.3f ppm%s, fit %+.3f ms over %u s | PTP filter %+.3f ms",
-               (double)best_ns / 1e6, (unsigned)syncs, (unsigned)line.epoch,
-               (double)line.rate_ppb / 1000.0, line.fitted ? " fitted" : "",
-               (double)line.err_ns / 1e6, (unsigned)(line.span_ms / 1000U),
-               (m.flags & SURROUND_TIME_PTP_VALID) && filter_ns != 0
-                   ? (double)(filter_ns - m.ptp_ns) / 1e6 : 0.0);
-    }
-    ESP_LOGI(TAG,
-             "TIME tsf fit %u samples %+.3f ppm rms %.2f us restarts %u | PTP "
-             "valid=%d locked=%d realtime=%d gm=%016" PRIx64 " offset=%" PRId64
-             " ns | line epoch %u rate %+.3f ppm%s, envelope %+.3f ms from it over "
-             "%.0f s%s%s, PTP filter %+.3f ms from it",
-             (unsigned)s_tsf.count, s_tsf.slope * 1e6, s_tsf.rms_ns / 1000.0,
-             (unsigned)s_tsf.restarts, (m.flags & SURROUND_TIME_PTP_VALID) != 0,
-             (m.flags & SURROUND_TIME_PTP_LOCKED) != 0, ps.realtime_mode,
-             m.grandmaster_clock_id, ps.filtered_offset_ns, (unsigned)line.epoch,
-             (double)line.rate_ppb / 1000.0, line.fitted ? " (fitted)" : "",
-             (double)line.err_ns / 1e6, line.span_ms / 1000.0,
-             line.settling ? " (settling)" : "",
-             line.ready_ms == 0U && line.epoch != 0U ? " (not ready)" : "",
-             (m.flags & SURROUND_TIME_PTP_VALID) && filter_ns != 0
-                 ? (double)(filter_ns - m.ptp_ns) / 1e6 : 0.0);
+    ESP_LOGI(TAG, "TIME apple_clock ready=%d epoch=%u rate=%+.3f ppm (TSF) | "
+             "TSF %u samples %+.3f ppm rms %.2f us restarts %u",
+             (m.flags & SURROUND_TIME_PTP_VALID) != 0, (unsigned)m.epoch,
+             m.rate_ppb / 1000.0, (unsigned)s_tsf.count,
+             s_tsf.slope * 1e6, s_tsf.rms_ns / 1000.0, (unsigned)s_tsf.restarts);
   }
 }
 

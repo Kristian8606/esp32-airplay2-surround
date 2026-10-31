@@ -47,7 +47,7 @@
 /* Sender time: the Gateway sends TIME at the sender's PTP Sync rate. Both
  * ends are stations of the same Wi-Fi access point, so they share its TSF
  * (802.11 beacon timer): the Gateway says "sender PTP time P is TSF T, and
- * runs at 1 + rate against the TSF" (gw_timeline.c), and the speaker turns T
+ * runs at 1 + rate against the TSF" (apple_clock), and the speaker turns T
  * into its own clock through its own TSF reading. The transport delay of the
  * message does not enter the result. */
 #define SURROUND_TIME_INTERVAL_MS 125U
@@ -192,7 +192,7 @@ typedef struct __attribute__((packed)) {
   /* The Gateway's TSF (ns) at one instant, from its smoothed TSF fit. */
   int64_t tsf_ns;
   /* The sender's PTP time at the same instant: the Gateway's smooth line
-   * (gw_timeline.c), not its raw estimate. */
+   * (apple_clock), not its raw estimate. */
   int64_t ptp_ns;
   uint64_t source_clock_id;
   uint64_t grandmaster_clock_id;

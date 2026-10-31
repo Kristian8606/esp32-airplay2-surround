@@ -5,6 +5,7 @@
 include("${CMAKE_CURRENT_LIST_DIR}/../../common/common.cmake")
 
 set(SPEAKER_SRCS
+    "${AIRPLAY_COMMON_DIR}/network/ptp_clock.c"
     "main.c"
     "web_speaker.c"
     "audio/audio_receiver.c"

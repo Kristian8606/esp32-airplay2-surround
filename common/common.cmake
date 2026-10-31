@@ -14,8 +14,6 @@ set(AIRPLAY_COMMON_SRCS
     "${AIRPLAY_COMMON_DIR}/led.c"
     "${AIRPLAY_COMMON_DIR}/rtsp_events.c"
     "${AIRPLAY_COMMON_DIR}/network/wifi.c"
-    "${AIRPLAY_COMMON_DIR}/network/ptp_clock.c"
-    "${AIRPLAY_COMMON_DIR}/network/ptp_clock_engine.c"
     "${AIRPLAY_COMMON_DIR}/network/socket_utils.c"
     "${AIRPLAY_COMMON_DIR}/network/web_server.c"
     "${AIRPLAY_COMMON_DIR}/network/ota.c"

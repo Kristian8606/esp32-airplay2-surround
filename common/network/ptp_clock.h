@@ -1,35 +1,10 @@
 #pragma once
 
-#include <stddef.h>
+/* Speaker clock state supplied by Gateway TIME. No sockets or estimator. */
 #include <stdint.h>
 #include <stdbool.h>
 #include "esp_err.h"
-
-/**
- * Simple PTP (IEEE 1588) slave for AirPlay time synchronization.
- * Listens for SYNC/FOLLOW_UP messages and tracks offset to PTP master.
- */
-
-/**
- * Initialize and start PTP clock synchronization.
- * Creates a task that listens for PTP multicast messages.
- * Returns ESP_ERR_INVALID_STATE while an earlier task is running or stopping.
- */
-esp_err_t ptp_clock_init(void);
-
-/**
- * Surround speaker: clock state only, no PTP sockets or task. The sender's
- * clock then comes only from ptp_clock_set_external().
- */
 esp_err_t ptp_clock_init_external(void);
-
-
-/**
- * Clear PTP clock synchronization state.
- * Resets offset and lock status without stopping the clock.
- * Called during TEARDOWN to allow re-sync on new session.
- */
-void ptp_clock_clear(void);
 
 typedef struct {
   bool realtime_mode;
@@ -39,8 +14,7 @@ typedef struct {
   uint64_t grandmaster_clock_id;
   uint32_t epoch;
   int64_t raw_offset_ns;
-  /* The usable remote-local offset: minimum-delay filter, slew-limited once
-   * the mastership is ready, so audio never sees a step. */
+  /* The Gateway offset, carried forward on its published rate. */
   int64_t filtered_offset_ns;
   int64_t raw_filter_delta_ns;
   /* Age of the current mastership; buffered audio uses this to qualify a
@@ -58,39 +32,6 @@ typedef struct {
 
 /* Coherent status/diagnostic snapshot for either buffered or realtime mode. */
 void ptp_clock_get_snapshot(ptp_clock_snapshot_t *snapshot);
-
-/* One measured Sync of the selected sender, unfiltered: the sender's clock
- * read remote_ns no later than local_ns (the reception adds the delay). */
-typedef struct {
-  int64_t local_ns;
-  int64_t remote_ns;
-  uint64_t source_clock_id;
-  uint64_t grandmaster_clock_id;
-} ptp_clock_sample_t;
-
-/* The Syncs measured since *cursor (0 at first), oldest first, at most max;
- * advances *cursor. Samples older than the last PTP_CLOCK_SAMPLES are lost.
- * Lets the Surround Gateway fit its own line to the raw samples. */
-uint32_t ptp_clock_read_samples(uint32_t *cursor, ptp_clock_sample_t *out,
-                                uint32_t max);
-
-/* Diagnostic: called for every measured Sync with its sequence number, the
- * PTP task's reception stamp and the raw offset (sender - that stamp), with
- * the PTP state lock held: it must only record. NULL turns it off. */
-typedef void (*ptp_clock_sync_probe_t)(uint16_t seq, int64_t task_rx_ns,
-                                       int64_t raw_offset_ns);
-void ptp_clock_set_sync_probe(ptp_clock_sync_probe_t probe);
-
-/**
- * Stream SETUP equivalent of Shairport/NQPTP T <RTSP client IP>, then B.
- * Starts one fresh timing record and selects that IP for both AAC and ALAC,
- * except that a settled estimate of the same sender is kept, also across a
- * switch between realtime and buffered. SETPEERS/SETPEERSX and media anchors
- * never reset this record.
- */
-void ptp_clock_start_timing(bool realtime, uint32_t timing_peer_ip);
-
-
 
 typedef struct {
   bool realtime_mode;
@@ -116,9 +57,8 @@ bool ptp_clock_realtime_snapshot_to_local(
 
 void ptp_clock_get_realtime_snapshot(ptp_realtime_snapshot_t *snapshot);
 
-/* Surround speaker: the Gateway's estimate of the sender clock, already
- * mapped to this ESP's clock (spk_time.c), replaces the PTP estimator. Audio
- * reads it through ptp_clock_get_snapshot() exactly like a PTP estimate.
+/* The Gateway line mapped to this speaker's clock (spk_time.c). Audio
+ * reads it through ptp_clock_get_snapshot().
  * A speaker starts with ptp_clock_init_external(): it receives no PTP. */
 typedef struct {
   uint64_t source_clock_id;
@@ -138,3 +78,17 @@ typedef struct {
 
 /* NULL withdraws the estimate (the snapshot becomes invalid). */
 void ptp_clock_set_external(const ptp_clock_external_t *ext);
+
+/* Convert between remote PTP time and ESP-local monotonic time. */
+bool ptp_clock_remote_to_local(uint64_t remote_ns, int64_t offset_ns,
+                                      uint64_t *local_ns);
+bool ptp_clock_local_to_remote(uint64_t local_ns, int64_t offset_ns,
+                                      uint64_t *remote_ns);
+
+/* Shairport-style buffered handover qualification. A transient GM must never
+ * move the media anchor; only a qualified, different master may take it over. */
+bool ptp_clock_handover_ready(bool have_local_anchor, bool clock_locked,
+                                     uint64_t anchor_clock_id,
+                                     uint64_t current_master_clock_id,
+                                     uint32_t mastership_age_ms,
+                                     uint32_t last_anchor_age_ms);

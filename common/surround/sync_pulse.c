@@ -13,8 +13,13 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "hal/gpio_ll.h"
+#if CONFIG_AIRPLAY_ROLE_GATEWAY
+#include "apple_clock.h"
+typedef apple_clock_line_t pulse_clock_t;
+#else
 #include "ptp_clock.h"
-#include "ptp_clock_engine.h"
+typedef ptp_clock_snapshot_t pulse_clock_t;
+#endif
 
 static const char *TAG = "sync_pulse";
 
@@ -45,20 +50,31 @@ static void IRAM_ATTR pulse_isr(void *arg) {
 /* Local time (us) of the next whole sender second at least min_lead_us
  * away, or 0 when there is no usable sender time. */
 static int64_t next_edge_us(int64_t min_lead_us, uint64_t *second,
-                            ptp_clock_snapshot_t *ps) {
-  ptp_clock_get_snapshot(ps);
-  if (!ps->valid || ps->realtime_mode) return 0;
+                            pulse_clock_t *ps) {
   const int64_t now_us = esp_timer_get_time();
   uint64_t remote_now = 0;
-  if (!ptp_clock_engine_local_to_remote((uint64_t)now_us * 1000ULL,
-                                        ps->filtered_offset_ns, &remote_now))
-    return 0;
+#if CONFIG_AIRPLAY_ROLE_GATEWAY
+  apple_clock_get(ps);
+  if (!ps->ready) return 0;
+  const int64_t apple_now = apple_clock_at(ps, now_us * 1000LL);
+  if (apple_now < 0) return 0;
+  remote_now = (uint64_t)apple_now;
+#else
+  ptp_clock_get_snapshot(ps);
+  if (!ps->valid || ps->realtime_mode ||
+      !ptp_clock_local_to_remote((uint64_t)now_us * 1000ULL,
+                                 ps->filtered_offset_ns, &remote_now)) return 0;
+#endif
   uint64_t sec = remote_now / NS_PER_S + 1U;
   for (;;) {
     uint64_t local_ns = 0;
-    if (!ptp_clock_engine_remote_to_local(sec * NS_PER_S, ps->filtered_offset_ns,
-                                          &local_ns))
-      return 0;
+#if CONFIG_AIRPLAY_ROLE_GATEWAY
+    if (!apple_clock_to_local(ps, ps->grandmaster_clock_id, sec * NS_PER_S,
+                               &local_ns)) return 0;
+#else
+    if (!ptp_clock_remote_to_local(sec * NS_PER_S, ps->filtered_offset_ns,
+                                   &local_ns)) return 0;
+#endif
     const int64_t at_us = (int64_t)((local_ns + 500U) / 1000U);
     if (at_us - now_us >= min_lead_us) {
       *second = sec;
@@ -74,7 +90,7 @@ static void pulse_task(void *arg) {
   int64_t late_max_us = 0, late_sum_us = 0;
   bool waiting_logged = false;
   for (;;) {
-    ptp_clock_snapshot_t ps;
+    pulse_clock_t ps;
     uint64_t second = 0;
     /* Sleep until shortly before the next edge... */
     int64_t at_us = next_edge_us(PULSE_ARM_LEAD_US + 5000, &second, &ps);
@@ -110,13 +126,20 @@ static void pulse_task(void *arg) {
     if (late_us > late_max_us) late_max_us = late_us;
     late_sum_us += late_us;
     if (++pulses % PULSE_LOG_EVERY == 0U) {
+#if CONFIG_AIRPLAY_ROLE_GATEWAY
+      const int64_t offset_ns = ps.base_apple_ns - ps.base_local_ns;
+      const bool locked = ps.ready;
+#else
+      const int64_t offset_ns = ps.filtered_offset_ns;
+      const bool locked = ps.locked;
+#endif
       ESP_LOGI(TAG,
                "PULSE second %" PRIu64 " on GPIO %d | interrupt late avg %"
                PRId64 " us max %" PRId64 " us over %u | offset=%" PRId64
                " ns gm=%016" PRIx64 " locked=%d",
                second, PULSE_GPIO, late_sum_us / (int64_t)PULSE_LOG_EVERY,
-               late_max_us, PULSE_LOG_EVERY, ps.filtered_offset_ns,
-               ps.grandmaster_clock_id, ps.locked);
+               late_max_us, PULSE_LOG_EVERY, offset_ns,
+               ps.grandmaster_clock_id, locked);
       late_max_us = 0;
       late_sum_us = 0;
     }

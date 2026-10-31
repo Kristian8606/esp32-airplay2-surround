@@ -28,14 +28,15 @@ set(GATEWAY_SRCS
     "hap/tlv8.c"
     "gw_proxy.c"
     "gw_relay.c"
-    "gw_timeline.c"
     "gw_fw.c"
     "gw_rt_relay.c"
     "gw_speakers.c"
     "gw_mic.c"
     "gw_calib.c"
-    "gw_ptp_probe.c"
 )
+list(APPEND GATEWAY_SRCS
+    "${AIRPLAY_COMMON_DIR}/network/apple_clock.c"
+    "${AIRPLAY_COMMON_DIR}/network/apple_clock_core.c")
 if(CONFIG_AIRPLAY_HARDWARE_BUTTONS)
     list(APPEND GATEWAY_SRCS "playback_buttons.c")
 endif()
@@ -47,9 +48,3 @@ idf_component_register(
 )
 
 airplay_embed_web_pages(index logs speedtest speakers)
-
-# PTP Sync delay diagnostic (gw_ptp_probe.c): lwIP's IPv4 input hook.
-idf_component_get_property(lwip lwip COMPONENT_LIB)
-target_compile_definitions(${lwip} PRIVATE
-    "ESP_IDF_LWIP_HOOK_FILENAME=\"gw_lwip_hooks.h\"")
-target_include_directories(${lwip} PRIVATE "${CMAKE_CURRENT_LIST_DIR}")

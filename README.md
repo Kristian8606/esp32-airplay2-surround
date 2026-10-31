@@ -122,11 +122,12 @@ and shares it with the speakers:
    with the key the Gateway passed on and plays its channel
    on **both outputs** of its DAC or amplifier (L = R), so you can drive one
    speaker, two drivers (woofer + tweeter) or a subwoofer amplifier.
-4. **One clock for all.** Every board on the same Wi-Fi access point keeps a
-   copy of the access point's beacon timer (TSF). Eight times a second the
-   Gateway tells the speakers "the Apple TV's time P is TSF T". Each speaker
-   converts T to its own clock and plays every sample at the moment the
-   Apple TV scheduled it.
+4. **One two-way Apple clock for all.** The Gateway measures both directions
+   of the PTP path with Sync / Follow_Up and Delay_Req / Delay_Resp, then
+   publishes one smooth clock line. Every board on the same access point
+   shares its beacon timer (TSF). Eight times a second the Gateway tells the
+   speakers "the Apple TV's time P is TSF T". Each speaker converts T to its
+   own clock and plays every sample at the moment the Apple TV scheduled it.
 
 You choose each speaker's role (Front Left, Centre, Subwoofer, …) on the
 Gateway's page, even while music is playing. Start with two or three
@@ -160,8 +161,16 @@ speakers and add the rest later.
 | Speaker ↔ speaker in practice | 0.1–0.3 ms, about 3–10 cm of sound travel |
 | Transport delay of the time messages | 3–60 ms, does not matter by design |
 
-The time messages carry a TSF timestamp rather than "now", so how long they
-take over Wi-Fi does not enter the result.
+The time messages carry a TSF timestamp rather than "now", so their travel
+time over Wi-Fi is not added to the speaker's clock offset. TSF reading and
+fit errors still matter. Speaker playout logs measure following the Gateway
+line; they do not measure the acoustic offset to a HomePod.
+
+In a captured **v4.5.33** cold start the Apple clock became ready **80 ms**
+after the master was identified, before audio stream SETUP. The speaker
+reported its first audio **172 ms after the anchor**, and **223 ms** on a
+later start. These are observed starts, not guaranteed latency on every
+network.
 
 ### What each speaker plays
 
@@ -672,57 +681,130 @@ are never touched by this.
 
 ### Synchronisation
 
-The Apple TV schedules every packet on its **PTP clock**: each packet
-carries an RTP timestamp and an instruction says which PTP time belongs to
-which timestamp. Only the Gateway takes part in PTP. The speakers get the
-Apple TV's time through the access point:
+The Apple TV schedules audio on its **PTP clock**. Audio packets carry RTP
+sample positions, and an **anchor** associates an RTP position with an Apple
+PTP time. The Gateway supplies that clock to every speaker; each speaker
+uses its local representation to decide when a particular sample must play.
 
-1. Every Wi-Fi station keeps a copy of its access point's **TSF**, a
-   microsecond timer carried in every beacon. Each board reads its TSF
-   together with its own clock and fits a line through the last 64 such
-   readings (outliers dropped), which averages out the reading jitter.
-2. Eight times a second the Gateway sends **TIME**: a straight line on the
-   TSF, "the Apple TV's time is P at TSF T and runs at 1 + rate", with the
-   clock's identity and state.
-3. A speaker looks up its own local time at that TSF and gets the offset to
-   the Apple TV's clock, and carries it forward on the rate until the next
-   message. Because the message names a TSF moment rather than "now", its
-   delay over Wi-Fi does not matter.
+**Two-way measurement on the Gateway.** `apple_clock` owns UDP **319/320**
+and runs the transport and clock core in one task. RTSP SETUP selects the
+sender's IP address; Announce supplies its source and grandmaster identities.
+Before SETUP the first Announce can prepare the clock. Once a peer is
+selected, messages from other IP addresses cannot replace it. The line is
+never published before an Announce has identified the grandmaster.
 
-**One smooth line for all speakers.** While the Gateway relays audio most of
-the Apple TV's PTP Syncs reach it 5 to 100 ms late, and even the best of a
-few seconds scatter by 3 to 6 ms. A Sync is never early, so every sample lies
-on or below the true sender time. The speakers get a line fitted to the raw
-Syncs (`main/gw_timeline.c`): the best Sync of each second over the last ten
-minutes, and the edge of their upper envelope (convex hull) over the middle
-of that window, the lowest line above all of them. Its rate comes from timely
-Syncs minutes apart (a few ppm); late Syncs never count, and nothing guesses
-clock steps from them. The published line follows it on that rate, takes a
-difference back at most 100 µs per second and bends at most 5 ppm per
-second. A Sync more than 1 s below the fit, or the first one after 5 s
-without any (the Apple TV restarted), starts the fit again at once. The line
-steps only for a new sender clock, a restarted access point or a jump beyond
-20 ms; after a step it follows the fit directly for 10 s. Every speaker
-evaluates the same line, so all of them play the same time even when one
-receives an update later than another. The Gateway logs the line every 10 s:
-`TIME … | line epoch N rate … ppm (fitted), envelope … ms from it over … s,
-PTP filter … ms from it`.
-4. From there each speaker runs the playback engine of an AirPlay 2
-   receiver: it plays every sample at the scheduled time, minus its
-   **output latency**, plus its **delay** from the speakers page, and tunes
-   its I2S clock live to follow the Apple TV. The line's rate on the
-   speaker's own clock is exactly the I2S correction needed, so the I2S
-   clock runs at it directly and only the remaining phase is steered (back
-   over 10 s): a new track, a reboot or a bend of the line needs no
-   relearning. The speaker logs `SERVO LINE: line … ppm, sync … ms -> I2S …
-   ppm` every 10 s.
+Each complete exchange provides four timestamps:
+
+| Timestamp | Event | Clock |
+|---|---|---|
+| `t1` | Apple sent Sync | Apple PTP |
+| `t2` | Gateway received Sync | Gateway `esp_timer` |
+| `t3` | Gateway sends Delay_Req | Gateway `esp_timer` |
+| `t4` | Apple received Delay_Req | Apple PTP |
+
+For the Apple timestamp encoding observed with these senders, corrections
+are **added**: `t1 = preciseOrigin + Sync correction + Follow_Up correction`,
+and `t4 = receiveTimestamp + Delay_Resp correction`. The receive and send
+marks on the Gateway are software timestamps, not radio hardware timestamps.
+The module matches peer, source/port identity, domain and sequence; only a
+response addressed to its own requesting identity completes the exchange.
+
+```
+a = t1 - t2                         Apple - local - downlink delay
+b = t4 - t3                         Apple - local + uplink delay
+RTT = b - a                         downlink + uplink delay
+offset = (a + b) / 2                 estimated Apple - local
+```
+
+Delay_Req follows a fresh Sync / Follow_Up pair when allowed by the sender's
+requested interval, with a minimum interval of **125 ms** (at most 8/s).
+There is one request in flight and a **1 s** timeout. Other HomePods are not
+polled as extra peers.
+
+**Fast phase acquisition, gradual rate learning.** The first complete
+exchange with **RTT <= 3 ms** seeds phase immediately on the remembered
+clock rate, or zero rate after a cold boot. Audio does not wait for three
+accepted seconds or for the first second's bucket to close. This initial
+exchange enters the fitted history only once, when its bucket closes.
+The same published line then learns the rate and corrects phase smoothly.
+A path with no exchange under 3 ms retains multi-point qualification: at
+least three accepted points and four completed exchange buckets.
+
+The rate memory holds four grandmaster identities in RAM. TEARDOWN leaves
+the selected clock running between tracks. A ready line can therefore
+already exist at the next SETUP. The first 3 ms exchange alone can have up
+to **+/-1.5 ms** path-asymmetry error under the four-timestamp model; its rate
+is still being learned. Fast readiness is not a promise of immediate
+sub-0.1 ms accuracy or zero time to audible output.
+
+**Filtering and a continuous line.** Each roughly one-second bucket keeps
+its exchange with the lowest RTT. Its point enters the fit only when RTT
+is within **1 ms of the minimum over the last 60 s**; initial multi-point
+acquisition also rejects points over 10 ms RTT. Negative RTT and RTT over
+1 s are invalid. The accepted points form a least-squares line over up to
+**10 minutes**, with the rate initially pulled towards the remembered prior.
+
+The published line follows the estimated rate and removes phase error with
+a **20 s time constant**, limiting the phase correction to **50 ppm** and
+rate changes to **20 ppm/s**. Ordinary updates continue the previous line
+at the update instant and change its future rate, so they do not step time.
+One accepted point more than 2 ms from the estimate is ignored. Five
+successive accepted points on the same side, more than 2 ms away and
+spanning at least 4 s, confirm a clock step and start a new epoch. A different
+grandmaster also starts a new acquisition; a relay change carrying the same
+grandmaster can preserve the line.
+
+Poor-RTT exchanges keep an established clock alive without updating its
+fitted points. After **30 s without a valid two-way exchange**, the Gateway
+withdraws time. Reacquisition retains the learned rate and remeasures phase
+with a fresh RTT floor. There is **no one-way fallback**. A continuing line
+without fresh good points depends on how stable its learned rate remains.
+
+**Distributing the same line over TSF.**
+
+1. Every board reads its own `esp_timer` together with the access point's
+   **TSF**, then fits their relation over the last **64 readings** (about
+   8 s at 125 ms intervals). This reduces reading jitter.
+2. Every **125 ms** the Gateway sends **TIME**: Apple time P at TSF T, the
+   rate relative to TSF, source/grandmaster identities, epoch and readiness.
+   `sample_count` counts quality-checked two-way observations; the fitted
+   seconds are counted separately. Realtime's four-observation qualification
+   therefore does not wait for four sparse accepted seconds.
+3. Each speaker maps T to its own local time, then converts the rate to its
+   own clock. It uses the timestamped instant, rather than packet arrival,
+   so TIME transport delay does not become a clock offset. All boards must
+   use the **same BSSID**: another mesh node has a different TSF.
+4. The audio engine maps the RTP anchor through this local clock, compensates
+   for **output latency** and the speaker's configured **delay**, and plays
+   the scheduled samples. Its existing I2S servo uses the line rate directly
+   and steers the remaining phase back over about **10 s**, calculating and
+   applying live clock corrections at most once per second. It logs
+   `SERVO LINE: line ... ppm, sync ... ms -> I2S ... ppm`.
+
+The Gateway has one clock implementation, in
+`common/network/apple_clock.c` and `apple_clock_core.c`; the previous PTP
+estimator, `gw_timeline` and PTP experiment/probe code are removed. A speaker's
+`common/network/ptp_clock.c` is only the external TIME state and conversion
+interface for its audio engine; it has no PTP sockets or passive estimator.
+The optional oscilloscope pulse on the Gateway reads the same published
+Apple line. Algorithm and measurement details are in
+[the Apple clock design](docs/apple-clock-design.md).
+
+**Absolute accuracy.** Two-way timing cannot distinguish a permanent
+uplink/downlink asymmetry from clock offset. The remaining error is half
+the difference between those delays. `AIRPLAY_APPLE_CLOCK_ASYM_US` adds a
+calibration offset (default 0; positive makes playback earlier). Measure
+against a HomePod with a microphone before calibrating it. `ready=1`,
+`locked=1` and a small internal speaker sync error do not establish the
+acoustic accuracy to Apple by themselves.
 
 **Wi-Fi dropouts.** During a stream a speaker carries the last line forward
-for up to 30 s, and both sides wait 20 s (instead of 6 s) before they give a
-silent link up. A dropout of a few seconds costs nothing: the speaker plays on
-from its buffer, in step, and logs `Gateway silent …` and `TIME again after
-… ms`. Only a longer one ends that speaker's stream; it joins again at the
-next pause, seek or track.
+for up to 30 s, and both sides wait 20 s (instead of 6 s) before giving up a
+silent link. A buffered speaker can continue from its queued audio during a
+short dropout. If the Gateway explicitly sends invalid TIME, the speaker
+withdraws that external clock. After a lost stream a buffered late join
+still waits for the next pause, seek or track FLUSH; this admission wait is
+separate from Apple clock acquisition.
 
 ### Relaying the stream
 
@@ -762,14 +844,16 @@ are listed in
 | Part | Where | What it does |
 |---|---|---|
 | AirPlay receiver | `main/rtsp`, `main/hap`, `main/plist`, `main/mdns_airplay.c` | mDNS, pairing, RTSP; Gateway only (a speaker is not an AirPlay receiver) |
-| Shared services | `common/network` | Wi-Fi, web server core, OTA, logs, the PTP clock (full on the Gateway, fed by the Gateway on a speaker) |
+| Shared services | `common/network` | Wi-Fi, web server core, OTA and logs |
 | Web pages | `main/web_gateway.c`, `speaker/main/web_speaker.c` | each firmware's own pages and APIs on top of the shared web server |
 | Gateway proxy | `main/gw_proxy.c` | implements the audio engine API on the Gateway and forwards each call (`FWD …` in the log) |
 | Speaker registry | `main/gw_speakers.c` | control link on port 7100 (`_apsurround._tcp`), late joins, settings, status, TIME messages, which speaker updates next |
 | Speaker firmware | `main/gw_fw.c`, `speaker/main/spk_update.c` | the image in the Gateway's `storage` partition (`gw_fw`); download, check and install on the speaker (`spk_update`) |
 | Buffered relay | `main/gw_relay.c` | copies the TCP audio stream to every speaker, paced by the slowest (`RELAY …`) |
 | Realtime relay | `main/gw_rt_relay.c` | copies UDP audio and sync packets, passes retransmit requests on (`RT RELAY …`) |
-| Time | `common/surround/tsf_fit.c`, `main/gw_timeline.c`, `speaker/main/spk_time.c` | TSF line fits on both sides; the Gateway's smooth sender-time line; feeds the speaker's clock (`TIME …`, `gw_timeline`) |
+| Apple clock | `common/network/apple_clock.c`, `common/network/apple_clock_core.c` | Gateway-only two-way PTP transport, RTT filtering, rate estimation and continuous published line (`apple_clock …`) |
+| Time distribution | `common/surround/tsf_fit.c`, `main/gw_speakers.c`, `speaker/main/spk_time.c` | TSF fits on both sides; maps the same Apple line into TIME and each speaker's local clock |
+| Speaker clock state | `common/network/ptp_clock.c` | external TIME state, rate carry and conversions for the audio engine; no PTP receiver |
 | Speaker link | `speaker/main/spk_link.c` | finds the Gateway, runs every forwarded call locally (`CMD …`) |
 | Protocol | `common/surround/surround_proto.h` | message types and payloads, versioned |
 | Audio engine | `speaker/main/audio` | FIFO, FDK AAC / ALAC decode, PCM store, I2S playout and servo |
@@ -819,8 +903,10 @@ are listed in
   reconfigured.
 - **Rear and side channels are often nearly silent in music**; they come
   alive with films and Atmos mixes.
-- Some video apps take 20–30 s from the start of AirPlay to the first audio
-  (seen with HBO); that is the sender.
+- A sender can postpone audio after AirPlay setup. Distinguish that from
+  clock acquisition using `apple_clock` readiness and the speaker's
+  `PLAYOUT START` / timing-watchdog logs; a long wait is not automatically
+  a sender delay.
 
 ## Troubleshooting and logs
 
@@ -832,6 +918,7 @@ are listed in
 | A speaker connects and drops again | `protocol version …, Gateway speaks …` in the Gateway log: update both to the same firmware. |
 | A speaker is silent after joining | Wait for the next skip or seek (`speaker … joins at this FLUSH`). Then its role on `/speakers`, the **Mute** buttons on its EQ page, the PCM5102A **XSMT** jumper, the BCLK / LRCK / DATA wiring. |
 | `no common TSF, no sender time` on a speaker | It is on another access point (or mesh node) than the Gateway. |
+| `TIMING WATCHDOG ... reason=no-sender-time` | Check Gateway `apple_clock` readiness, Announce and Delay_Req/answered counters. Audio can already be buffered while the clock is acquiring. |
 | No sound at all after a Gateway update or restart | The Apple TV dropped the session: select the Gateway again as the audio output. |
 | The Apple TV sends stereo only | The track or app may only offer stereo (YouTube, some "Atmos" tracks); the speakers page shows the layout. |
 | Subwoofer silent with surround music | Normal: most music has no LFE. Try a film. |
@@ -846,7 +933,12 @@ Every board streams its log to `http://<board-ip>/logs`. Useful lines:
 | `RELAY rx … \| paced … ms \| … RELAY tx Front:live …` | Gateway | audio in from the Apple TV and out to each speaker; how long the fill was held back |
 | `RT RELAY data … pkts -> N speakers \| NACK …` | Gateway | realtime audio and retransmit requests |
 | `control connection from …` / `speaker … joins at this FLUSH` | Gateway | a speaker connected / started playing |
-| `TIME tsf fit 64 samples -31.0 ppm rms 4.5 us … locked=1` | both | TSF fit quality and the Apple TV clock's state |
+| `two-way clock owns UDP 319/320 ...` | Gateway | the standalone Apple clock owns the PTP transport |
+| `line ready epoch 1: 1 exchanges, 0 fit points ...` | Gateway | fast acquisition from a two-way exchange, before the first fit bucket closes |
+| `apple_clock: ready epoch ... floor RTT ... seconds +N -M ... Delay_Req ... answered ...` | Gateway | clock line, RTT floor, accepted/rejected seconds and exchange counters |
+| `TIME apple_clock ready=1 epoch=... rate=... (TSF)` | Gateway | the published Apple line mapped onto TSF and sent to the speakers |
+| `TIME tsf fit 64 samples ... rms ... locked=1` | speaker | local TSF fit quality and external clock state |
+| `PLAYOUT START ... first audio N ms after anchor` | speaker | measured startup wait; the status task may print the event later |
 | `ROLE: Surround speaker (follows the Gateway)` | speaker | boot banner of the speaker firmware |
 | `connected to Gateway …` | speaker | the control link is up |
 | `CMD start_buffered: ESP_OK, audio port …` | speaker | a forwarded instruction run locally |

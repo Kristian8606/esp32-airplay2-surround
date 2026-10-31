@@ -22,8 +22,7 @@
 #include "gw_relay.h"
 #include "gw_rt_relay.h"
 #include "gw_speakers.h"
-#include "ptp_clock.h"
-#include "ptp_clock_engine.h"
+#include "apple_clock.h"
 
 static const char *TAG = "gw_proxy";
 
@@ -295,23 +294,21 @@ void audio_receiver_set_playing(bool playing) {
 
 void audio_receiver_set_anchor_time(uint64_t clock_id, uint64_t network_time_ns,
                                     uint32_t rtp_time) {
-  ptp_clock_snapshot_t ps = {0};
-  ptp_clock_get_snapshot(&ps);
+  apple_clock_line_t ps = {0};
+  apple_clock_get(&ps);
   uint64_t local_ns = 0;
-  if (ps.valid &&
-      ptp_clock_engine_remote_to_local(network_time_ns, ps.filtered_offset_ns,
-                                       &local_ns)) {
+  if (apple_clock_to_local(&ps, clock_id, network_time_ns, &local_ns)) {
     const int64_t in_ms =
         ((int64_t)local_ns - (int64_t)esp_timer_get_time() * 1000LL) / 1000000LL;
     AP_LOGI(TAG,
             "FWD set_anchor_time clock=%016" PRIx64 " ptp=%" PRIu64
-            " rtp=%" PRIu32 " (Gateway PTP locked=%d: anchor %+" PRId64
+            " rtp=%" PRIu32 " (Gateway apple_clock ready=%d: anchor %+" PRId64
             " ms from now)",
-            clock_id, network_time_ns, rtp_time, ps.locked ? 1 : 0, in_ms);
+            clock_id, network_time_ns, rtp_time, ps.ready ? 1 : 0, in_ms);
   } else {
     AP_LOGI(TAG,
             "FWD set_anchor_time clock=%016" PRIx64 " ptp=%" PRIu64
-            " rtp=%" PRIu32 " (Gateway PTP not valid yet)",
+            " rtp=%" PRIu32 " (Gateway apple_clock not ready)",
             clock_id, network_time_ns, rtp_time);
   }
   const surround_anchor_t m = {.clock_id = clock_id,

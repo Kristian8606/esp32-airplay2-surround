@@ -35,7 +35,6 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "network/ptp_clock.h"
-#include "network/ptp_clock_engine.h"
 #include "network/socket_utils.h"
 #include "latency_cal.h"
 #include "cal_playback.h"
@@ -83,7 +82,7 @@
  * record after 400 ms of mastership. There is no extra local lock or 1 s
  * initial-anchor gate. Reference rtp.c:1355-1356 at
  * 8c146e25183a354ae96f91fa069c2e7173f75a71. */
-#define AP2_PTP_MASTERSHIP_MIN_MS PTP_CLOCK_ENGINE_READY_MS
+#define AP2_PTP_MASTERSHIP_MIN_MS 400U
 /* A PTP estimate without a sample for this long must not create or refresh a
  * local mapping; playback keeps the cached one (holdover) until PTP returns. */
 #define AP2_PTP_SAMPLE_STALE_MS   2000U
@@ -667,7 +666,7 @@ static void refresh_timing_snapshot(timing_snapshot_t *out) {
          * representation and remember exactly when that mapping was last
          * known-good. A transient GM may not move this cached local point. */
         uint64_t local_anchor = 0;
-        if (ptp_clock_engine_remote_to_local(
+        if (ptp_clock_remote_to_local(
                 out->anchor_ptp_ns, ps.filtered_offset_ns, &local_anchor)) {
           bool refreshed = false;
           taskENTER_CRITICAL(&s.state_mux);
@@ -708,11 +707,11 @@ static void refresh_timing_snapshot(timing_snapshot_t *out) {
         /* Only a qualified new GM may take ownership. Rebuild its remote
          * anchor from the exact same cached ESP-local media point. */
         if (ps.valid &&
-            ptp_clock_engine_handover_ready(
+            ptp_clock_handover_ready(
                 out->anchor_local_valid, ps.locked, out->anchor_clock_id,
                 ps.grandmaster_clock_id, ps.mastership_age_ms, stale_age_ms)) {
           uint64_t new_remote_anchor = 0;
-          if (ptp_clock_engine_local_to_remote(
+          if (ptp_clock_local_to_remote(
                   out->anchor_local_ns, ps.filtered_offset_ns,
                   &new_remote_anchor)) {
             bool committed = false;
@@ -4882,7 +4881,7 @@ void audio_receiver_set_anchor_time(uint64_t clock_id, uint64_t ptp_ns,
   ptp_clock_get_snapshot(&ps);
   uint64_t local_ns = 0;
   const bool local_valid = buffered_ptp_qualified(&ps, clock_id) &&
-      ptp_clock_engine_remote_to_local(ptp_ns, ps.filtered_offset_ns, &local_ns) &&
+      ptp_clock_remote_to_local(ptp_ns, ps.filtered_offset_ns, &local_ns) &&
       local_ns != 0;
   const uint64_t local_update_us = local_valid ? (uint64_t)esp_timer_get_time() : 0;
   if (!s_buffered_control.mutex || !s.publish_mutex) return;

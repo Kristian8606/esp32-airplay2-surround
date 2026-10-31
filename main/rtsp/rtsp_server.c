@@ -23,7 +23,6 @@
 #include "rtsp_handlers.h"
 #include "rtsp_message.h"
 
-#include "ptp_clock.h"
 #include "rtsp_events.h"
 #include "airplay_log.h"
 

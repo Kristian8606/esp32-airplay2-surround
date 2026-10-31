@@ -7,7 +7,7 @@
 
 #include "audio_receiver.h"
 #include "amp_control.h"
-#include "ptp_clock.h"
+#include "apple_clock.h"
 #include "settings.h"
 #include "freertos/FreeRTOS.h"
 
@@ -106,7 +106,7 @@ static void rtsp_conn_cleanup(rtsp_conn_t *conn) {
 
   // A probe must not clear the session owner's timing record.
   if (conn->owns_session) {
-    ptp_clock_clear();
+    apple_clock_release();
   }
 
   // Reset encryption state

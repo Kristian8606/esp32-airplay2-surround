@@ -23,7 +23,7 @@
 #include "audio_diag.h"
 #include "amp_control.h"
 #include "hap.h"
-#include "ptp_clock.h"
+#include "apple_clock.h"
 #include "plist.h"
 #include "rtsp_fairplay.h"
 #include "settings.h"
@@ -1089,11 +1089,8 @@ static void handle_setup(int socket, rtsp_conn_t *conn,
 
   bool buffered = (stream_type == AUDIO_STREAM_BUFFERED);
 
-  /* Shairport development rtsp.c:2642-2644 sends T <RTSP client IP>,
-   * then B. NQPTP starts one new timing record at this stream SETUP;
-   * SETPEERS and SETRATEANCHORTIME must not reset it again.
-   * Reference: 8c146e25183a354ae96f91fa069c2e7173f75a71. */
-  ptp_clock_start_timing(!buffered, conn->client_ip);
+  /* Select timing independently of media resets; the same GM keeps its line. */
+  apple_clock_select(conn->client_ip, !buffered);
 
   if (buffered) {
     esp_err_t err = audio_receiver_start_buffered(0);
@@ -1545,10 +1542,10 @@ static void handle_teardown(int socket, rtsp_conn_t *conn,
   /* A stream-level TEARDOWN preserves the control session and its PTP clock.
    * Clearing it here needlessly forces a new PTP STEP/relock before the next
    * buffered stream can produce PCM.  Only a full session boundary owns a
-   * full PTP reset. */
-  /* Client cleanup remains the final reset owner when stop times out. */
+   * release of the clock's media mode. */
+  /* Client cleanup releases session state when a stop times out. */
   if (!has_streams && audio_receiver_is_idle()) {
-    ptp_clock_clear();
+    apple_clock_release();
     audio_receiver_set_stream_type(AUDIO_STREAM_NONE);
     audio_receiver_set_encryption(NULL);
   }
@@ -1661,37 +1658,41 @@ static void handle_setrateanchortime(int socket, rtsp_conn_t *conn,
        * sender's current GM timestamp once into ESP monotonic time. If the new
        * GM is still acquiring, keep the already-running local ALAC map and
        * defer this observation; never inject a raw PTP epoch into audio. */
-      ptp_realtime_snapshot_t ps = {0};
-      ptp_clock_get_realtime_snapshot(&ps);
-      if (ps.realtime_mode) {
+      apple_clock_line_t ps = {0};
+      apple_clock_get(&ps);
+      const int64_t age_ms = ps.ready
+          ? (esp_timer_get_time() * 1000LL - ps.ready_since_ns) / 1000000LL : 0;
+      const uint32_t mastership_age_ms = age_ms <= 0 ? 0U
+          : age_ms > UINT32_MAX ? UINT32_MAX : (uint32_t)age_ms;
+      if (ps.realtime) {
         uint64_t local_ns = 0;
-        if (ptp_clock_realtime_snapshot_to_local(&ps, clock_id, network_time_ns,
+        if (apple_clock_to_local(&ps, clock_id, network_time_ns,
                                               &local_ns)) {
           AP_LOGI(TAG,
                    "SETRATEANCHORTIME RT local raw=%llu local=%llu gm=%016llx age=%lums",
                    (unsigned long long)network_time_ns,
                    (unsigned long long)local_ns,
-                   (unsigned long long)ps.master_clock_id,
-                   (unsigned long)ps.mastership_age_ms);
+                   (unsigned long long)ps.grandmaster_clock_id,
+                   (unsigned long)mastership_age_ms);
           audio_realtime_anchor_result_t anchor_result = {0};
           if (!audio_receiver_set_realtime_anchor_local(
-                  clock_id, ps.gm_change_count, ps.mastership_age_ms,
+                  clock_id, ps.epoch, mastership_age_ms,
                   network_time_ns, local_ns, (uint32_t)rtp_time,
                   &anchor_result)) {
             AP_LOGI(TAG,
                      "SETRATEANCHORTIME RT media rebase deferred clock=%016llx gm=%016llx epoch=%lu age=%lums",
                      (unsigned long long)clock_id,
-                     (unsigned long long)ps.master_clock_id,
-                     (unsigned long)ps.gm_change_count,
-                     (unsigned long)ps.mastership_age_ms);
+                     (unsigned long long)ps.grandmaster_clock_id,
+                     (unsigned long)ps.epoch,
+                     (unsigned long)mastership_age_ms);
           }
         } else {
           AP_LOGI(TAG,
                    "SETRATEANCHORTIME RT deferred clock=%016llx gm=%016llx ready=%d age=%lums",
                    (unsigned long long)clock_id,
-                   (unsigned long long)ps.master_clock_id,
-                   ps.master_ready ? 1 : 0,
-                   (unsigned long)ps.mastership_age_ms);
+                   (unsigned long long)ps.grandmaster_clock_id,
+                   ps.ready ? 1 : 0,
+                   (unsigned long)mastership_age_ms);
         }
       } else {
         audio_receiver_set_anchor_time(clock_id, network_time_ns,

@@ -17,7 +17,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "gw_speakers.h"
-#include "ptp_clock.h"
+#include "apple_clock.h"
 #include "socket_utils.h"
 
 static const char *TAG = "gw_relay";
@@ -170,19 +170,20 @@ static void log_window(bool force) {
   const int64_t span_us = now_us - st->win_start_us;
   if (!force && span_us < (int64_t)GW_RELAY_STATS_MS * 1000LL) return;
   if (st->win_packets > 0U || force) {
-    ptp_clock_snapshot_t ps = {0};
-    ptp_clock_get_snapshot(&ps);
+    apple_clock_line_t ps = {0};
+    apple_clock_get(&ps);
     const double kbit_s =
         span_us > 0 ? (double)st->win_bytes * 8000.0 / (double)span_us : 0.0;
     ESP_LOGI(TAG,
              "RELAY rx %" PRIu32 " pkts %" PRIu32 " B (%.0f kbit/s) seq %" PRIu32
              "..%" PRIu32 " rtp %" PRIu32 "..%" PRIu32 " | total %" PRIu64
-             " pkts %" PRIu64 " KiB | paced %" PRIu32 " ms | PTP valid=%d "
-             "locked=%d gm=%016" PRIx64 " offset=%" PRId64 " ns",
+             " pkts %" PRIu64 " KiB | paced %" PRIu32 " ms | apple_clock ready=%d "
+             "gm=%016" PRIx64 " offset=%" PRId64 " ns",
              st->win_packets, st->win_bytes, kbit_s, st->win_first_seq,
              st->win_last_seq, st->win_first_rtp, st->win_last_rtp,
              st->total_packets, st->total_bytes / 1024U, st->win_paced_ms,
-             ps.valid, ps.locked, ps.grandmaster_clock_id, ps.filtered_offset_ns);
+             ps.ready, ps.grandmaster_clock_id,
+             ps.ready ? apple_clock_at(&ps, now_us * 1000LL) - now_us * 1000LL : 0LL);
     log_targets();
   }
   st->win_bytes = 0;
