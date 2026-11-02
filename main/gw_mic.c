@@ -126,11 +126,17 @@ esp_err_t gw_mic_start(uint32_t max_seconds) {
     if (!s_samples) return ESP_ERR_NO_MEM;
   }
   if (!s_stamp_count) {
-    s_stamp_count = heap_caps_malloc(MIC_MAX_STAMPS * sizeof(uint32_t),
-                                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    s_stamp_us = heap_caps_malloc(MIC_MAX_STAMPS * sizeof(int64_t),
-                                  MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    if (!s_stamp_count || !s_stamp_us) return ESP_ERR_NO_MEM;
+    uint32_t *count = heap_caps_malloc(MIC_MAX_STAMPS * sizeof(uint32_t),
+                                       MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    int64_t *us = heap_caps_malloc(MIC_MAX_STAMPS * sizeof(int64_t),
+                                   MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!count || !us) {
+      heap_caps_free(count);
+      heap_caps_free(us);
+      return ESP_ERR_NO_MEM;
+    }
+    s_stamp_count = count;
+    s_stamp_us = us;
   }
   s_count = 0;
   s_stamps = 0;

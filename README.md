@@ -114,8 +114,10 @@ and shares it with the speakers:
 2. **It forwards, it does not decode.** Every instruction from the Apple TV
    (format, key, start, flush, pause, volume, timing) is passed to the
    speakers over a small control protocol, and every encrypted audio packet
-   is copied byte for byte to each speaker. The slowest speaker paces the
-   stream through TCP, so the Gateway needs no audio buffer of its own.
+   is copied byte for byte to each speaker. The Gateway reads the stream into
+   a 4 MiB buffer and sends each speaker from it, so at a track change the
+   old track is dropped from the buffer at once instead of being sent only
+   to be thrown away.
 3. **Every speaker decodes only its own channel.** One ESP32-S3 cannot decode
    all eight channels in real time, and it does not need to. A speaker is
    not an AirPlay receiver: it finds the Gateway by mDNS, decrypts the stream
@@ -688,10 +690,17 @@ uses its local representation to decide when a particular sample must play.
 
 **Two-way measurement on the Gateway.** `apple_clock` owns UDP **319/320**
 and runs the transport and clock core in one task. RTSP SETUP selects the
-sender's IP address; Announce supplies its source and grandmaster identities.
-Before SETUP the first Announce can prepare the clock. Once a peer is
-selected, messages from other IP addresses cannot replace it. The line is
-never published before an Announce has identified the grandmaster.
+sender's IP address, and the sender's Announce names the grandmaster. Only
+the grandmaster gives the time: the clock is measured at the device that
+announces itself as that grandmaster (its port identity is the grandmaster
+identity, seen within 5 s), and there is no time until one does. When the
+sender is its own master, that is the sender. A sender that only relays a
+HomePod master would add its
+own error: an iPhone two steps from the master gave a line 5 ms off for 12 s
+and 7 steps in ten minutes. Before SETUP the first Announce can prepare the
+clock. Only the grandmaster the sender names is used; other HomePods cannot
+replace it. The line is never published before an Announce has identified
+the grandmaster.
 
 Each complete exchange provides four timestamps:
 
@@ -721,44 +730,53 @@ requested interval, with a minimum interval of **125 ms** (at most 8/s).
 There is one request in flight and a **1 s** timeout. Other HomePods are not
 polled as extra peers.
 
-**Fast phase acquisition, gradual rate learning.** The first complete
-exchange with **RTT <= 3 ms** seeds phase immediately on the remembered
-clock rate, or zero rate after a cold boot. Audio does not wait for three
-accepted seconds or for the first second's bucket to close. This initial
-exchange enters the fitted history only once, when its bucket closes.
-The same published line then learns the rate and corrects phase smoothly.
-A path with no exchange under 3 ms retains multi-point qualification: at
-least three accepted points and four completed exchange buckets.
+**One start rule, gradual rate learning.** The same rules hold at a cold
+boot, a stream after a pause, a new master or a step. The line is ready
+whenever the fit holds a second whose best exchange has **RTT <= 10 ms**:
+about one second after the first answer, from the best of the 5-8
+exchanges of that second, on the remembered clock rate or zero rate after a
+cold boot. The same published line then learns the rate and corrects phase
+smoothly. Not lower than 10 ms: a stream's first ~30 s can keep the best
+of each second near 4.6 ms, and in a host simulation of a cold boot
+straight into that a 4 ms limit left no time, so no sound, for 30-38 s.
 
 The rate memory holds four grandmaster identities in RAM. TEARDOWN leaves
 the selected clock running between tracks. A ready line can therefore
-already exist at the next SETUP. The first 3 ms exchange alone can have up
-to **+/-1.5 ms** path-asymmetry error under the four-timestamp model; its rate
-is still being learned. Fast readiness is not a promise of immediate
-sub-0.1 ms accuracy or zero time to audible output.
+already exist at the next SETUP. A second with RTT X can be up to X/2 off
+from path asymmetry; in the simulation the start was 0.1-0.6 ms off (once
+2.2 ms), the same for every speaker, and taken back by the calm correction.
+Fast readiness is not a promise of immediate sub-0.1 ms accuracy or zero
+time to audible output.
 
 **Filtering and a continuous line.** Each roughly one-second bucket keeps
-its exchange with the lowest RTT. Its point enters the fit only when RTT
-is within **1 ms of the minimum over the last 60 s**; initial multi-point
-acquisition also rejects points over 10 ms RTT. Negative RTT and RTT over
-1 s are invalid. The accepted points form a least-squares line over up to
-**10 minutes**, with the rate initially pulled towards the remembered prior.
+its exchange with the lowest RTT. Every second enters a weighted
+least-squares line over up to **10 minutes**: its weight falls with how far
+its RTT is above the **shortest RTT among the seconds in the line** (a
+second at it counts fully, one several ms above it hardly at all), and a
+second more than 40 ms above it is not used. While the Gateway relays audio
+most seconds are a few ms above the minimum; a hard limit of minimum + 1 ms
+took 0-4 of 10 seconds there. The minimum is taken from the line, not from
+the last 60 s: on the board a pause before a stream let the good seconds
+age out of 60 s, the stream's first 4.6 ms seconds counted fully and the
+line swung by 1.8 ms. Negative RTT and RTT over 1 s are invalid. The rate is initially pulled towards the remembered
+prior. Seconds are closed and fitted after each received batch, never
+between receiving one packet and time-stamping the next.
 
 The published line follows the estimated rate and removes phase error with
 a **20 s time constant**, limiting the phase correction to **50 ppm** and
 rate changes to **20 ppm/s**. Ordinary updates continue the previous line
 at the update instant and change its future rate, so they do not step time.
-One accepted point more than 2 ms from the estimate is ignored. Five
-successive accepted points on the same side, more than 2 ms away and
-spanning at least 4 s, confirm a clock step and start a new epoch. A different
+If the estimate and the published line ever differ by more than **10 ms**,
+the line starts again from the estimate as a new epoch.
+A second more than 2 ms (plus half its RTT excess) from the estimate is
+ignored. Five successive such seconds close to the minimum RTT, on the same
+side and spanning at least 4 s, confirm a clock step and start a new epoch. A different
 grandmaster also starts a new acquisition; a relay change carrying the same
 grandmaster can preserve the line.
 
-Poor-RTT exchanges keep an established clock alive without updating its
-fitted points. After **30 s without a valid two-way exchange**, the Gateway
+After **30 s without a valid two-way exchange**, the Gateway
 withdraws time. Reacquisition retains the learned rate and remeasures phase
-with a fresh RTT floor. There is **no one-way fallback**. A continuing line
-without fresh good points depends on how stable its learned rate remains.
+with a fresh RTT floor. There is **no one-way fallback**.
 
 **Distributing the same line over TSF.**
 
@@ -782,8 +800,7 @@ without fresh good points depends on how stable its learned rate remains.
    `SERVO LINE: line ... ppm, sync ... ms -> I2S ... ppm`.
 
 The Gateway has one clock implementation, in
-`common/network/apple_clock.c` and `apple_clock_core.c`; the previous PTP
-estimator, `gw_timeline` and PTP experiment/probe code are removed. A speaker's
+`common/network/apple_clock.c` and `apple_clock_core.c`. A speaker's
 `common/network/ptp_clock.c` is only the external TIME state and conversion
 interface for its audio engine; it has no PTP sockets or passive estimator.
 The optional oscilloscope pulse on the Gateway reads the same published
@@ -810,7 +827,7 @@ separate from Apple clock acquisition.
 
 | Stream | How the Gateway passes it on |
 |---|---|
-| **Buffered** (type 103: music, films) | one TCP connection per speaker, a copy of the Apple TV's. TCP backpressure makes the slowest speaker pace the Apple TV, so nobody falls behind and the Gateway keeps no buffer. Speakers keep up to ~90 s of compressed audio. The fill is paced at twice real time after a 2 s start: sent at full speed to every speaker at once, it kept the Wi-Fi so busy that the Apple TV's clock packets arrived late. |
+| **Buffered** (type 103: music, films) | one TCP connection per speaker, a copy of the sender's. The Gateway reads the sender whenever its 4 MiB PSRAM buffer has room and sends each speaker from it; when the buffer is full (a speaker keeps old audio longest), the sender waits. Speakers keep up to ~90 s of compressed audio. Sending is paced at twice real time after a 2 s start: at full speed to every speaker at once it kept the Wi-Fi so busy that the sender's clock packets arrived late. At an immediate FLUSH (an iPhone's track change) each speaker's stream skips to the new track at its next frame boundary; read and sent at paced speed only to be dropped, the old track took 2-4 s per change. |
 | **Realtime** (type 96: screen mirroring, system audio) | every UDP audio and sync packet is copied to each speaker's ports. A speaker that misses a packet asks the Gateway; several requests for the same packet reach the Apple TV once. |
 
 A speaker that connects in the middle of a session gets the session's
@@ -849,7 +866,7 @@ are listed in
 | Gateway proxy | `main/gw_proxy.c` | implements the audio engine API on the Gateway and forwards each call (`FWD …` in the log) |
 | Speaker registry | `main/gw_speakers.c` | control link on port 7100 (`_apsurround._tcp`), late joins, settings, status, TIME messages, which speaker updates next |
 | Speaker firmware | `main/gw_fw.c`, `speaker/main/spk_update.c` | the image in the Gateway's `storage` partition (`gw_fw`); download, check and install on the speaker (`spk_update`) |
-| Buffered relay | `main/gw_relay.c` | copies the TCP audio stream to every speaker, paced by the slowest (`RELAY …`) |
+| Buffered relay | `main/gw_relay.c` | reads the TCP audio stream into a buffer and copies it to every speaker; drops the old track at a FLUSH (`RELAY …`) |
 | Realtime relay | `main/gw_rt_relay.c` | copies UDP audio and sync packets, passes retransmit requests on (`RT RELAY …`) |
 | Apple clock | `common/network/apple_clock.c`, `common/network/apple_clock_core.c` | Gateway-only two-way PTP transport, RTT filtering, rate estimation and continuous published line (`apple_clock …`) |
 | Time distribution | `common/surround/tsf_fit.c`, `main/gw_speakers.c`, `speaker/main/spk_time.c` | TSF fits on both sides; maps the same Apple line into TIME and each speaker's local clock |
@@ -930,12 +947,14 @@ Every board streams its log to `http://<board-ip>/logs`. Useful lines:
 | Line | Where | Meaning |
 |---|---|---|
 | `FWD set_format AAC 48000 Hz …` | Gateway | an Apple TV instruction forwarded to the speakers |
-| `RELAY rx … \| paced … ms \| … RELAY tx Front:live …` | Gateway | audio in from the Apple TV and out to each speaker; how long the fill was held back |
+| `RELAY rx … \| buffered … KiB, flushed … pkts, paced … ms \| … RELAY tx Front:live …` | Gateway | audio in from the sender and out to each speaker; how much waits in the buffer, frames dropped by a FLUSH, how long sending was held back |
 | `RT RELAY data … pkts -> N speakers \| NACK …` | Gateway | realtime audio and retransmit requests |
 | `control connection from …` / `speaker … joins at this FLUSH` | Gateway | a speaker connected / started playing |
 | `two-way clock owns UDP 319/320 ...` | Gateway | the standalone Apple clock owns the PTP transport |
-| `line ready epoch 1: 1 exchanges, 0 fit points ...` | Gateway | fast acquisition from a two-way exchange, before the first fit bucket closes |
-| `apple_clock: ready epoch ... floor RTT ... seconds +N -M ... Delay_Req ... answered ...` | Gateway | clock line, RTT floor, accepted/rejected seconds and exchange counters |
+| `master ... announces itself from <ip>` | Gateway | a device that is its own PTP master talks to the Gateway |
+| `master ...: new clock ..., measured at the master <ip> (the sender itself / the sender relays it, N steps)` | Gateway | which device gives the time; `waiting for it to announce itself` until the master talks to the Gateway |
+| `line ready epoch 1: N exchanges, 1 fit points ...` | Gateway | the line started from the first second whose best exchange is fast |
+| `apple_clock: ready epoch ... floor RTT ... seconds +N -M ... steps ... jumps ... Delay_Req ... answered ...` | Gateway | clock line, RTT floor, used/unused seconds, steps of Apple's clock, line restarts, exchange counters |
 | `TIME apple_clock ready=1 epoch=... rate=... (TSF)` | Gateway | the published Apple line mapped onto TSF and sent to the speakers |
 | `TIME tsf fit 64 samples ... rms ... locked=1` | speaker | local TSF fit quality and external clock state |
 | `PLAYOUT START ... first audio N ms after anchor` | speaker | measured startup wait; the status task may print the event later |

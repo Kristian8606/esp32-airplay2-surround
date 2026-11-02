@@ -3042,7 +3042,7 @@ static esp_err_t roomcal_play(cal_chirp_kind_t kind, float gain, int bursts,
       roomcal_take(&d, rate, period_blocks, bursts, emit_us, n_emit);
     }
   }
-  (void)playout_flush_checked("room-cal-end");
+  if (!playout_flush_checked("room-cal-end")) return ESP_FAIL;
   return *n_emit == bursts ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 

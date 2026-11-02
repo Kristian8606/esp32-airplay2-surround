@@ -271,6 +271,8 @@ void audio_receiver_set_immediate_flush(uint32_t until_seq, uint32_t until_ts) {
   const surround_immediate_flush_t m = {.until_seq = until_seq,
                                         .until_ts = until_ts};
   gw_speakers_send(SURROUND_MSG_IMMEDIATE_FLUSH, &m, sizeof(m));
+  /* The old track waiting in the Gateway's buffer is not sent at all. */
+  gw_relay_flush(until_seq);
 }
 
 void audio_receiver_pause(void) {

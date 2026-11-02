@@ -72,6 +72,9 @@ static bool send_all(int fd, const uint8_t *data, size_t len) {
     const int n = send(fd, data, len, 0);
     if (n <= 0) {
       if (n < 0 && errno == EINTR) continue;
+      /* A timeout may follow a partial frame. Callers must not append a new
+       * frame to that prefix: end this link and let its owner reconnect. */
+      shutdown(fd, SHUT_RDWR);
       return false;
     }
     data += n;

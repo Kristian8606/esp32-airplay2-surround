@@ -34,6 +34,7 @@ static const char *TAG = "rtsp_server";
 
 #define CLIENT_STACK_SIZE 10240
 #define SERVER_STACK_SIZE 4096
+#define RTSP_STOP_SEND_TIMEOUT_MS 200
 
 /* RTSP control must run immediately after lwIP has delivered socket data.
  * ESP-IDF keeps the TCP/IP task above application code (prio 18 on ESP32-S3),
@@ -71,12 +72,24 @@ static portMUX_TYPE s_owner_lock = portMUX_INITIALIZER_UNLOCKED;
 static void signal_client_stop(int slot_idx);
 static bool wait_client_stopped(int slot_idx, TickType_t timeout_ticks);
 
+/* Only stopping sockets get this timeout. Live RTSP response sends retain
+ * their existing behaviour; lwIP FIN-allocation retries must not hold the
+ * lifecycle mutex for its default 20 seconds. Retry polls can overshoot. */
+static void bound_socket_stop(int fd) {
+  const struct timeval tv = {
+      .tv_sec = 0, .tv_usec = RTSP_STOP_SEND_TIMEOUT_MS * 1000};
+  (void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+}
+
 static void detach_client_socket(client_slot_t *slot) {
   xSemaphoreTake(lifecycle_mutex, portMAX_DELAY);
   int socket = slot->socket;
   slot->socket = -1;
   xSemaphoreGive(lifecycle_mutex);
-  if (socket >= 0) close(socket);
+  if (socket >= 0) {
+    bound_socket_stop(socket);
+    close(socket);
+  }
 }
 
 static void detach_client_conn(client_slot_t *slot) {
@@ -340,7 +353,10 @@ static void signal_client_stop(int slot_idx) {
 
   // Serialize shutdown with descriptor detach; only the owner closes.
   xSemaphoreTake(lifecycle_mutex, portMAX_DELAY);
-  if (slot->socket >= 0) shutdown(slot->socket, SHUT_RDWR);
+  if (slot->socket >= 0) {
+    bound_socket_stop(slot->socket);
+    shutdown(slot->socket, SHUT_RDWR);
+  }
   xSemaphoreGive(lifecycle_mutex);
 }
 

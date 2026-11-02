@@ -11,22 +11,26 @@
  * wrong only by half the difference of the two directions, which is small
  * when the round trip is close to the shortest one.
  *
- * A first exchange with RTT <= 3 ms seeds the published phase immediately,
- * on the prior rate; the same line then learns from filtered seconds.
- * Each second keeps its shortest exchange; only seconds within 1 ms of
- * the last minute's RTT floor enter a ten-minute least-squares fit. Its
- * slope starts from a remembered prior. The published line follows with
- * bounded, smooth phase correction. Five good seconds consistently far
- * from the estimate establish a clock step and a new epoch. Valid but
- * poor-RTT exchanges keep the line alive without changing its estimate;
- * after 30 seconds without any valid exchange it expires.
- * Single-threaded: one caller. */
+ * The same three rules hold at a cold boot, a stream after a pause, a new
+ * master or a step:
+ *  - each second keeps its shortest exchange and enters a ten-minute
+ *    weighted least-squares fit, weighted by how far its round trip is
+ *    above the shortest in the fit (the floor); the slope starts from a
+ *    remembered prior;
+ *  - the line is ready whenever the fit holds a second with a round trip
+ *    of 10 ms or less;
+ *  - the published line follows the estimate with bounded, smooth phase
+ *    correction, and starts again as a new epoch if they differ by more
+ *    than 10 ms.
+ * Five good seconds consistently far from the estimate are a step of
+ * Apple's clock: the fit starts again from them. After 30 seconds without
+ * a valid exchange the fit is cleared. Seconds are closed and fitted in
+ * acc_update only. Single-threaded: one caller. */
 
 #include <stdbool.h>
 #include <stdint.h>
 
 #define ACC_POINTS 640U /* seconds: ten minutes and some */
-#define ACC_FLOOR_SECONDS 64U
 #define ACC_FAR_RUN_MAX 8U
 
 typedef struct {
@@ -45,8 +49,8 @@ typedef struct {
   /* Diagnostics. */
   int32_t est_rate_ppb;
   int64_t est_minus_pub_ns; /* the estimate minus the published line */
-  int32_t floor_rtt_ns;
-  uint32_t samples; /* quality-checked exchanges in this acquisition */
+  int32_t floor_rtt_ns;   /* shortest round trip among the seconds in the fit */
+  uint32_t samples; /* exchanges within 1 ms of the floor, this acquisition */
   uint32_t points;
   uint32_t span_s;
 } acc_line_t;
@@ -55,9 +59,10 @@ typedef struct {
   uint32_t exchanges;
   uint32_t bad_exchanges; /* round trip negative or over a second */
   uint32_t seconds;       /* seconds that gave a point */
-  uint32_t poor;          /* seconds too far above the floor to use */
+  uint32_t poor;          /* seconds over 40 ms above the floor, not used */
   uint32_t far;           /* seconds far off the line, not used */
-  uint32_t steps;
+  uint32_t steps;         /* steps of Apple's clock */
+  uint32_t jumps;         /* the line restarted 10 ms off the estimate */
 } acc_stats_t;
 
 typedef struct {
@@ -68,15 +73,10 @@ typedef struct {
   int64_t bucket_start_ns;
   acc_point_t best;
 
-  /* Best round trip of each recent second, for the floor. */
-  int64_t sec_t[ACC_FLOOR_SECONDS];
-  int32_t sec_rtt[ACC_FLOOR_SECONDS];
-  uint32_t sec_n;
-  int32_t floor_ns;
-
-  /* The seconds, oldest first, in a ring. */
+  /* The seconds, oldest first, in a ring, and their shortest round trip. */
   acc_point_t pts[ACC_POINTS];
   uint32_t head, count;
+  int32_t floor_ns;
   int64_t last_input_ns;
   uint32_t samples;
 
@@ -111,12 +111,8 @@ void acc_restart(acc_t *c, int32_t prior_rate_ppb, int32_t prior_sigma_ppb);
 
 void acc_add_exchange(acc_t *c, int64_t t1, int64_t t2, int64_t t3, int64_t t4);
 
-/* Close a finished second and move the published line to now. */
+/* Close a finished second (and fit it) and move the published line to now:
+ * call it after each batch of received packets. */
 void acc_update(acc_t *c, int64_t now_ns);
 
 void acc_get_line(const acc_t *c, acc_line_t *out);
-
-/* Apple's time on a line at a local instant, and the local instant of an
- * Apple time. */
-int64_t acc_line_apple_at(const acc_line_t *l, int64_t local_ns);
-int64_t acc_line_local_at(const acc_line_t *l, int64_t apple_ns);

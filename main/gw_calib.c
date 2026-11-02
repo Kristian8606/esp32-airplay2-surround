@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -63,7 +64,7 @@ static const int8_t k_levels_db[] = {-30, -24, -18, -12};
 static SemaphoreHandle_t s_lock;
 static SemaphoreHandle_t s_result_sem;
 static gw_cal_status_t s_status;
-static bool s_running;
+static _Atomic bool s_running;
 /* The CAL_RESULT being waited for (gw_calib_on_result). */
 static uint8_t s_wait_mac[6];
 static uint8_t s_wait_seq;
@@ -85,12 +86,17 @@ static void set_message(gw_cal_state_t state, const char *fmt, ...) {
 }
 
 void gw_calib_on_result(const uint8_t mac[6], const surround_cal_result_t *r) {
-  if (!s_lock || !s_waiting || r->seq != s_wait_seq ||
-      memcmp(mac, s_wait_mac, sizeof(s_wait_mac)) != 0)
-    return;
-  s_result = *r;
-  s_waiting = false;
-  xSemaphoreGive(s_result_sem);
+  if (!s_lock) return;
+  /* The speakers task holds its registry lock here. Never call into that
+   * registry while holding s_lock in the calibration task. */
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  if (s_waiting && r->seq == s_wait_seq &&
+      memcmp(mac, s_wait_mac, sizeof(s_wait_mac)) == 0) {
+    s_result = *r;
+    s_waiting = false;
+    xSemaphoreGive(s_result_sem);
+  }
+  xSemaphoreGive(s_lock);
 }
 
 static float to_db(double v) { return v > 1e-12 ? (float)(20.0 * log10(v)) : -240.0f; }
@@ -274,18 +280,26 @@ static bool request_chirps(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
                                  .kind = (uint8_t)kind,
                                  .level_db = level_db,
                                  .bursts = CAL_CHIRP_BURSTS};
+  xSemaphoreTake(s_lock, portMAX_DELAY);
   (void)xSemaphoreTake(s_result_sem, 0);
   memcpy(s_wait_mac, o->mac, sizeof(s_wait_mac));
   s_wait_seq = s_seq;
   s_waiting = true;
+  xSemaphoreGive(s_lock);
   const esp_err_t send_err = gw_speakers_cal_play(o->mac, &m);
   const bool answered =
       send_err == ESP_OK &&
       xSemaphoreTake(s_result_sem, pdMS_TO_TICKS(CAL_RESULT_WAIT_MS)) == pdTRUE;
+  xSemaphoreTake(s_lock, portMAX_DELAY);
   s_waiting = false;
+  xSemaphoreGive(s_lock);
   if (!answered) {
     snprintf(o->note, sizeof(o->note), "%s",
              send_err == ESP_ERR_NOT_FOUND ? "Not connected" : "No answer from the speaker");
+    return false;
+  }
+  if (s_result.n > SURROUND_CAL_BURSTS_MAX) {
+    snprintf(o->note, sizeof(o->note), "Invalid chirp count from the speaker");
     return false;
   }
   if (s_result.err != ESP_OK || s_result.n == 0U) {
@@ -305,7 +319,8 @@ static void play_only(gw_cal_speaker_t *o, cal_chirp_kind_t kind) {
 }
 
 static bool measure_once(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
-                         int8_t level_db) {
+                         int8_t level_db, bool *retry_louder) {
+  *retry_louder = false;
   if (gw_mic_start(CAL_RECORD_MAX_S) != ESP_OK) {
     snprintf(o->note, sizeof(o->note), "The microphone could not start");
     return false;
@@ -331,6 +346,9 @@ static bool measure_once(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
       match[SURROUND_CAL_BURSTS_MAX];
   const uint32_t level_len =
       len + (uint32_t)((low ? CAL_LEVEL_TAIL_LOW_S : CAL_LEVEL_TAIL_WIDE_S) * rate);
+  /* Raising the level only helps an otherwise usable recording. A missing
+   * playback reply or an allocation failure must not cost four timeouts. */
+  *retry_louder = ref && seg && x && n > win * dec;
   int hits = 0, inverted = 0;
   for (int k = 0; ref && seg && x && k < s_result.n; ++k) {
     int64_t emit_local = 0;
@@ -363,8 +381,11 @@ static bool measure_once(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
   }
   heap_caps_free(seg);
   heap_caps_free(ref);
-  if (hits == 0) {
-    snprintf(o->note, sizeof(o->note), "Not found in the recording");
+  /* One hit has zero spread but cannot demonstrate repeatability. Require
+   * a majority of the chirps requested, as in the wired latency test. */
+  if (hits <= CAL_CHIRP_BURSTS / 2) {
+    snprintf(o->note, sizeof(o->note), "Too few chirps in the recording (%d/%d)",
+             hits, CAL_CHIRP_BURSTS);
     return false;
   }
   double tmin = tof[0], tmax = tof[0], lmin = lev[0], lmax = lev[0];
@@ -414,7 +435,8 @@ static void suggest(void) {
     const gw_cal_speaker_t *o = &s_status.spk[i];
     if (!o->measured || o->low) continue;
     if (o->tof_ms > tof_max) tof_max = o->tof_ms;
-    if (o->level_db < level_min) level_min = o->level_db;
+    if (o->level_spread_db <= CAL_MAX_LEVEL_SPREAD_DB && o->level_db < level_min)
+      level_min = o->level_db;
   }
   if (tof_max < -1e8f) return;
   for (int i = 0; i < s_status.count; ++i) {
@@ -427,7 +449,7 @@ static void suggest(void) {
     o->has_suggestion = true;
     if (o->low) {
       snprintf(o->note, sizeof(o->note), "Subwoofer: level and delay by ear");
-    } else {
+    } else if (o->level_spread_db <= CAL_MAX_LEVEL_SPREAD_DB && level_min < 1e8f) {
       float t = level_min - o->level_db;
       if (t < SURROUND_TRIM_MIN_DB10 / 10.0f) t = SURROUND_TRIM_MIN_DB10 / 10.0f;
       o->trim_db = roundf(t * 2.0f) / 2.0f;
@@ -494,7 +516,9 @@ static void run_speakers(bool mic_ok, const char *mic_why) {
       play_only(&o, kind);
     } else {
       for (size_t l = 0; l < sizeof(k_levels_db); ++l) {
-        if (measure_once(&o, kind, k_levels_db[l])) break;
+        bool retry_louder = false;
+        if (measure_once(&o, kind, k_levels_db[l], &retry_louder) || !retry_louder)
+          break;
         if (!audio_receiver_is_idle()) break; /* a stream started */
       }
     }
@@ -535,24 +559,33 @@ static void calib_task(void *arg) {
     } else {
       set_message(GW_CAL_FAILED, "%s", why);
     }
-  } else if (!audio_receiver_is_idle() && !(stopped_airplay = stop_sender())) {
-    /* 2. The speakers only chirp between streams. */
-    set_message(GW_CAL_FAILED, "The AirPlay sender did not let go; try again");
   } else {
-    /* 3. The noise of the quiet room, then the speakers. Without a
-     *    microphone they still play, so the procedure can be heard. */
-    if (mic_ok) {
-      set_message(GW_CAL_BUSY, "Listening to the room");
-      mic_ok = measure_noise(&rms, &peak, &why);
+    /* Reserve the listener even without an active stream: a new sender must
+     * not enter during the quiet-room recording or the chirps. */
+    const bool had_sender = !audio_receiver_is_idle();
+    const bool quiet = stop_sender();
+    stopped_airplay = had_sender;
+    if (!quiet) {
+      set_message(GW_CAL_FAILED, "The AirPlay sender did not let go; try again");
+    } else {
+      /* 3. The noise of the quiet room, then the speakers. Without a
+       *    microphone they still play, so the procedure can be heard. */
+      if (mic_ok) {
+        set_message(GW_CAL_BUSY, "Listening to the room");
+        mic_ok = measure_noise(&rms, &peak, &why);
+      }
+      store_noise(mic_ok, rms, peak);
+      run_speakers(mic_ok, why);
     }
-    store_noise(mic_ok, rms, peak);
-    run_speakers(mic_ok, why);
   }
-  if (stopped_airplay || !rtsp_server_is_idle()) {
+  if (!mic_test) {
     /* AirPlay again; also after a stop that timed out. */
     if (rtsp_server_is_idle()) {
       const esp_err_t err = rtsp_server_start();
-      if (err != ESP_OK) ESP_LOGE(TAG, "AirPlay restart failed: %s", esp_err_to_name(err));
+      if (err != ESP_OK) {
+        ESP_LOGE(TAG, "AirPlay restart failed: %s", esp_err_to_name(err));
+        set_message(GW_CAL_FAILED, "AirPlay could not restart: %s", esp_err_to_name(err));
+      }
     }
   }
   xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -563,9 +596,9 @@ static void calib_task(void *arg) {
 }
 
 static bool init_once(void) {
-  if (s_lock) return true;
-  s_lock = xSemaphoreCreateMutex();
-  s_result_sem = xSemaphoreCreateBinary();
+  /* Initialised by the HTTP task; retry either allocation after low memory. */
+  if (!s_lock) s_lock = xSemaphoreCreateMutex();
+  if (!s_result_sem) s_result_sem = xSemaphoreCreateBinary();
   return s_lock && s_result_sem;
 }
 
@@ -599,7 +632,7 @@ esp_err_t gw_calib_start(bool mic_test_only) {
 #endif
 }
 
-bool gw_calib_running(void) { return __atomic_load_n(&s_running, __ATOMIC_RELAXED); }
+bool gw_calib_running(void) { return atomic_load_explicit(&s_running, memory_order_relaxed); }
 
 void gw_calib_get(gw_cal_status_t *out) {
   if (!init_once()) {
@@ -608,6 +641,8 @@ void gw_calib_get(gw_cal_status_t *out) {
   }
   xSemaphoreTake(s_lock, portMAX_DELAY);
   *out = s_status;
+  /* Completion includes restoring AirPlay, not just the last DSP result. */
+  if (s_running) out->state = GW_CAL_BUSY;
   xSemaphoreGive(s_lock);
 #if defined(CONFIG_AIRPLAY_SURROUND_CAL_MIC) && CONFIG_AIRPLAY_SURROUND_CAL_MIC
   out->mic_built = true;

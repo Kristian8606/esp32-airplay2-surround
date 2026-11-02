@@ -3,6 +3,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
@@ -29,13 +30,28 @@ typedef struct { uint64_t id; int32_t ppb; } rate_mem_t;
 static rate_mem_t s_mem[RATE_MEMORY];
 static uint32_t s_mem_next;
 
+/* Devices that announce themselves as the master (port identity = GM). */
+#define MASTERS 8U
+#define MASTER_FRESH_NS (5LL * NS_PER_S)
+typedef struct {
+  uint32_t ip;
+  uint64_t gm;
+  uint16_t port;
+  uint8_t sdo, domain;
+  int64_t seen_ns;
+} master_t;
+static master_t s_masters[MASTERS];
+static uint32_t s_masters_next;
+
 /* Only the transport task writes the core and protocol state. */
 static struct {
   int event_fd, general_fd;
   acc_t *core;
   uint64_t clock_id, source, gm;
-  uint16_t source_port;
-  uint32_t peer, generation;
+  uint16_t source_port, sender_steps;
+  /* The sender names the master; peer is the master itself, 0 until it
+   * announces itself to us. */
+  uint32_t sender, peer, generation;
   bool realtime, announced, sync_waiting, outstanding;
   uint8_t sdo, domain;
   uint16_t sync_seq, req_seq;
@@ -79,14 +95,56 @@ static void remember(void) {
   if (s_mem[k].id != s.gm) s_mem_next++;
   s_mem[k] = (rate_mem_t){s.gm, l.est_rate_ppb};
 }
-static void restart(uint64_t gm) {
-  remember();
+#define IP4(ip) ((const uint8_t *)&(ip))[0], ((const uint8_t *)&(ip))[1], \
+                ((const uint8_t *)&(ip))[2], ((const uint8_t *)&(ip))[3]
+
+/* A new master or measured device: the fit starts again from the rate
+ * remembered for the master (remember() the old fit first). */
+static void restart(void) {
   int32_t ppb = 0, sigma = 30000;
   for (uint32_t i = 0; i < RATE_MEMORY; ++i)
-    if (gm && s_mem[i].id == gm) { ppb = s_mem[i].ppb; sigma = 2000; break; }
+    if (s.gm && s_mem[i].id == s.gm) { ppb = s_mem[i].ppb; sigma = 2000; break; }
   acc_restart(s.core, ppb, sigma);
-  ESP_LOGI(TAG, "master %016llx: new clock, initial rate %+.3f ppm",
-           (unsigned long long)gm, ppb / 1000.0);
+  if (!s.peer)
+    ESP_LOGI(TAG, "master %016llx: new clock, initial rate %+.3f ppm, waiting "
+             "for it to announce itself", (unsigned long long)s.gm, ppb / 1000.0);
+  else if (s.peer != s.sender)
+    ESP_LOGI(TAG, "master %016llx: new clock, initial rate %+.3f ppm, measured "
+             "at the master %u.%u.%u.%u (the sender relays it, %u steps)",
+             (unsigned long long)s.gm, ppb / 1000.0, IP4(s.peer),
+             (unsigned)s.sender_steps);
+  else
+    ESP_LOGI(TAG, "master %016llx: new clock, initial rate %+.3f ppm, measured "
+             "at the master %u.%u.%u.%u (the sender itself)",
+             (unsigned long long)s.gm, ppb / 1000.0, IP4(s.peer));
+}
+
+static master_t *master_of(uint64_t gm, int64_t now) {
+  for (uint32_t i = 0; i < MASTERS; ++i)
+    if (s_masters[i].gm == gm && now - s_masters[i].seen_ns < MASTER_FRESH_NS)
+      return &s_masters[i];
+  return NULL;
+}
+
+/* Only the master gives the time: measured at the device that announces
+ * itself as the master the sender names. A sender that relays it adds its
+ * own error: an iPhone two steps from a HomePod master gave a line 5 ms off
+ * for 12 s and 7 steps in ten minutes on the board (v4.5.38); the iPhone as
+ * its own master, 0 steps. True when the device changed. */
+static bool choose_peer(int64_t now) {
+  const master_t *m = master_of(s.gm, now);
+  const uint32_t want = m ? m->ip : 0;
+  if (want == s.peer) return false;
+  s.peer = want;
+  s.sync_waiting = s.outstanding = false;
+  s.next_req = 0;
+  s.period = REQ_MIN_NS;
+  s.announced = m != NULL;
+  if (m) {
+    s.source = s.gm; s.source_port = m->port;
+    s.sdo = m->sdo; s.domain = m->domain;
+  }
+  return true;
 }
 
 void apple_clock_select(uint32_t ip, bool realtime) {
@@ -115,13 +173,10 @@ static void selection(void) {
   taskEXIT_CRITICAL(&s_mux);
   if (gen == s.generation) return;
   s.generation = gen;
-  if (s.peer == ip) return; /* pre-SETUP acquisition of this same peer */
-  s.peer = ip;
-  s.announced = false;
-  s.sync_waiting = s.outstanding = false;
-  s.next_req = 0;
-  s.period = REQ_MIN_NS;
-  /* Retain the fit until Announce establishes whether the GM changed. */
+  if (s.sender == ip) return; /* pre-SETUP acquisition of this same sender */
+  s.sender = ip;
+  /* Retain the fit until the sender's Announce establishes whether the GM
+   * changed. */
 }
 
 static void request(int64_t t1, int64_t t2) {
@@ -145,6 +200,43 @@ static void request(int64_t t1, int64_t t2) {
   s.sent++;
 }
 
+/* An Announce. A master announcing itself is remembered by its address;
+ * the sender's names the master in use. */
+static void announce(const uint8_t *d, uint32_t ip, uint64_t src, uint16_t port) {
+  const uint64_t gm = be64(d+53);
+  const uint16_t steps = be16(d+61);
+  const int64_t now = now_ns();
+  if (!gm) return;
+  if (src == gm) {
+    master_t *m = master_of(gm, INT64_MIN / 2);
+    if (!m) m = &s_masters[s_masters_next++ % MASTERS];
+    if (m->ip != ip || m->gm != gm)
+      ESP_LOGI(TAG, "master %016llx announces itself from %u.%u.%u.%u",
+               (unsigned long long)gm, IP4(ip));
+    *m = (master_t){ip, gm, port, d[0] & 0xf0U, d[4], now};
+  }
+  bool fresh = false;
+  if (ip == s.sender) {
+    if (gm != s.gm) {
+      remember();
+      s.gm = gm;
+      fresh = true;
+    }
+    s.sender_steps = steps;
+  }
+  if (choose_peer(now)) {
+    if (!fresh) remember();
+    fresh = true;
+  }
+  if (fresh) restart();
+  if (!s.peer || ip != s.peer || src != s.gm) return;
+  if (src != s.source || port != s.source_port || d[4] != s.domain ||
+      (d[0] & 0xf0U) != s.sdo)
+    s.sync_waiting = s.outstanding = false;
+  s.source = src; s.source_port = port;
+  s.sdo = d[0] & 0xf0U; s.domain = d[4]; s.announced = true;
+}
+
 static void message(const uint8_t *d, size_t len, bool event, uint32_t ip,
                     int64_t rx) {
   if (len < 34 || (d[1] & 15U) != 2 || be16(d+2) < 34 || be16(d+2) > len) return;
@@ -153,22 +245,14 @@ static void message(const uint8_t *d, size_t len, bool event, uint32_t ip,
   const uint64_t src = be64(d+20);
   const uint16_t port = be16(d+28), seq = be16(d+30);
   if (!ip || !src || !port || src == s.clock_id) return;
-  /* Before SETUP, the first Announce may prepare the clock. Once selected,
-   * only that IP is admitted; unrelated HomePods cannot replace it. */
-  if (!s.peer && !event && type == 11 && len >= 64) s.peer = ip;
-  if (ip != s.peer) return;
+  /* Before SETUP, the first Announce's device is the sender. Only the
+   * master the sender names gives the time: other HomePods cannot. */
   if (!event && type == 11 && len >= 64) {
-    const uint64_t gm = be64(d+53);
-    if (!gm) return;
-    if (gm != s.gm) restart(gm);
-    if (gm != s.gm || src != s.source || port != s.source_port ||
-        d[4] != s.domain || (d[0] & 0xf0U) != s.sdo)
-      s.sync_waiting = s.outstanding = false;
-    s.gm = gm; s.source = src; s.source_port = port;
-    s.sdo = d[0] & 0xf0U; s.domain = d[4]; s.announced = true;
+    if (!s.sender) s.sender = ip;
+    announce(d, ip, src, port);
     return;
   }
-  if (!s.announced || src != s.source || port != s.source_port ||
+  if (!s.peer || ip != s.peer || !s.announced || src != s.source || port != s.source_port ||
       d[4] != s.domain || (d[0] & 0xf0U) != s.sdo) return;
   int64_t ts;
   if (event && type == 0 && len >= 44) {
@@ -265,6 +349,8 @@ static void clock_task(void *arg) {
     }
     const int64_t now = now_ns();
     if (s.outstanding && now-s.t3 >= REQ_TIMEOUT_NS) s.outstanding = false;
+    /* The fit runs here, after the batch: never between receiving a packet
+     * and time-stamping the next. */
     acc_update(s.core, now);
     acc_line_t l;
     acc_get_line(s.core, &l);
@@ -292,12 +378,12 @@ static void clock_task(void *arg) {
       const acc_stats_t st = s.core->stats;
       ESP_LOGI(TAG, "%s epoch %u | rate %+.3f ppm, estimate %+.3f ms | "
           "floor RTT %.2f ms | %u points / %u s | seconds +%u -%u far %u | "
-          "Delay_Req %u answered %u send errors %u",
+          "steps %u jumps %u | Delay_Req %u answered %u send errors %u",
           out.ready ? "ready" : "acquiring", (unsigned)l.epoch, l.rate_ppb/1000.0,
           l.est_minus_pub_ns/1e6, l.floor_rtt_ns/1e6, (unsigned)l.points,
           (unsigned)l.span_s, (unsigned)(st.seconds-prev.seconds),
           (unsigned)(st.poor-prev.poor), (unsigned)(st.far-prev.far),
-          (unsigned)s.sent, (unsigned)s.answered, (unsigned)s.send_errors);
+          (unsigned)st.steps, (unsigned)st.jumps, (unsigned)s.sent, (unsigned)s.answered, (unsigned)s.send_errors);
       prev = st;
     }
   }

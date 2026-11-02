@@ -31,6 +31,9 @@ static const char *TAG = "gw_speakers";
 #define GW_SPEAKERS_PRIORITY  5
 #define GW_SPEAKERS_STACK     5120U
 #define GW_SPEAKERS_POLL_MS   200
+/* lwIP may retry FIN allocation during shutdown/close even with nonblocking
+ * sends. Bound that retry so a failed link cannot hold TIME for 20 seconds. */
+#define GW_CONTROL_CLOSE_TIMEOUT_MS 200
 #define GW_FRAME_MAX          (3U + SURROUND_MAX_PAYLOAD)
 #define GW_BSSID_REFRESH_MS   2000
 #define GW_TIME_LOG_MS        10000
@@ -557,6 +560,9 @@ static void accept_speaker(void) {
   if (c < 0) return;
   const int one = 1;
   (void)setsockopt(c, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+  const struct timeval tx_tv = {
+      .tv_sec = 0, .tv_usec = GW_CONTROL_CLOSE_TIMEOUT_MS * 1000};
+  (void)setsockopt(c, SOL_SOCKET, SO_SNDTIMEO, &tx_tv, sizeof(tx_tv));
   xSemaphoreTake(s_lock, portMAX_DELAY);
   gw_speaker_t *sp = NULL;
   for (size_t i = 0; i < SURROUND_MAX_SPEAKERS && !sp; ++i) {

@@ -14,11 +14,17 @@
  *
  * Each speaker connection mirrors the sender connection: opened when the
  * sender connects, closed when it closes. A speaker that connects mid-stream
- * starts at the next frame boundary. The next chunk is read from the sender
- * only after every connected speaker took the current one, so the slowest
- * speaker paces the sender through TCP and the Gateway buffers nothing. While
- * a speaker is starting its listener or being connected, the sender is not
- * read for up to ~1 s so the speaker does not miss the start. */
+ * starts at a frame boundary, with the slowest connected speaker.
+ *
+ * The sender is read whenever there is room in a 4 MiB buffer in PSRAM;
+ * each speaker is sent from it at its own speed, at most twice real time
+ * after a start at full speed (pacing keeps the Wi-Fi calm). At a FLUSH
+ * (gw_relay_flush) the old track is in the buffer, not queued in TCP: each
+ * speaker's stream skips, at its next frame boundary, to the first frame
+ * from the FLUSH's sequence number, at once. A speaker that keeps old audio
+ * longest holds the buffer; when it is full the sender waits. While a
+ * speaker is starting its listener or being connected, the buffer keeps
+ * the audio from then on for up to ~1 s so it does not miss the start. */
 
 /* Idempotent while running: returns the port already bound. */
 esp_err_t gw_relay_start(uint16_t requested_port, uint16_t *bound_port);
@@ -34,3 +40,7 @@ bool gw_relay_is_idle(void);
  * hold back the rest until their buffers run dry. While paused full FIFOs
  * are normal. */
 void gw_relay_set_playing(bool playing);
+
+/* An immediate FLUSH (FLUSHBUFFERED without a start): the frames before
+ * until_seq are not sent to the speakers any more (they drop them as well). */
+void gw_relay_flush(uint32_t until_seq);
