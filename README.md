@@ -828,8 +828,7 @@ The Gateway has one clock implementation, in
 `common/network/ptp_clock.c` is only the external TIME state and conversion
 interface for its audio engine; it has no PTP sockets or passive estimator.
 The optional oscilloscope pulse on the Gateway reads the same published
-Apple line. Algorithm and measurement details are in
-[the Apple clock design](docs/apple-clock-design.md).
+Apple line. The algorithm is described in `apple_clock_core.h`.
 
 **Absolute accuracy.** Two-way timing cannot distinguish a permanent
 uplink/downlink asymmetry from clock offset. The remaining error is half

@@ -1,7 +1,7 @@
 #pragma once
 
 /* The sender's (Apple's) clock from two-way PTP exchanges: pure math, no
- * ESP-IDF (docs/apple-clock-design.md, section 4).
+ * ESP-IDF.
  *
  * One exchange is a Sync (t1 Apple sent, t2 we received) and the Delay_Req
  * sent right after it (t3 we sent, t4 Apple received), t2 and t3 in our

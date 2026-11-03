@@ -31,8 +31,8 @@
 #define MC_MAX_CHANNELS 8
 #define MC_MAX_FRAMES   2048U
 /* CPU-time statistics are logged once per this many decoded frames
- * (~10.7 s at 48 kHz / 1024). */
-#define MC_TIMING_EVERY 500U
+ * (~64 s at 48 kHz / 1024); the maximum covers every frame in between. */
+#define MC_TIMING_EVERY 3000U
 
 struct aac_decoder {
   aac_decoder_config_t config;
@@ -197,7 +197,7 @@ static bool open_fdk_decoder(aac_decoder_t *d) {
   return true;
 }
 
-/* EXPERIMENT: one decoded channel on both stereo slots. */
+/* The speaker's decoded channel on both stereo slots. */
 static void mc_pick_channel(const LONG *in, int channels, int pick,
                             size_t frames, float *out) {
   for (size_t f = 0; f < frames; ++f) {
@@ -208,7 +208,8 @@ static void mc_pick_channel(const LONG *in, int channels, int pick,
 }
 
 #if AAC_MULTICHANNEL
-/* EXPERIMENT: fold every channel except LFE into mono on both slots. */
+/* No channel selected: every channel except LFE folded into mono on both
+ * slots. */
 static void mc_downmix_to_mono(const LONG *in, int channels, int lfe,
                                size_t frames, float *out) {
   const int used = lfe >= 0 ? channels - 1 : channels;
@@ -362,11 +363,12 @@ static void mc_apply_speaker(aac_decoder_t *d) {
                     channel >= 0 ? d->mc_label[channel] : silent ? "silent" : "mix");
 }
 
-/* At the start of a stream and then every MC_TIMING_EVERY frames. In the
- * single-channel fast path only the played channel is in mc_pcm (mono). */
+/* The first frames of a stream: which channel plays and that it carries
+ * signal. In the single-channel fast path only the played channel is in
+ * mc_pcm (mono). */
 static void mc_log_peaks(aac_decoder_t *d, int ch, size_t frames, bool fast) {
   const uint32_t n = d->mc_decodes;
-  if (n > 5 && (n % MC_TIMING_EVERY) != 0) return;
+  if (n > 5) return;
   if (fast) {
     uint32_t peak = 0;
     for (size_t f = 0; f < frames; ++f) {
@@ -417,10 +419,11 @@ static void mc_account_stage(aac_decoder_t *d, int stage, int64_t us) {
   if (us > d->mc_stage_max_us[stage]) d->mc_stage_max_us[stage] = us;
 }
 
-/* Every MC_TIMING_EVERY frames: total decode time per frame against the
+/* Every MC_TIMING_EVERY frames, one line: decode time per frame against the
  * frame budget, split into parse (bitstream + spectra of all channels),
  * synthesis (concealment/DRC/IMDCT of the played channel) and output
- * (channel reorder + PCM conversion). */
+ * (channel reorder + PCM conversion), with the decode task's stack and
+ * PSRAM headroom. */
 static void mc_account_time(aac_decoder_t *d, int64_t us, int frame_size,
                             int sample_rate) {
   d->mc_time_sum_us += us;
@@ -429,27 +432,26 @@ static void mc_account_time(aac_decoder_t *d, int64_t us, int frame_size,
   const int64_t budget_us =
       sample_rate > 0 ? (int64_t)frame_size * 1000000LL / sample_rate : 0;
   const int64_t avg_us = d->mc_time_sum_us / (int64_t)d->mc_time_frames;
-  ESP_LOGW(TAG, "MC CPU: FDK decode avg %lld us, max %lld us per frame over %lu "
-                "frames; frame budget %lld us -> avg %lld%% of one core; "
-                "decode task stack never below %u B free; PSRAM free %u KiB "
-                "(min %u KiB)",
-           (long long)avg_us, (long long)d->mc_time_max_us,
-           (unsigned long)d->mc_time_frames, (long long)budget_us,
-           budget_us > 0 ? (long long)(avg_us * 100 / budget_us) : -1LL,
+  char stages[128] = "";
+  if (d->mc_stage_frames > 0) {
+    const int64_t n = d->mc_stage_frames;
+    snprintf(stages, sizeof(stages),
+             " | parse %.1f/%.1f, synthesis %.1f/%.1f, output %.1f/%.1f ms "
+             "avg/max | single channel %lu/%lu",
+             d->mc_stage_sum_us[0] / n / 1000.0, d->mc_stage_max_us[0] / 1000.0,
+             d->mc_stage_sum_us[1] / n / 1000.0, d->mc_stage_max_us[1] / 1000.0,
+             d->mc_stage_sum_us[2] / n / 1000.0, d->mc_stage_max_us[2] / 1000.0,
+             (unsigned long)d->mc_fast_frames, (unsigned long)d->mc_time_frames);
+  }
+  ESP_LOGI(TAG, "MC CPU: decode %.1f ms avg, %.1f ms max of %.1f ms per frame "
+                "(%lld%% of a core)%s | stack min %u B free | PSRAM free %u KiB "
+                "(min %u)",
+           avg_us / 1000.0, d->mc_time_max_us / 1000.0, budget_us / 1000.0,
+           budget_us > 0 ? (long long)(avg_us * 100 / budget_us) : -1LL, stages,
            (unsigned)uxTaskGetStackHighWaterMark(NULL),
            (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024U),
            (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM) /
                       1024U));
-  if (d->mc_stage_frames > 0) {
-    const int64_t n = d->mc_stage_frames;
-    ESP_LOGW(TAG, "MC CPU stages (avg/max us): parse %lld/%lld, synthesis "
-                  "%lld/%lld, output %lld/%lld; fast single-channel output "
-                  "%lu/%lu frames",
-             (long long)(d->mc_stage_sum_us[0] / n), (long long)d->mc_stage_max_us[0],
-             (long long)(d->mc_stage_sum_us[1] / n), (long long)d->mc_stage_max_us[1],
-             (long long)(d->mc_stage_sum_us[2] / n), (long long)d->mc_stage_max_us[2],
-             (unsigned long)d->mc_fast_frames, (unsigned long)d->mc_time_frames);
-  }
   d->mc_time_sum_us = 0;
   d->mc_time_max_us = 0;
   d->mc_time_frames = 0;
