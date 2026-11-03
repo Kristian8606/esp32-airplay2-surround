@@ -562,20 +562,32 @@ suggests its **delay** and **level**, in about 2 s per speaker:
    pick the Gateway again as its audio output. Each speaker in turn plays
    four short chirps (300 Hz–8 kHz, 20 ms; the subwoofer 30–150 Hz, 200 ms)
    through its own EQ, so a 2-way speaker's crossover protects the tweeter:
-   at −30 dBFS first, louder (up to −12 dBFS) only if the microphone does
-   not hear them clearly.
+   at −30 dBFS first, then 6 dB louder (up to −12 dBFS) while the
+   microphone does not hear them clearly, or a full-range speaker's level
+   is not yet 10 dB above the room noise. You hear one to four rounds per
+   speaker; the level they were played at is taken out, so a louder round
+   does not make a speaker read louder.
 4. The table shows every speaker's **distance**, suggested **delay** (the
    farthest gets 0 ms, the others 2.9 ms per metre they are closer) and
    **level** (the quietest gets 0 dB, the others are turned down to it).
    **Apply to speakers** saves them like a manual edit; **Discard** changes
-   nothing.
+   nothing. What was measured is applied; a speaker without a delay or a
+   level keeps the one it has, and the message names it. Delays and levels
+   compare speakers, so each needs at least two full-range speakers
+   measured. A speaker left unchanged was set against another reference:
+   measure again once it plays clearly.
 
 | In the table | Meaning |
 |---|---|
 | **± cm** after a distance | how much the four chirps disagree; a few cm is normal |
 | **± dB** after a level | the same for the level |
-| *Level not repeatable (… dB over the chirps): measure again* | the four levels differ by more than 2 dB, usually from room noise; measure again in quiet |
-| *Not heard clearly* | the chirps did not stand out of the noise even at −12 dBFS, or their timing disagrees by more than 0.5 ms |
+| *Level not repeatable (… dB over the chirps)* | the levels still differ by more than 2 dB at −12 dBFS, usually from room noise; measure again in quiet |
+| *Too quiet for a level: … dB above the noise, 10 needed* | even at −12 dBFS the chirp is under 10 dB above the room noise; its delay is applied, its level stays. Turn its amplifier up or measure in quiet |
+| *Not heard clearly* | the chirps did not stand out of the noise even at −12 dBFS, or fewer than three of the four agree on the travel time within 0.5 ms |
+| *Clipped at … dBFS: move the microphone away from it* | the recording reached full scale, which makes the level read low; the run is not used and nothing louder is tried |
+| *No sound at −12 dBFS: check its cable and amplifier* | at the loudest level the chirp's shape is not found and it is under 6 dB above the room noise: left unchanged |
+| *No other level to compare with: level unchanged* | it is the only full-range speaker with a level |
+| *Only … of 4 chirps placed in the recording* | the speaker's chirp times could not be placed on the recording (TSF or microphone timing); louder would not help, so it is not tried |
 | *Hint: the chirp came back inverted* | + and − may be swapped (or a 2-way speaker's tweeter is wired so); only a hint, nothing is changed |
 | *Subwoofer: level and delay by ear* | its low chirp gives a delay, but no level |
 
@@ -589,10 +601,22 @@ How it measures:
   latency included); the Gateway timestamps its recording on the same TSF.
   The difference is the sound's travel time.
 - **The direct sound, not an echo.** The arrival is the first correlation
-  peak within 6 dB of the strongest one: the direct sound always comes
+  peak within 12 dB of the strongest one: the direct sound always comes
   first, while a reflection off a wall can be louder.
+- **One disturbed chirp is left out.** A chirp whose travel time is far
+  from the others' (a door, a cough) does not count; three of the four
+  must agree within 0.5 ms.
 - **Level as the ear hears it:** the RMS of the chirp and the next 10 ms of
-  the room (full-range speakers above 200 Hz), the median of the four.
+  the room (full-range speakers above 200 Hz), the median of the chirps,
+  with the quiet room's noise in the same band taken out. It is used only
+  10 dB or more above that noise.
+- **Tested in a simulated room** (the real `gw_calib.c` on a computer, with
+  noise, reflections, a 2-way crossover, a loose cable, a door slam and a
+  clipping microphone): distances within 1 mm, trims within their 0.5 dB
+  rounding, a reflection up to 12 dB louder than the direct sound ignored.
+- **Every round is in the log** (`gw_calib`): level played, chirps found,
+  travel time, level, dB above the noise, recording peak, match, and why
+  the next round is louder or why it stops.
 
 *No signal from the microphone: check its wiring* means the Gateway clocks
 the microphone but reads a constant value: check VDD → 3V3, GND, L/R → GND
@@ -899,9 +923,10 @@ are listed in
   playing together (three connected): 7.1 and stereo AAC, skip, seek, pause,
   volume, role and level changes while playing, a second sender taking over.
 - **Room calibration** is tested with an INMP441 and up to six speakers.
-  An echo more than 6 dB louder than the direct sound (a speaker behind an
+  An echo more than 12 dB louder than the direct sound (a speaker behind an
   obstacle) still misleads its timing, and the subwoofer's level is left
-  to the ear.
+  to the ear. Its delay includes its own crossover's delay and the
+  microphone's low cut (about 1 ms in the simulation), so check it by ear.
 - **Not yet tested:** realtime (screen mirroring, system audio) through the
   Gateway, the stereo routing to front pair and subwoofer, oscilloscope
   measurements, more than three speakers, a weak Wi-Fi signal.

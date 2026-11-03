@@ -6,7 +6,7 @@
  * and gets each speaker's travel time and level at the seat. From those it
  * suggests every speaker's delay (the farthest gets 0) and level trim (the
  * quietest gets 0 dB). Nothing changes on the speakers until
- * gw_calib_apply(). */
+ * gw_calib_apply(), which sends what was measured; the rest stays. */
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -34,6 +34,10 @@ typedef struct {
   float level_db;     /* level at the seat relative to the level played:
                        * RMS of the chirp and its first reflections */
   float level_spread_db; /* level spread over the chirps */
+  float snr_db;       /* chirp above the room noise, in the level's band */
+  bool level_ok;      /* the level can be trusted (full-range speakers) */
+  bool silent;        /* nothing above the noise even at the loudest level
+                       * (a loose cable) */
   float match;        /* how well the recording matched the chirp, 0..1 */
   float spread_ms;    /* travel time spread over the chirps */
   bool has_suggestion;
