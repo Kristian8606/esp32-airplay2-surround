@@ -1,8 +1,51 @@
-#include <string.h>
-
 #include "audio_crypto.h"
 
+#include <string.h>
+
 #include "sodium.h"
+
+/* An encrypted packet ends with ciphertext, a 16-byte tag and an 8-byte nonce.
+ * The nonce is padded to 12 bytes with leading zeros, and bytes 4 to 11 of the
+ * RTP header are authenticated. */
+#define RTP_HEADER_LEN  12u
+#define RTP_AAD_OFFSET  4u
+#define RTP_AAD_LEN     8u
+#define TAG_LEN         crypto_aead_chacha20poly1305_ietf_ABYTES
+#define NONCE_TAIL_LEN  8u
+
+static int open_payload(const audio_encrypt_t *encrypt, const uint8_t *payload,
+                        size_t payload_len, const uint8_t *header,
+                        uint8_t *output, size_t output_capacity) {
+  uint8_t nonce[crypto_aead_chacha20poly1305_ietf_NPUBBYTES] = {0};
+  unsigned long long plain_len = 0;
+
+  if (payload_len < TAG_LEN + NONCE_TAIL_LEN) {
+    return -1;
+  }
+  size_t sealed_len = payload_len - NONCE_TAIL_LEN;
+  if (sealed_len - TAG_LEN > output_capacity) {
+    return -1;
+  }
+  memcpy(nonce + sizeof(nonce) - NONCE_TAIL_LEN, payload + sealed_len,
+         NONCE_TAIL_LEN);
+  if (crypto_aead_chacha20poly1305_ietf_decrypt(
+          output, &plain_len, NULL, payload, sealed_len,
+          header + RTP_AAD_OFFSET, RTP_AAD_LEN, nonce, encrypt->key) != 0) {
+    return -1;
+  }
+  return (int)plain_len;
+}
+
+static int copy_plain(const uint8_t *payload, size_t payload_len,
+                      uint8_t *output, size_t output_capacity) {
+  if (payload_len > output_capacity) {
+    return -1;
+  }
+  if (payload_len) {
+    memcpy(output, payload, payload_len);
+  }
+  return (int)payload_len;
+}
 
 int audio_crypto_decrypt_rtp(const audio_encrypt_t *encrypt,
                              const uint8_t *input, size_t input_len,
@@ -12,96 +55,34 @@ int audio_crypto_decrypt_rtp(const audio_encrypt_t *encrypt,
   if (!encrypt || !input || !output) {
     return -1;
   }
-
   if (encrypt->type == AUDIO_ENCRYPT_NONE) {
-    if (input_len > output_capacity) {
-      return -1;
-    }
-    memcpy(output, input, input_len);
-    return (int)input_len;
+    return copy_plain(input, input_len, output, output_capacity);
   }
-
-  if (encrypt->type == AUDIO_ENCRYPT_CHACHA20_POLY1305) {
-    // AirPlay 2 RTP: nonce = 4 zero bytes + last 8 bytes of packet,
-    // AAD = RTP timestamp + SSRC (bytes 4-11 of the full packet).
-    if (!full_packet || full_packet_len < 12) {
-      return -1;
-    }
-
-    if (input_len < crypto_aead_chacha20poly1305_ietf_ABYTES + 8) {
-      return -1;
-    }
-
-    uint8_t nonce[12] = {0};
-    memcpy(nonce + 4, full_packet + full_packet_len - 8, 8);
-
-    const uint8_t *aad = full_packet + 4;
-    size_t aad_len = 8;
-
-    size_t ciphertext_len = input_len - 8;
-    if (ciphertext_len - crypto_aead_chacha20poly1305_ietf_ABYTES >
-        output_capacity) return -1;
-
-    unsigned long long decrypted_len = 0;
-    int ret = crypto_aead_chacha20poly1305_ietf_decrypt(
-        output, &decrypted_len, NULL, input, ciphertext_len, aad, aad_len,
-        nonce, encrypt->key);
-    if (ret != 0) {
-      return -1;
-    }
-
-    return (int)decrypted_len;
+  /* The payload is part of the packet, after the header. */
+  if (encrypt->type != AUDIO_ENCRYPT_CHACHA20_POLY1305 || !full_packet ||
+      full_packet_len < RTP_HEADER_LEN + input_len) {
+    return -1;
   }
-
-  return -1;
+  return open_payload(encrypt, input, input_len, full_packet, output,
+                      output_capacity);
 }
 
 int audio_crypto_decrypt_buffered(const audio_encrypt_t *encrypt,
                                   const uint8_t *packet, size_t packet_len,
                                   uint8_t *output, size_t output_capacity) {
-  if (!packet || !output) {
+  if (!encrypt || !packet || !output || packet_len < RTP_HEADER_LEN) {
     return -1;
   }
+  const uint8_t *payload = packet + RTP_HEADER_LEN;
+  size_t payload_len = packet_len - RTP_HEADER_LEN;
 
-  if (!encrypt || encrypt->type != AUDIO_ENCRYPT_CHACHA20_POLY1305) {
-    if (packet_len <= 12) {
-      return -1;
-    }
-    size_t payload_len = packet_len - 12;
-    if (payload_len > output_capacity) {
-      return -1;
-    }
-    memcpy(output, packet + 12, payload_len);
-    return (int)payload_len;
+  if (encrypt->type == AUDIO_ENCRYPT_NONE) {
+    return payload_len ? copy_plain(payload, payload_len, output, output_capacity)
+                       : -1;
   }
-
-  if (packet_len < 36) {
+  if (encrypt->type != AUDIO_ENCRYPT_CHACHA20_POLY1305) {
     return -1;
   }
-
-  // Buffered audio: AAD is bytes 4-11 (timestamp + SSRC), nonce in last 8
-  // bytes.
-  uint8_t nonce[12] = {0};
-  memcpy(nonce + 4, packet + packet_len - 8, 8);
-
-  const uint8_t *aad = packet + 4;
-  size_t aad_len = 8;
-
-  const uint8_t *ciphertext = packet + 12;
-  size_t ciphertext_len = packet_len - 12 - 8;
-
-  if (ciphertext_len - crypto_aead_chacha20poly1305_ietf_ABYTES >
-      output_capacity) {
-    return -1;
-  }
-
-  unsigned long long decrypted_len = 0;
-  int ret = crypto_aead_chacha20poly1305_ietf_decrypt(
-      output, &decrypted_len, NULL, ciphertext, ciphertext_len, aad, aad_len,
-      nonce, encrypt->key);
-  if (ret != 0) {
-    return -1;
-  }
-
-  return (int)decrypted_len;
+  return open_payload(encrypt, payload, payload_len, packet, output,
+                      output_capacity);
 }

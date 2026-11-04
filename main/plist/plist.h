@@ -1,15 +1,15 @@
 #pragma once
 
-#include <stdint.h>
-#include <stddef.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include "base64.h"
 
-/**
- * Simple plist builder for AirPlay
- * Builds XML plist format (easier to debug, iOS accepts it)
- */
+/* Property lists for AirPlay: an XML writer for HTTP /info, a reader for the
+ * binary plists senders send, and the binary replies this receiver sends. */
+
+/* ---- XML writer ---- */
 
 typedef struct {
   char *buffer;
@@ -17,122 +17,53 @@ typedef struct {
   size_t capacity;
 } plist_t;
 
-/**
- * Initialize a plist builder
- */
 void plist_init(plist_t *p, char *buffer, size_t capacity);
-
-/**
- * Start XML plist document
- */
 void plist_begin(plist_t *p);
-
-/**
- * Start a dictionary
- */
 void plist_dict_begin(plist_t *p);
-
-/**
- * Add string to dictionary
- */
 void plist_dict_string(plist_t *p, const char *key, const char *value);
-
-/**
- * Add integer to dictionary
- */
 void plist_dict_int(plist_t *p, const char *key, int64_t value);
-
-/**
- * Add unsigned integer to dictionary
- */
 void plist_dict_uint(plist_t *p, const char *key, uint64_t value);
-
-
-/**
- * Add base64 data to dictionary
- */
 void plist_dict_data(plist_t *p, const char *key, const uint8_t *data,
                      size_t len);
-
-
-/**
- * End dictionary
- */
 void plist_dict_end(plist_t *p);
-
-/**
- * Start an array with key (inside dict)
- */
 void plist_dict_array_begin(plist_t *p, const char *key);
-
-/**
- * Start a nested dictionary with key (inside dict); close with plist_dict_end
- */
+/* Close with plist_dict_end. */
 void plist_dict_dict_begin(plist_t *p, const char *key);
-
-
-/**
- * End array
- */
 void plist_array_end(plist_t *p);
-
-
-/**
- * End plist document
- * @return Total size of plist
- */
+/* Returns the document's length. The text is always NUL-terminated; what did
+ * not fit is left out. */
 size_t plist_end(plist_t *p);
 
-// ========================================
-// Binary plist parser (for AirPlay 2 SETUP)
-// ========================================
+/* ---- Binary plist reader ----
+ *
+ * The root must be a dictionary. All functions return false on malformed
+ * input, and only read inside the given buffer. */
 
-/**
- * Find a data value by key anywhere in a binary plist
- * @param plist Binary plist data
- * @param plist_len Length of plist
- * @param key Key to search for (e.g., "ekey", "eiv")
- * @param out_data Output buffer for data value
- * @param out_capacity Capacity of output buffer
- * @param out_len Actual length of data found
- * @return true if found, false otherwise
- */
+/* The value of a key in the root, or else the first in the nested
+ * dictionaries and arrays, depth first. A key in the root that is not data or
+ * does not fit ends the search. */
 bool bplist_find_data_deep(const uint8_t *plist, size_t plist_len,
                            const char *key, uint8_t *out_data,
                            size_t out_capacity, size_t *out_len);
 
-/**
- * Get number of stream entries in a binary plist "streams" array
- * @param plist Binary plist data
- * @param plist_len Length of plist
- * @param count Output stream count
- * @return true if streams array found and count read
- */
+/* These read keys of the root dictionary only. */
+bool bplist_find_int(const uint8_t *plist, size_t plist_len, const char *key,
+                     int64_t *out_value);
+/* Accepts a real or an integer. */
+bool bplist_find_real(const uint8_t *plist, size_t plist_len, const char *key,
+                      double *out_value);
+/* An ASCII string including its NUL must fit. */
+bool bplist_find_string(const uint8_t *plist, size_t plist_len, const char *key,
+                        char *out_str, size_t out_capacity);
+
+/* The root's "streams" array. */
 bool bplist_get_streams_count(const uint8_t *plist, size_t plist_len,
                               size_t *count);
 
-/**
- * Get stream details by index from a binary plist "streams" array
- * @param plist Binary plist data
- * @param plist_len Length of plist
- * @param index Stream index
- * @param type Stream type (e.g., 96)
- * @param ekey_len Length of ekey data if present
- * @param eiv_len Length of eiv data if present
- * @param shk_len Length of shk data if present
- * @return true if stream entry parsed
- */
+/* One stream's integer "type" and the lengths of its data keys, 0 if absent. */
 bool bplist_get_stream_info(const uint8_t *plist, size_t plist_len,
                             size_t index, int64_t *type, size_t *ekey_len,
                             size_t *eiv_len, size_t *shk_len);
-
-// Key/value summary of one stream dict entry
-typedef struct {
-  char key[64];
-  uint8_t value_type; // See BPLIST_VALUE_*
-  size_t value_len;
-  int64_t int_value;
-} bplist_kv_info_t;
 
 #define BPLIST_VALUE_UNKNOWN 0
 #define BPLIST_VALUE_INT     1
@@ -142,37 +73,23 @@ typedef struct {
 #define BPLIST_VALUE_ARRAY   5
 #define BPLIST_VALUE_DICT    6
 
-/**
- * Get key/value info for a stream dict (SETUP reads ct/sr/spf/controlPort/
- * latencyMin from it)
- * @param plist Binary plist data
- * @param plist_len Length of plist
- * @param index Stream index
- * @param out Output array for key/value info
- * @param out_capacity Capacity of output array
- * @param out_count Number of items written
- * @return true if stream entry parsed
- */
+typedef struct {
+  char key[64];
+  uint8_t value_type;
+  size_t value_len; /* data bytes, string characters */
+  int64_t int_value;
+} bplist_kv_info_t;
+
+/* Summary of every key of one stream. "sr" may be a real: a whole, positive
+ * value counts as an integer, any other makes the call fail. Keys that do not
+ * fit key[] are left out; false for an empty stream or if more keys remain
+ * than out_capacity. */
 bool bplist_get_stream_kv_info(const uint8_t *plist, size_t plist_len,
                                size_t index, bplist_kv_info_t *out,
                                size_t out_capacity, size_t *out_count);
 
-/**
- * Find stream-specific crypto fields in a binary plist
- * @param plist Binary plist data
- * @param plist_len Length of plist
- * @param stream_type Stream "type" to match (e.g., 96 for audio)
- * @param ekey Output buffer for encrypted key (optional)
- * @param ekey_capacity Capacity of ekey buffer
- * @param ekey_len Length of ekey found
- * @param eiv Output buffer for IV (optional)
- * @param eiv_capacity Capacity of eiv buffer
- * @param eiv_len Length of eiv found
- * @param shk Output buffer for shared key (optional)
- * @param shk_capacity Capacity of shk buffer
- * @param shk_len Length of shk found
- * @return true if any crypto field was found for the stream, false otherwise
- */
+/* Data keys of the first stream of this type. True if any was found; a value
+ * that does not fit its buffer counts as absent. Buffers may be NULL. */
 bool bplist_find_stream_crypto(const uint8_t *plist, size_t plist_len,
                                int64_t stream_type, uint8_t *ekey,
                                size_t ekey_capacity, size_t *ekey_len,
@@ -180,97 +97,26 @@ bool bplist_find_stream_crypto(const uint8_t *plist, size_t plist_len,
                                size_t *eiv_len, uint8_t *shk,
                                size_t shk_capacity, size_t *shk_len);
 
-/**
- * Find an integer value by key in a binary plist
- * @param plist Binary plist data
- * @param plist_len Length of plist
- * @param key Key to search for
- * @param out_value Output for integer value
- * @return true if found, false otherwise
- */
-bool bplist_find_int(const uint8_t *plist, size_t plist_len, const char *key,
-                     int64_t *out_value);
+/* ---- Binary plist replies ----
+ *
+ * Each returns the length written, or 0 if it does not fit or the arguments
+ * are not valid. */
 
-/**
- * Find a real/float value by key in a binary plist
- * Handles both real and integer values (converting int to double)
- * @param plist Binary plist data
- * @param plist_len Length of plist
- * @param key Key to search for
- * @param out_value Output for double value
- * @return true if found, false otherwise
- */
-bool bplist_find_real(const uint8_t *plist, size_t plist_len, const char *key,
-                      double *out_value);
-
-/**
- * Find a string value by key in a binary plist
- * @param plist Binary plist data
- * @param plist_len Length of plist
- * @param key Key to search for
- * @param out_str Output buffer for string value
- * @param out_capacity Capacity of output buffer
- * @return true if found, false otherwise
- */
-bool bplist_find_string(const uint8_t *plist, size_t plist_len, const char *key,
-                        char *out_str, size_t out_capacity);
-
-// ========================================
-// Binary plist builders (for AirPlay SETUP responses)
-// ========================================
-
-/**
- * Build initial SETUP response bplist (no streams array)
- * Returns eventPort and timingPort (0: PTP timing, no NTP port).
- * @param out Output buffer
- * @param capacity Buffer capacity
- * @param event_port Event port to include in response
- * @return Length of generated bplist, or 0 on error
- */
+/* First SETUP: event port, and timing port 0 because timing uses PTP. */
 size_t bplist_build_initial_setup(uint8_t *out, size_t capacity,
                                   uint16_t event_port);
 
-/**
- * Build stream SETUP response bplist (with streams array)
- * Returns streams[] array with type, dataPort, controlPort, audioBufferSize.
- * @param out Output buffer
- * @param capacity Buffer capacity
- * @param stream_type Stream type (96=realtime UDP, 103=buffered TCP)
- * @param data_port Data port to include
- * @param control_port Control port to include
- * @param audio_buffer_size Audio buffer size to advertise
- * @return Length of generated bplist, or 0 on error
- */
+/* Stream SETUP. audioBufferSize is sent for buffered streams (type 103). */
 size_t bplist_build_stream_setup(uint8_t *out, size_t capacity,
                                  int64_t stream_type, uint16_t data_port,
                                  uint16_t control_port,
                                  uint32_t audio_buffer_size);
 
-/**
- * Build feedback response bplist
- * Returns a streams array with type and sample rate for keepalive.
- * This response prevents iPhone from sending TEARDOWN during extended pause.
- * @param out Output buffer
- * @param capacity Buffer capacity
- * @param stream_type Stream type (103 for buffered audio)
- * @param sample_rate Sample rate (44100.0)
- * @return Length of generated bplist, or 0 on error
- */
+/* /feedback keep-alive: without it a sender tears a paused stream down. */
 size_t bplist_build_feedback_response(uint8_t *out, size_t capacity,
                                       int64_t stream_type, double sample_rate);
 
-/**
- * Build /info response bplist.
- * Mirrors the XML /info response for RTSP clients that require binary plists.
- * @param out Output buffer
- * @param capacity Buffer capacity
- * @param device_id Device MAC string
- * @param device_name User-visible AirPlay device name
- * @param public_key HAP Ed25519 public key
- * @param public_key_len Public key length
- * @param features AirPlay feature bitmask
- * @return Length of generated bplist, or 0 on error
- */
+/* RTSP /info, the same content as the XML one. */
 size_t bplist_build_info_response(uint8_t *out, size_t capacity,
                                   const char *device_id,
                                   const char *device_name,
@@ -278,10 +124,10 @@ size_t bplist_build_info_response(uint8_t *out, size_t capacity,
                                   size_t public_key_len, uint64_t features,
                                   double initial_volume);
 
-/* Receiver-to-sender command on the AirPlay 2 audio event connection. */
+/* Commands on the event connection. Valid commands are 0 to 5. */
 size_t bplist_build_media_remote_command(uint8_t *out, size_t capacity,
-                                        uint8_t command);
+                                         uint8_t command);
 
-/* AirPlay dvlc volume notification, normalized 0..1, including params.volume. */
+/* Volume notification, 0 to 1. */
 size_t bplist_build_media_remote_volume(uint8_t *out, size_t capacity,
-                                       double volume);
+                                        double volume);

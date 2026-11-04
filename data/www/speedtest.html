@@ -1,165 +1,125 @@
-<!DOCTYPE html><html><head>
-<meta charset='UTF-8'>
-<meta name='viewport' content='width=device-width,initial-scale=1'>
+<!DOCTYPE html><html lang='en'><head>
+<meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
 <title>WiFi Speedtest</title>
 <style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,system-ui,sans-serif;background:linear-gradient(135deg,#1a1a2e,#16213e);min-height:100vh;padding:20px;color:#fff}
-.wrap{max-width:560px;margin:0 auto}
-h1{font-size:24px;margin-bottom:8px}
-.sub{color:#888;font-size:13px;margin-bottom:20px}
-.card{background:rgba(255,255,255,0.05);border-radius:12px;padding:18px;margin-bottom:14px;border:1px solid rgba(255,255,255,0.1)}
-.card h2{font-size:15px;color:#8b7bff;margin-bottom:12px}
-.row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13px}
-.row .lbl{color:#888}
-.row .val{font-weight:600;font-family:ui-monospace,monospace}
-.btn{padding:10px 16px;border:none;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;background:#8b7bff;color:#fff;width:100%;margin-top:10px}
-.btn:disabled{opacity:0.5;cursor:not-allowed}
-.btn.sec{background:rgba(255,255,255,0.1)}
-select,input{width:100%;padding:10px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#fff;font-size:13px;margin-bottom:8px}
-.bar{height:6px;background:rgba(0,0,0,0.3);border-radius:3px;overflow:hidden;margin-top:8px}
-.bar>div{height:100%;background:#8b7bff;width:0%;transition:width 0.1s}
-.big{font-size:28px;font-weight:700;color:#8b7bff}
-.unit{font-size:14px;color:#888;margin-left:4px}
-.log{font-family:ui-monospace,monospace;font-size:11px;color:#888;max-height:140px;overflow-y:auto;padding:8px;background:rgba(0,0,0,0.3);border-radius:6px;white-space:pre-wrap}
-a{color:#8b7bff}
-</style><style>/* theme */:root{--bg:#000;--panel:#0f0f10;--panel2:#17171a;--line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.16);--text:#f4f4f5;--muted:#8d8d93;--accent:#8b7bff;--glow:linear-gradient(90deg,#3b5bff,#8b5cff 50%,#ff3d7f)}body{font-family:-apple-system,'SF Pro Display','Helvetica Neue',system-ui,sans-serif;-webkit-font-smoothing:antialiased;background:var(--bg) radial-gradient(1200px 500px at 50% -200px,rgba(110,90,255,.16),transparent 70%) no-repeat;color:var(--text)}a{color:var(--accent)}.header h1,h1{font-weight:300;letter-spacing:.5px}.header::after{content:'';display:block;width:56px;height:3px;margin:14px auto 0;border-radius:2px;background:var(--glow)}.header p,.hint,.sub{color:var(--muted)}.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;backdrop-filter:none}.card h2{color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1.6px}.btn{border-radius:999px;font-weight:600;letter-spacing:.3px;font-family:inherit}.btn-primary,.btn:not(.btn-secondary):not(.btn-danger):not(.sec){background:#fff;color:#000}.btn-primary:hover,.btn:not(.btn-secondary):not(.btn-danger):not(.sec):hover{background:#dcdcdc}.btn-secondary,.btn.sec{background:transparent;color:var(--text);border:1px solid var(--line2)}.btn-secondary:hover,.btn.sec:hover{border-color:#fff}.btn-danger{background:transparent;color:#ff8a80;border:1px solid rgba(255,69,58,.5)}input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]),select{background:#0a0a0b;border:1px solid var(--line2);border-radius:10px;color:var(--text);font-family:inherit}input:focus,select:focus{border-color:var(--accent)}input[type=checkbox],input[type=range]{accent-color:var(--accent)}.msg.ok{background:rgba(48,209,88,.12);color:#7ee2a0}.msg.err{background:rgba(255,69,58,.14);color:#ff8a80}.msg.info{background:rgba(139,123,255,.12);color:#c4b2ff}.big{color:#fff;font-weight:300}.bar>div{background:var(--glow)}.row .lbl,.unit{color:var(--muted)}.log{background:var(--panel2)}</style></head><body>
-<div class='wrap'>
-<h1>WiFi Speedtest</h1>
-<p class='sub'>Measure latency and throughput between this browser and the device.</p>
-
-<div class='card'>
-<h2>Ping (RTT)</h2>
-<div class='row'><span class='lbl'>Samples</span><span class='val' id='p-n'>0</span></div>
-<div class='row'><span class='lbl'>Min</span><span class='val' id='p-min'>—</span></div>
-<div class='row'><span class='lbl'>Avg</span><span class='val' id='p-avg'>—</span></div>
-<div class='row'><span class='lbl'>Max</span><span class='val' id='p-max'>—</span></div>
-<div class='row'><span class='lbl'>Jitter (stdev)</span><span class='val' id='p-jit'>—</span></div>
-<button class='btn' id='b-ping' onclick='runPing()'>Run 20 Pings</button>
+:root{--bg:#000;--panel:#0f0f10;--line:rgba(255,255,255,.12);--text:#f2f2f4;--muted:#9a9aa2;--accent:#8b5cff;--ok:#49c98a;--warn:#e7b34b;--err:#ff6b6b}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--text);font:15px -apple-system,'Helvetica Neue',system-ui,sans-serif;padding:16px}
+main{max-width:640px;margin:0 auto;display:grid;gap:14px}
+a{color:var(--accent);text-decoration:none}
+header{display:flex;justify-content:space-between;align-items:center;gap:10px}
+h1{font-size:22px;font-weight:600}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;display:grid;gap:12px}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+label{color:var(--muted);font-size:13px}
+select,button{font:inherit;color:var(--text);background:#17171a;border:1px solid var(--line);border-radius:8px;padding:7px 10px;min-height:36px}
+button{cursor:pointer;background:var(--accent);border-color:var(--accent);font-weight:600;margin-left:auto}
+button:disabled{opacity:.5;cursor:default}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.tile{background:#17171a;border-radius:10px;padding:12px}
+.tile span{display:block;color:var(--muted);font-size:12px;margin-bottom:4px}
+.tile b{font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}
+progress{width:100%;height:6px;accent-color:var(--accent)}
+#note{font-size:14px;color:var(--muted)}
+#note.ok{color:var(--ok)}#note.warn{color:var(--warn)}#note.err{color:var(--err)}
+</style></head><body><main>
+<header><h1>WiFi Speedtest</h1><a href='/'>Back</a></header>
+<section class='panel'>
+<div class='row'>
+<label for='size'>Test size</label>
+<select id='size'><option value='1048576'>1 MB</option><option value='4194304' selected>4 MB</option><option value='16777216'>16 MB</option></select>
+<button id='start' type='button'>Start</button>
 </div>
-
-<div class='card'>
-<h2>Download (device → browser)</h2>
-<div style='text-align:center;padding:10px 0'><span class='big' id='dl-mbps'>0.00</span><span class='unit'>Mbit/s</span></div>
-<div class='row'><span class='lbl'>Bytes</span><span class='val' id='dl-bytes'>—</span></div>
-<div class='row'><span class='lbl'>Elapsed</span><span class='val' id='dl-time'>—</span></div>
-<div class='bar'><div id='dl-bar'></div></div>
-<label style='font-size:12px;color:#888;margin-top:10px;display:block'>Payload size</label>
-<select id='dl-size'>
-  <option value='262144'>256 KB</option>
-  <option value='1048576' selected>1 MB</option>
-  <option value='4194304'>4 MB</option>
-  <option value='8388608'>8 MB</option>
-</select>
-<button class='btn' id='b-dl' onclick='runDownload()'>Start Download Test</button>
+<progress id='bar' max='1' value='0' aria-label='Progress'></progress>
+<div class='tiles'>
+<div class='tile'><span>Ping (median)</span><b id='ping'>–</b></div>
+<div class='tile'><span>Ping (worst)</span><b id='worst'>–</b></div>
+<div class='tile'><span>Download</span><b id='down'>–</b></div>
+<div class='tile'><span>Upload</span><b id='up'>–</b></div>
 </div>
-
-<div class='card'>
-<h2>Upload (browser → device)</h2>
-<div style='text-align:center;padding:10px 0'><span class='big' id='ul-mbps'>0.00</span><span class='unit'>Mbit/s</span></div>
-<div class='row'><span class='lbl'>Bytes</span><span class='val' id='ul-bytes'>—</span></div>
-<div class='row'><span class='lbl'>Elapsed</span><span class='val' id='ul-time'>—</span></div>
-<div class='bar'><div id='ul-bar'></div></div>
-<label style='font-size:12px;color:#888;margin-top:10px;display:block'>Payload size</label>
-<select id='ul-size'>
-  <option value='262144'>256 KB</option>
-  <option value='1048576' selected>1 MB</option>
-  <option value='4194304'>4 MB</option>
-</select>
-<button class='btn' id='b-ul' onclick='runUpload()'>Start Upload Test</button>
-</div>
-
-<div class='card'>
-<h2>Log</h2>
-<div class='log' id='log'></div>
-</div>
-
-<p style='text-align:center;margin-top:10px'><a href='/'>← Back to main</a></p>
-</div>
-
+<p id='note' role='status'>Measures the link between this browser and the board. Stop playback first for a clean result.</p>
+</section>
+</main>
 <script>
-const $ = id => document.getElementById(id);
-function log(s){const l=$('log');l.textContent+=s+'\n';l.scrollTop=l.scrollHeight;}
-function fmtBytes(n){if(n>=1048576)return (n/1048576).toFixed(2)+' MB';if(n>=1024)return (n/1024).toFixed(1)+' KB';return n+' B';}
-function fmtMs(ms){return ms.toFixed(2)+' ms';}
+const PINGS=20,TIMEOUT_MS=60000;
+/* A rule of thumb for the message below, not a measured limit. */
+const COMFORTABLE_MBPS=6;
+const el=id=>document.getElementById(id);
+const fresh=()=>'_='+Date.now()+'-'+Math.random();
+const mbps=(bytes,ms)=>bytes*8/1000/ms;
+function note(text,cls){el('note').textContent=text;el('note').className=cls||'';}
+function withTimeout(){const c=new AbortController();const t=setTimeout(()=>c.abort(),TIMEOUT_MS);return {signal:c.signal,done:()=>clearTimeout(t)};}
 
-async function runPing(){
-  const btn=$('b-ping');btn.disabled=true;
-  const N=20;const samples=[];
-  $('p-n').textContent='0';
-  for(let i=0;i<N;i++){
+async function ping(){
+  const times=[];
+  for(let i=0;i<PINGS;i++){
     const t0=performance.now();
-    try{
-      await fetch('/api/speedtest/ping?'+Math.random(),{cache:'no-store'});
-      const dt=performance.now()-t0;
-      samples.push(dt);
-      $('p-n').textContent=samples.length;
-    }catch(e){log('ping err: '+e);break;}
-    await new Promise(r=>setTimeout(r,50));
+    const r=await fetch('/api/speedtest/ping?'+fresh(),{cache:'no-store'});
+    await r.text();
+    if(!r.ok)throw new Error('ping '+r.status);
+    times.push(performance.now()-t0);
+    el('bar').value=(i+1)/PINGS/3;
   }
-  if(samples.length){
-    const mn=Math.min(...samples),mx=Math.max(...samples);
-    const avg=samples.reduce((a,b)=>a+b,0)/samples.length;
-    const v=samples.reduce((a,b)=>a+(b-avg)*(b-avg),0)/samples.length;
-    const sd=Math.sqrt(v);
-    $('p-min').textContent=fmtMs(mn);
-    $('p-max').textContent=fmtMs(mx);
-    $('p-avg').textContent=fmtMs(avg);
-    $('p-jit').textContent=fmtMs(sd);
-    log(`ping n=${samples.length} min=${mn.toFixed(2)} avg=${avg.toFixed(2)} max=${mx.toFixed(2)} sd=${sd.toFixed(2)} ms`);
-  }
-  btn.disabled=false;
+  times.sort((a,b)=>a-b);
+  el('ping').textContent=times[times.length>>1].toFixed(0)+' ms';
+  el('worst').textContent=times[times.length-1].toFixed(0)+' ms';
+  return times;
 }
-
-async function runDownload(){
-  const btn=$('b-dl');btn.disabled=true;
-  const bytes=parseInt($('dl-size').value);
-  $('dl-bytes').textContent=fmtBytes(bytes);
-  $('dl-mbps').textContent='0.00';
-  $('dl-bar').style.width='0%';
-  const t0=performance.now();
+async function download(bytes){
+  const t=withTimeout();
   try{
-    const resp=await fetch('/api/speedtest/download?bytes='+bytes+'&_='+Math.random(),{cache:'no-store'});
-    if(!resp.ok){throw new Error('HTTP '+resp.status);}
-    const reader=resp.body.getReader();
+    const t0=performance.now();
+    const r=await fetch('/api/speedtest/download?bytes='+bytes+'&'+fresh(),{cache:'no-store',signal:t.signal});
+    if(!r.ok||!r.body)throw new Error('download '+r.status);
+    const reader=r.body.getReader();
     let got=0;
-    while(true){
+    for(;;){
       const {done,value}=await reader.read();
       if(done)break;
       got+=value.length;
-      $('dl-bar').style.width=(100*got/bytes).toFixed(1)+'%';
-      const dt=(performance.now()-t0)/1000;
-      if(dt>0)$('dl-mbps').textContent=((got*8/1e6)/dt).toFixed(2);
+      el('bar').value=1/3+got/bytes/3;
+      el('down').textContent=mbps(got,performance.now()-t0).toFixed(1)+' Mbit/s';
     }
-    const dt=(performance.now()-t0)/1000;
-    $('dl-time').textContent=(dt*1000).toFixed(0)+' ms';
-    $('dl-mbps').textContent=((got*8/1e6)/dt).toFixed(2);
-    log(`download ${fmtBytes(got)} in ${(dt*1000).toFixed(0)} ms = ${((got*8/1e6)/dt).toFixed(2)} Mbit/s`);
-  }catch(e){log('dl err: '+e.message);}
-  btn.disabled=false;
+    if(got<bytes)throw new Error('download ended early');
+    const speed=mbps(got,performance.now()-t0);
+    el('down').textContent=speed.toFixed(1)+' Mbit/s';
+    return speed;
+  }finally{t.done();}
 }
-
-async function runUpload(){
-  const btn=$('b-ul');btn.disabled=true;
-  const bytes=parseInt($('ul-size').value);
-  $('ul-bytes').textContent=fmtBytes(bytes);
-  $('ul-mbps').textContent='0.00';
-  $('ul-bar').style.width='0%';
-  // Pre-build payload (random data, in 64KB chunks to limit memory spike)
-  const payload=new Uint8Array(bytes);
-  for(let i=0;i<bytes;i+=4){payload[i]=(i*73)&0xff;}
-  const t0=performance.now();
+async function upload(bytes){
+  const t=withTimeout();
   try{
-    const resp=await fetch('/api/speedtest/upload',{method:'POST',body:payload,headers:{'Content-Type':'application/octet-stream'}});
-    if(!resp.ok){throw new Error('HTTP '+resp.status);}
-    const dt=(performance.now()-t0)/1000;
-    const txt=await resp.text();
-    $('ul-bar').style.width='100%';
-    $('ul-time').textContent=(dt*1000).toFixed(0)+' ms';
-    $('ul-mbps').textContent=((bytes*8/1e6)/dt).toFixed(2);
-    log(`upload ${fmtBytes(bytes)} in ${(dt*1000).toFixed(0)} ms = ${((bytes*8/1e6)/dt).toFixed(2)} Mbit/s (server: ${txt.trim()})`);
-  }catch(e){log('ul err: '+e.message);}
-  btn.disabled=false;
+    const body=new Uint8Array(bytes);
+    for(let i=0;i<bytes;i+=4096)body[i]=i>>12;
+    const t0=performance.now();
+    const r=await fetch('/api/speedtest/upload',{method:'POST',body,headers:{'Content-Type':'application/octet-stream'},signal:t.signal});
+    await r.text();
+    if(!r.ok)throw new Error('upload '+r.status);
+    const speed=mbps(bytes,performance.now()-t0);
+    el('up').textContent=speed.toFixed(1)+' Mbit/s';
+    el('bar').value=1;
+    return speed;
+  }finally{t.done();}
 }
-</script>
-</body></html>
+el('start').onclick=async()=>{
+  const bytes=+el('size').value;
+  el('start').disabled=true;
+  ['ping','worst','down','up'].forEach(id=>el(id).textContent='–');
+  el('bar').value=0;
+  try{
+    note('Measuring ping');
+    await ping();
+    note('Measuring download');
+    const down=await download(bytes);
+    note('Measuring upload');
+    const up=await upload(bytes);
+    const slowest=Math.min(down,up);
+    if(slowest>=COMFORTABLE_MBPS)note('The link has room for a surround stream.','ok');
+    else note('This link may cause dropouts: check the signal at this position.','warn');
+  }catch(e){
+    note('The test stopped: '+e.message,'err');
+  }finally{
+    el('start').disabled=false;
+  }
+};
+</script></body></html>

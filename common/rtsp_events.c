@@ -1,40 +1,31 @@
 #include "rtsp_events.h"
 
-#include <inttypes.h>
-#include <stddef.h>
-#include <stdio.h>
-
 #define MAX_LISTENERS 4
 
-typedef struct {
+static struct {
   rtsp_event_callback_t callback;
   void *user_data;
-} listener_t;
-
-static listener_t listeners[MAX_LISTENERS];
-static int listener_count = 0;
+} listeners[MAX_LISTENERS];
 
 int rtsp_events_register(rtsp_event_callback_t callback, void *user_data) {
-  if (callback == NULL || listener_count >= MAX_LISTENERS) {
+  if (!callback) {
     return -1;
   }
-
-  // Check if already registered
-  for (int i = 0; i < listener_count; i++) {
+  for (int i = 0; i < MAX_LISTENERS; i++) {
     if (listeners[i].callback == callback) {
+      return 0; /* already registered */
+    }
+    if (!listeners[i].callback) {
+      listeners[i].callback = callback;
+      listeners[i].user_data = user_data;
       return 0;
     }
   }
-
-  listeners[listener_count].callback = callback;
-  listeners[listener_count].user_data = user_data;
-  listener_count++;
-  return 0;
+  return -1;
 }
 
 void rtsp_events_emit(rtsp_event_t event) {
-  for (int i = 0; i < listener_count; i++) {
+  for (int i = 0; i < MAX_LISTENERS && listeners[i].callback; i++) {
     listeners[i].callback(event, listeners[i].user_data);
   }
 }
-

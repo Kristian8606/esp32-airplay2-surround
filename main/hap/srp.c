@@ -1,15 +1,21 @@
+#include "srp.h"
+
+#include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
+
 #include "esp_log.h"
 #include "esp_random.h"
 #include "mbedtls/bignum.h"
 #include "sodium.h"
 
-#include "srp.h"
-
 static const char *TAG = "srp";
 
-// SRP-6a 3072-bit prime N (from RFC 5054)
-static const uint8_t srp_N[] = {
+#define SRP_EPHEMERAL_BYTES 32
+#define SRP_GENERATOR       5
+
+/* RFC 5054 appendix A, 3072-bit group. */
+static const uint8_t group_prime[SRP_PRIME_BYTES] = {
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC9, 0x0F, 0xDA, 0xA2,
     0x21, 0x68, 0xC2, 0x34, 0xC4, 0xC6, 0x62, 0x8B, 0x80, 0xDC, 0x1C, 0xD1,
     0x29, 0x02, 0x4E, 0x08, 0x8A, 0x67, 0xCC, 0x74, 0x02, 0x0B, 0xBE, 0xA6,
@@ -41,405 +47,305 @@ static const uint8_t srp_N[] = {
     0xBB, 0xE1, 0x17, 0x57, 0x7A, 0x61, 0x5D, 0x6C, 0x77, 0x09, 0x88, 0xC0,
     0xBA, 0xD9, 0x46, 0xE2, 0x08, 0xE2, 0x4F, 0xA0, 0x74, 0xE5, 0xAB, 0x31,
     0x43, 0xDB, 0x5B, 0xFC, 0xE0, 0xFD, 0x10, 0x8E, 0x4B, 0x82, 0xD1, 0x20,
-    0xA9, 0x3A, 0xD2, 0xCA, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    0xA9, 0x3A, 0xD2, 0xCA, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+};
 
-#define SRP_GENERATOR 5
-
-// Helper: write MPI to buffer with minimum bytes (no leading zeros except for
-// value 0)
-static size_t mpi_to_bytes_min(const mbedtls_mpi *mpi, uint8_t *buf,
-                               size_t len) {
-  size_t mpi_size = mbedtls_mpi_size(mpi);
-  if (mpi_size == 0) {
-    if (len < 1) {
-      return 0;
-    }
-    buf[0] = 0;
-    return 1;
-  }
-  if (mpi_size > len) {
-    return 0;
-  }
-  if (mbedtls_mpi_write_binary(mpi, buf, mpi_size) != 0) {
-    return 0;
-  }
-  return mpi_size;
-}
-
-// Helper: write MPI to buffer, zero-padded to fixed length
-static int mpi_to_bytes_padded(const mbedtls_mpi *mpi, uint8_t *buf,
-                               size_t len) {
-  size_t mpi_size = mbedtls_mpi_size(mpi);
-  if (mpi_size > len) {
-    return -1;
-  }
-  memset(buf, 0, len);
-  return mbedtls_mpi_write_binary(mpi, buf + (len - mpi_size), mpi_size);
-}
-
-// Helper: trim leading zeros from buffer
-static void trim_leading_zeros(const uint8_t *in, size_t in_len,
-                               const uint8_t **out, size_t *out_len) {
-  while (in_len > 1 && *in == 0) {
-    in++;
-    in_len--;
-  }
-  *out = in;
-  *out_len = in_len;
-}
-
-// Compute M1 = H(H(N)^H(g) || H(I) || s || A || B || K)
-static void compute_m1(uint8_t *out, const uint8_t *h_Ng_xor,
-                       const uint8_t *h_I, const uint8_t *salt, size_t salt_len,
-                       const uint8_t *A, size_t A_len, const uint8_t *B,
-                       size_t B_len, const uint8_t *K, size_t K_len) {
-  crypto_hash_sha512_state state;
-  crypto_hash_sha512_init(&state);
-  crypto_hash_sha512_update(&state, h_Ng_xor, 64);
-  crypto_hash_sha512_update(&state, h_I, 64);
-  crypto_hash_sha512_update(&state, salt, salt_len);
-  crypto_hash_sha512_update(&state, A, A_len);
-  crypto_hash_sha512_update(&state, B, B_len);
-  crypto_hash_sha512_update(&state, K, K_len);
-  crypto_hash_sha512_final(&state, out);
-}
+struct srp_session {
+  uint8_t salt[SRP_SALT_BYTES];
+  uint8_t ephemeral[SRP_EPHEMERAL_BYTES]; /* b */
+  uint8_t verifier[SRP_PRIME_BYTES];      /* v */
+  uint8_t pub_b[SRP_PRIME_BYTES];         /* B, padded */
+  uint8_t pub_a[SRP_PRIME_BYTES];         /* A, padded */
+  uint8_t premaster[SRP_PRIME_BYTES];     /* S, padded */
+  uint8_t user_hash[crypto_hash_sha512_BYTES];
+  uint8_t session_key[SRP_SESSION_KEY_BYTES];
+  uint8_t server_proof[SRP_PROOF_BYTES];
+  bool started;
+  bool verified;
+};
 
 srp_session_t *srp_session_create(void) {
-  srp_session_t *session = calloc(1, sizeof(srp_session_t));
-  return session;
+  return calloc(1, sizeof(srp_session_t));
 }
 
 void srp_session_free(srp_session_t *session) {
   if (session) {
-    memset(session, 0, sizeof(srp_session_t));
+    sodium_memzero(session, sizeof(*session));
     free(session);
   }
 }
 
+static int mpi_from_u32(mbedtls_mpi *x, int value) {
+  return mbedtls_mpi_lset(x, value);
+}
+
+/* k = H(N | PAD(g)) */
+static void multiplier_hash(uint8_t out[crypto_hash_sha512_BYTES]) {
+  uint8_t padded_g[SRP_PRIME_BYTES] = {0};
+  crypto_hash_sha512_state st;
+
+  padded_g[SRP_PRIME_BYTES - 1] = SRP_GENERATOR;
+  crypto_hash_sha512_init(&st);
+  crypto_hash_sha512_update(&st, group_prime, SRP_PRIME_BYTES);
+  crypto_hash_sha512_update(&st, padded_g, SRP_PRIME_BYTES);
+  crypto_hash_sha512_final(&st, out);
+}
+
 esp_err_t srp_start(srp_session_t *session, const char *username,
                     const char *password) {
+  mbedtls_mpi n, g, x, v, b, k, gb, pub;
+  uint8_t digest[crypto_hash_sha512_BYTES];
+  crypto_hash_sha512_state st;
+  esp_err_t result = ESP_FAIL;
+  int rc;
+
   if (!session || !username || !password) {
     return ESP_ERR_INVALID_ARG;
   }
+  session->started = false;
+  session->verified = false;
 
-  mbedtls_mpi N, g, k, v, b, B, x, tmp, tmp2;
-  mbedtls_mpi_init(&N);
+  esp_fill_random(session->salt, sizeof(session->salt));
+  esp_fill_random(session->ephemeral, sizeof(session->ephemeral));
+
+  /* H(I) goes into the proofs later. */
+  crypto_hash_sha512(session->user_hash, (const uint8_t *)username,
+                     strlen(username));
+
+  /* x = H(s | H(I ":" P)) */
+  crypto_hash_sha512_init(&st);
+  crypto_hash_sha512_update(&st, (const uint8_t *)username, strlen(username));
+  crypto_hash_sha512_update(&st, (const uint8_t *)":", 1);
+  crypto_hash_sha512_update(&st, (const uint8_t *)password, strlen(password));
+  crypto_hash_sha512_final(&st, digest);
+  crypto_hash_sha512_init(&st);
+  crypto_hash_sha512_update(&st, session->salt, sizeof(session->salt));
+  crypto_hash_sha512_update(&st, digest, sizeof(digest));
+  crypto_hash_sha512_final(&st, digest);
+
+  mbedtls_mpi_init(&n);
   mbedtls_mpi_init(&g);
-  mbedtls_mpi_init(&k);
+  mbedtls_mpi_init(&x);
   mbedtls_mpi_init(&v);
   mbedtls_mpi_init(&b);
-  mbedtls_mpi_init(&B);
-  mbedtls_mpi_init(&x);
-  mbedtls_mpi_init(&tmp);
-  mbedtls_mpi_init(&tmp2);
+  mbedtls_mpi_init(&k);
+  mbedtls_mpi_init(&gb);
+  mbedtls_mpi_init(&pub);
 
-  int ret = -1;
+#define MPI_DO(call)                                                           \
+  do {                                                                         \
+    rc = (call);                                                               \
+    if (rc != 0) {                                                             \
+      goto done;                                                               \
+    }                                                                          \
+  } while (0)
 
-  // Generate random salt
-  esp_fill_random(session->salt, SRP_SALT_BYTES);
+  MPI_DO(mbedtls_mpi_read_binary(&n, group_prime, SRP_PRIME_BYTES));
+  MPI_DO(mpi_from_u32(&g, SRP_GENERATOR));
+  MPI_DO(mbedtls_mpi_read_binary(&x, digest, sizeof(digest)));
+  /* v = g^x */
+  MPI_DO(mbedtls_mpi_exp_mod(&v, &g, &x, &n, NULL));
+  MPI_DO(mbedtls_mpi_write_binary(&v, session->verifier, SRP_PRIME_BYTES));
 
-  // Load N and g
-  mbedtls_mpi_read_binary(&N, srp_N, sizeof(srp_N));
-  mbedtls_mpi_lset(&g, SRP_GENERATOR);
+  /* B = k*v + g^b */
+  multiplier_hash(digest);
+  MPI_DO(mbedtls_mpi_read_binary(&k, digest, sizeof(digest)));
+  MPI_DO(mbedtls_mpi_read_binary(&b, session->ephemeral, SRP_EPHEMERAL_BYTES));
+  MPI_DO(mbedtls_mpi_exp_mod(&gb, &g, &b, &n, NULL));
+  MPI_DO(mbedtls_mpi_mul_mpi(&pub, &k, &v));
+  MPI_DO(mbedtls_mpi_add_mpi(&pub, &pub, &gb));
+  MPI_DO(mbedtls_mpi_mod_mpi(&pub, &pub, &n));
+  MPI_DO(mbedtls_mpi_write_binary(&pub, session->pub_b, SRP_PRIME_BYTES));
 
-  // k = H(N || pad(g))
-  {
-    uint8_t hash_input[SRP_PRIME_BYTES * 2];
-    memcpy(hash_input, srp_N, SRP_PRIME_BYTES);
-    memset(hash_input + SRP_PRIME_BYTES, 0, SRP_PRIME_BYTES);
-    hash_input[SRP_PRIME_BYTES * 2 - 1] = SRP_GENERATOR;
+  session->started = true;
+  result = ESP_OK;
 
-    uint8_t k_hash[64];
-    crypto_hash_sha512(k_hash, hash_input, sizeof(hash_input));
-    mbedtls_mpi_read_binary(&k, k_hash, 64);
-    mbedtls_mpi_mod_mpi(&k, &k, &N);
+done:
+  if (result != ESP_OK) {
+    ESP_LOGE(TAG, "big number error %d", rc);
   }
-
-  // x = H(s || H(I || ":" || P))
-  {
-    uint8_t inner_hash[64];
-    crypto_hash_sha512_state state;
-    crypto_hash_sha512_init(&state);
-    crypto_hash_sha512_update(&state, (const uint8_t *)username,
-                              strlen(username));
-    crypto_hash_sha512_update(&state, (const uint8_t *)":", 1);
-    crypto_hash_sha512_update(&state, (const uint8_t *)password,
-                              strlen(password));
-    crypto_hash_sha512_final(&state, inner_hash);
-
-    uint8_t x_hash[64];
-    crypto_hash_sha512_init(&state);
-    crypto_hash_sha512_update(&state, session->salt, SRP_SALT_BYTES);
-    crypto_hash_sha512_update(&state, inner_hash, 64);
-    crypto_hash_sha512_final(&state, x_hash);
-
-    mbedtls_mpi_read_binary(&x, x_hash, 64);
-  }
-
-  // v = g^x mod N
-  if (mbedtls_mpi_exp_mod(&v, &g, &x, &N, NULL) != 0) {
-    goto cleanup;
-  }
-
-  // Generate random b (server secret)
-  {
-    uint8_t b_bytes[SRP_PRIME_BYTES];
-    esp_fill_random(b_bytes, sizeof(b_bytes));
-    mbedtls_mpi_read_binary(&b, b_bytes, sizeof(b_bytes));
-    mbedtls_mpi_mod_mpi(&b, &b, &N);
-    mpi_to_bytes_padded(&b, session->server_secret, SRP_PRIME_BYTES);
-  }
-
-  // B = (k*v + g^b) mod N
-  if (mbedtls_mpi_exp_mod(&tmp, &g, &b, &N, NULL) != 0) {
-    goto cleanup;
-  }
-  if (mbedtls_mpi_mul_mpi(&tmp2, &k, &v) != 0) {
-    goto cleanup;
-  }
-  if (mbedtls_mpi_add_mpi(&B, &tmp2, &tmp) != 0) {
-    goto cleanup;
-  }
-  mbedtls_mpi_mod_mpi(&B, &B, &N);
-
-  mpi_to_bytes_padded(&B, session->server_public_key, SRP_PRIME_BYTES);
-  session->state = 1;
-  ret = 0;
-
-cleanup:
-  mbedtls_mpi_free(&N);
+  mbedtls_mpi_free(&n);
   mbedtls_mpi_free(&g);
-  mbedtls_mpi_free(&k);
+  mbedtls_mpi_free(&x);
   mbedtls_mpi_free(&v);
   mbedtls_mpi_free(&b);
-  mbedtls_mpi_free(&B);
-  mbedtls_mpi_free(&x);
-  mbedtls_mpi_free(&tmp);
-  mbedtls_mpi_free(&tmp2);
-
-  return ret == 0 ? ESP_OK : ESP_FAIL;
+  mbedtls_mpi_free(&k);
+  mbedtls_mpi_free(&gb);
+  mbedtls_mpi_free(&pub);
+  sodium_memzero(digest, sizeof(digest));
+  return result;
 }
 
 const uint8_t *srp_get_salt(srp_session_t *session) {
-  return session ? session->salt : NULL;
+  return session->salt;
 }
 
 const uint8_t *srp_get_public_key(srp_session_t *session, size_t *len) {
-  if (!session) {
-    return NULL;
-  }
   if (len) {
     *len = SRP_PRIME_BYTES;
   }
-  return session->server_public_key;
+  return session->pub_b;
+}
+
+static size_t leading_zeros(const uint8_t *data, size_t len) {
+  size_t i = 0;
+  while (i < len && data[i] == 0) {
+    i++;
+  }
+  return i;
+}
+
+/* M1 = H(H(N) xor H(g) | H(I) | s | A | B | K), M2 = H(A | M1 | K).
+ * pad_ab chooses whether A and B keep their leading zero bytes here. */
+static void compute_proofs(const srp_session_t *s, const uint8_t key[64],
+                           bool pad_ab, uint8_t m1[64], uint8_t m2[64]) {
+  uint8_t mix[crypto_hash_sha512_BYTES], hash_g[crypto_hash_sha512_BYTES];
+  const uint8_t g = SRP_GENERATOR;
+  size_t skip_a = pad_ab ? 0 : leading_zeros(s->pub_a, SRP_PRIME_BYTES);
+  size_t skip_b = pad_ab ? 0 : leading_zeros(s->pub_b, SRP_PRIME_BYTES);
+  crypto_hash_sha512_state st;
+
+  crypto_hash_sha512(mix, group_prime, SRP_PRIME_BYTES);
+  crypto_hash_sha512(hash_g, &g, 1);
+  for (size_t i = 0; i < sizeof(mix); i++) {
+    mix[i] ^= hash_g[i];
+  }
+
+  crypto_hash_sha512_init(&st);
+  crypto_hash_sha512_update(&st, mix, sizeof(mix));
+  crypto_hash_sha512_update(&st, s->user_hash, sizeof(s->user_hash));
+  crypto_hash_sha512_update(&st, s->salt, sizeof(s->salt));
+  crypto_hash_sha512_update(&st, s->pub_a + skip_a, SRP_PRIME_BYTES - skip_a);
+  crypto_hash_sha512_update(&st, s->pub_b + skip_b, SRP_PRIME_BYTES - skip_b);
+  crypto_hash_sha512_update(&st, key, SRP_SESSION_KEY_BYTES);
+  crypto_hash_sha512_final(&st, m1);
+
+  crypto_hash_sha512_init(&st);
+  crypto_hash_sha512_update(&st, s->pub_a + skip_a, SRP_PRIME_BYTES - skip_a);
+  crypto_hash_sha512_update(&st, m1, SRP_PROOF_BYTES);
+  crypto_hash_sha512_update(&st, key, SRP_SESSION_KEY_BYTES);
+  crypto_hash_sha512_final(&st, m2);
+}
+
+/* S = (A * v^u)^b mod N into session->premaster. Fails if A is 0 mod N or u
+ * is 0, the two values SRP-6a must refuse. */
+static esp_err_t compute_premaster(srp_session_t *s) {
+  mbedtls_mpi n, a, v, u, b, tmp, premaster;
+  uint8_t digest[crypto_hash_sha512_BYTES];
+  crypto_hash_sha512_state st;
+  esp_err_t result = ESP_FAIL;
+  int rc;
+
+  crypto_hash_sha512_init(&st);
+  crypto_hash_sha512_update(&st, s->pub_a, SRP_PRIME_BYTES);
+  crypto_hash_sha512_update(&st, s->pub_b, SRP_PRIME_BYTES);
+  crypto_hash_sha512_final(&st, digest);
+
+  mbedtls_mpi_init(&n);
+  mbedtls_mpi_init(&a);
+  mbedtls_mpi_init(&v);
+  mbedtls_mpi_init(&u);
+  mbedtls_mpi_init(&b);
+  mbedtls_mpi_init(&tmp);
+  mbedtls_mpi_init(&premaster);
+
+  MPI_DO(mbedtls_mpi_read_binary(&n, group_prime, SRP_PRIME_BYTES));
+  MPI_DO(mbedtls_mpi_read_binary(&a, s->pub_a, SRP_PRIME_BYTES));
+  MPI_DO(mbedtls_mpi_mod_mpi(&a, &a, &n));
+  MPI_DO(mbedtls_mpi_read_binary(&u, digest, sizeof(digest)));
+  if (mbedtls_mpi_cmp_int(&a, 0) == 0 || mbedtls_mpi_cmp_int(&u, 0) == 0) {
+    rc = 0;
+    goto done;
+  }
+  MPI_DO(mbedtls_mpi_read_binary(&v, s->verifier, SRP_PRIME_BYTES));
+  MPI_DO(mbedtls_mpi_read_binary(&b, s->ephemeral, SRP_EPHEMERAL_BYTES));
+  MPI_DO(mbedtls_mpi_exp_mod(&tmp, &v, &u, &n, NULL));
+  MPI_DO(mbedtls_mpi_mul_mpi(&tmp, &a, &tmp));
+  MPI_DO(mbedtls_mpi_mod_mpi(&tmp, &tmp, &n));
+  MPI_DO(mbedtls_mpi_exp_mod(&premaster, &tmp, &b, &n, NULL));
+  MPI_DO(mbedtls_mpi_write_binary(&premaster, s->premaster, SRP_PRIME_BYTES));
+  result = ESP_OK;
+
+done:
+  mbedtls_mpi_free(&n);
+  mbedtls_mpi_free(&a);
+  mbedtls_mpi_free(&v);
+  mbedtls_mpi_free(&u);
+  mbedtls_mpi_free(&b);
+  mbedtls_mpi_free(&tmp);
+  mbedtls_mpi_free(&premaster);
+  sodium_memzero(digest, sizeof(digest));
+  return result;
 }
 
 esp_err_t srp_verify_client(srp_session_t *session,
                             const uint8_t *client_public_key,
                             size_t client_pk_len, const uint8_t *client_proof,
                             size_t proof_len) {
-  if (!session || !client_public_key || !client_proof ||
-      proof_len < SRP_PROOF_BYTES) {
+  if (!session || !client_public_key || !client_proof) {
     return ESP_ERR_INVALID_ARG;
   }
-
-  // Store client's public key A (zero-padded)
-  if (client_pk_len > SRP_PRIME_BYTES) {
-    client_pk_len = SRP_PRIME_BYTES;
+  if (!session->started) {
+    return ESP_ERR_INVALID_STATE;
   }
-  memset(session->client_public_key, 0, SRP_PRIME_BYTES);
-  memcpy(session->client_public_key + (SRP_PRIME_BYTES - client_pk_len),
-         client_public_key, client_pk_len);
-
-  mbedtls_mpi N, g, A, B, b, u, S, k, v, x, tmp, tmp2;
-  mbedtls_mpi_init(&N);
-  mbedtls_mpi_init(&g);
-  mbedtls_mpi_init(&A);
-  mbedtls_mpi_init(&B);
-  mbedtls_mpi_init(&b);
-  mbedtls_mpi_init(&u);
-  mbedtls_mpi_init(&S);
-  mbedtls_mpi_init(&k);
-  mbedtls_mpi_init(&v);
-  mbedtls_mpi_init(&x);
-  mbedtls_mpi_init(&tmp);
-  mbedtls_mpi_init(&tmp2);
-
-  int ret = -1;
-
-  // Load parameters
-  mbedtls_mpi_read_binary(&N, srp_N, sizeof(srp_N));
-  mbedtls_mpi_lset(&g, SRP_GENERATOR);
-  mbedtls_mpi_read_binary(&A, session->client_public_key, SRP_PRIME_BYTES);
-  mbedtls_mpi_read_binary(&B, session->server_public_key, SRP_PRIME_BYTES);
-  mbedtls_mpi_read_binary(&b, session->server_secret, SRP_PRIME_BYTES);
-
-  // Check A != 0 and A % N != 0
-  if (mbedtls_mpi_cmp_int(&A, 0) == 0) {
-    ESP_LOGE(TAG, "Invalid client public key (zero)");
-    goto cleanup;
-  }
-  mbedtls_mpi_mod_mpi(&tmp, &A, &N);
-  if (mbedtls_mpi_cmp_int(&tmp, 0) == 0) {
-    ESP_LOGE(TAG, "Invalid client public key (multiple of N)");
-    goto cleanup;
+  if (client_pk_len == 0 || client_pk_len > SRP_PRIME_BYTES ||
+      proof_len != SRP_PROOF_BYTES) {
+    return ESP_ERR_INVALID_SIZE;
   }
 
-  // u = H(PAD(A) || PAD(B))
-  {
-    uint8_t ab_concat[SRP_PRIME_BYTES * 2];
-    memcpy(ab_concat, session->client_public_key, SRP_PRIME_BYTES);
-    memcpy(ab_concat + SRP_PRIME_BYTES, session->server_public_key,
-           SRP_PRIME_BYTES);
-    uint8_t u_hash[64];
-    crypto_hash_sha512(u_hash, ab_concat, sizeof(ab_concat));
-    mbedtls_mpi_read_binary(&u, u_hash, 64);
+  session->verified = false;
+  memset(session->pub_a, 0, SRP_PRIME_BYTES);
+  memcpy(session->pub_a + SRP_PRIME_BYTES - client_pk_len, client_public_key,
+         client_pk_len);
+
+  esp_err_t err = compute_premaster(session);
+  if (err != ESP_OK) {
+    return err;
   }
 
-  // Recompute k = H(N || pad(g))
-  {
-    uint8_t hash_input[SRP_PRIME_BYTES * 2];
-    memcpy(hash_input, srp_N, SRP_PRIME_BYTES);
-    memset(hash_input + SRP_PRIME_BYTES, 0, SRP_PRIME_BYTES);
-    hash_input[SRP_PRIME_BYTES * 2 - 1] = SRP_GENERATOR;
-    uint8_t k_hash[64];
-    crypto_hash_sha512(k_hash, hash_input, sizeof(hash_input));
-    mbedtls_mpi_read_binary(&k, k_hash, 64);
-    mbedtls_mpi_mod_mpi(&k, &k, &N);
-  }
+  /* Implementations differ on whether leading zero bytes of S, A and B are
+   * hashed, which only shows about once in 256 pairings. The client's proof
+   * tells which it used: try the forms that differ for these values. */
+  size_t zeros_s = leading_zeros(session->premaster, SRP_PRIME_BYTES);
+  bool ab_differ = session->pub_a[0] == 0 || session->pub_b[0] == 0;
+  uint8_t key[SRP_SESSION_KEY_BYTES], m1[SRP_PROOF_BYTES], m2[SRP_PROOF_BYTES];
 
-  // Recompute x = H(s || H(I || ":" || P)) for "Pair-Setup:3939"
-  {
-    uint8_t inner_hash[64];
-    crypto_hash_sha512_state state;
-    crypto_hash_sha512_init(&state);
-    crypto_hash_sha512_update(&state, (const uint8_t *)"Pair-Setup", 10);
-    crypto_hash_sha512_update(&state, (const uint8_t *)":", 1);
-    crypto_hash_sha512_update(&state, (const uint8_t *)"3939", 4);
-    crypto_hash_sha512_final(&state, inner_hash);
-
-    uint8_t x_hash[64];
-    crypto_hash_sha512_init(&state);
-    crypto_hash_sha512_update(&state, session->salt, SRP_SALT_BYTES);
-    crypto_hash_sha512_update(&state, inner_hash, 64);
-    crypto_hash_sha512_final(&state, x_hash);
-
-    mbedtls_mpi_read_binary(&x, x_hash, 64);
-  }
-
-  // v = g^x mod N
-  if (mbedtls_mpi_exp_mod(&v, &g, &x, &N, NULL) != 0) {
-    goto cleanup;
-  }
-
-  // S = (A * v^u)^b mod N
-  if (mbedtls_mpi_exp_mod(&tmp, &v, &u, &N, NULL) != 0) {
-    goto cleanup;
-  }
-  if (mbedtls_mpi_mul_mpi(&tmp2, &A, &tmp) != 0) {
-    goto cleanup;
-  }
-  mbedtls_mpi_mod_mpi(&tmp2, &tmp2, &N);
-  if (mbedtls_mpi_exp_mod(&S, &tmp2, &b, &N, NULL) != 0) {
-    goto cleanup;
-  }
-
-  // K = H(S)
-  uint8_t S_bytes[SRP_PRIME_BYTES];
-  size_t S_len = mpi_to_bytes_min(&S, S_bytes, sizeof(S_bytes));
-  crypto_hash_sha512(session->session_key, S_bytes, S_len);
-  session->session_key_len = 64;
-
-  // Compute expected M1 = H(H(N)^H(g) || H(I) || s || A || B || K)
-  uint8_t expected_m1[64];
-  {
-    // H(N)
-    uint8_t h_N[64];
-    crypto_hash_sha512(h_N, srp_N, sizeof(srp_N));
-
-    // H(g)
-    uint8_t g_byte = SRP_GENERATOR;
-    uint8_t h_g[64];
-    crypto_hash_sha512(h_g, &g_byte, 1);
-
-    // H(N) ^ H(g)
-    uint8_t h_Ng_xor[64];
-    for (int i = 0; i < 64; i++) {
-      h_Ng_xor[i] = h_N[i] ^ h_g[i];
+  err = ESP_FAIL;
+  for (int pad_s = 1; pad_s >= (zeros_s ? 0 : 1) && err != ESP_OK; pad_s--) {
+    size_t skip = pad_s ? 0 : zeros_s;
+    crypto_hash_sha512(key, session->premaster + skip, SRP_PRIME_BYTES - skip);
+    for (int pad_ab = 0; pad_ab <= (ab_differ ? 1 : 0); pad_ab++) {
+      compute_proofs(session, key, pad_ab != 0, m1, m2);
+      if (sodium_memcmp(m1, client_proof, SRP_PROOF_BYTES) == 0) {
+        memcpy(session->session_key, key, sizeof(key));
+        memcpy(session->server_proof, m2, sizeof(m2));
+        session->verified = true;
+        err = ESP_OK;
+        break;
+      }
     }
-
-    // H(I) where I = "Pair-Setup"
-    uint8_t h_I[64];
-    crypto_hash_sha512(h_I, (const uint8_t *)"Pair-Setup", 10);
-
-    // Get minimal representations
-    const uint8_t *salt_ptr;
-    size_t salt_len;
-    trim_leading_zeros(session->salt, SRP_SALT_BYTES, &salt_ptr, &salt_len);
-
-    uint8_t A_bytes[SRP_PRIME_BYTES];
-    uint8_t B_bytes[SRP_PRIME_BYTES];
-    size_t A_len = mpi_to_bytes_min(&A, A_bytes, sizeof(A_bytes));
-    size_t B_len = mpi_to_bytes_min(&B, B_bytes, sizeof(B_bytes));
-
-    compute_m1(expected_m1, h_Ng_xor, h_I, salt_ptr, salt_len, A_bytes, A_len,
-               B_bytes, B_len, session->session_key, 64);
   }
 
-  // Verify client proof
-  if (memcmp(client_proof, expected_m1, SRP_PROOF_BYTES) != 0) {
-    ESP_LOGE(TAG, "Client proof verification failed");
-    goto cleanup;
-  }
-
-  memcpy(session->proof_m1, client_proof, SRP_PROOF_BYTES);
-  {
-    uint8_t A_bytes[SRP_PRIME_BYTES];
-    size_t A_len = mpi_to_bytes_min(&A, A_bytes, sizeof(A_bytes));
-
-    crypto_hash_sha512_state state;
-    crypto_hash_sha512_init(&state);
-    crypto_hash_sha512_update(&state, A_bytes, A_len);
-    crypto_hash_sha512_update(&state, session->proof_m1, SRP_PROOF_BYTES);
-    crypto_hash_sha512_update(&state, session->session_key,
-                              session->session_key_len);
-    crypto_hash_sha512_final(&state, session->proof_m2);
-  }
-
-  session->verified = true;
-  session->state = 2;
-  ret = 0;
-
-cleanup:
-  mbedtls_mpi_free(&N);
-  mbedtls_mpi_free(&g);
-  mbedtls_mpi_free(&A);
-  mbedtls_mpi_free(&B);
-  mbedtls_mpi_free(&b);
-  mbedtls_mpi_free(&u);
-  mbedtls_mpi_free(&S);
-  mbedtls_mpi_free(&k);
-  mbedtls_mpi_free(&v);
-  mbedtls_mpi_free(&x);
-  mbedtls_mpi_free(&tmp);
-  mbedtls_mpi_free(&tmp2);
-
-  return ret == 0 ? ESP_OK : ESP_FAIL;
+  sodium_memzero(session->premaster, sizeof(session->premaster));
+  sodium_memzero(key, sizeof(key));
+  sodium_memzero(m1, sizeof(m1));
+  sodium_memzero(m2, sizeof(m2));
+  return err;
 }
 
 const uint8_t *srp_get_proof(srp_session_t *session) {
-  if (!session || !session->verified) {
-    return NULL;
-  }
-  return session->proof_m2;
+  return session->server_proof;
 }
 
 const uint8_t *srp_get_session_key(srp_session_t *session, size_t *len) {
   if (!session || !session->verified) {
+    if (len) {
+      *len = 0;
+    }
     return NULL;
   }
   if (len) {
-    *len = session->session_key_len;
+    *len = SRP_SESSION_KEY_BYTES;
   }
   return session->session_key;
 }

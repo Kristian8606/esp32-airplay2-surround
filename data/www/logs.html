@@ -1,113 +1,81 @@
-<!DOCTYPE html><html><head>
-<meta charset='UTF-8'>
-<meta name='viewport' content='width=device-width,initial-scale=1'>
+<!DOCTYPE html><html lang='en'><head>
+<meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
 <title>System Logs</title>
 <style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,system-ui,sans-serif;background:#0d1117;color:#c9d1d9;height:100vh;display:flex;flex-direction:column;overflow:hidden}
-.toolbar{background:#161b22;padding:10px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid #30363d}
-.toolbar h1{font-size:16px;font-weight:600;flex:1}
-.toolbar a{color:#58a6ff;text-decoration:none;font-size:13px}
-.dot{width:10px;height:10px;border-radius:50%;background:#f85149}
-.dot.ok{background:#3fb950}
-.btn-sm{padding:6px 12px;border:1px solid #30363d;border-radius:6px;background:#21262d;color:#c9d1d9;font-size:12px;cursor:pointer}
-.btn-sm:hover{background:#30363d}
-#log{flex:1;min-height:0;overflow-y:auto;padding:12px 16px;font-family:'SF Mono',Consolas,monospace;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all}
-.a30{color:#484f58}.a31{color:#f85149}.a32{color:#3fb950}.a33{color:#d29922}.a34{color:#58a6ff}.a35{color:#bc8cff}.a36{color:#39c5cf}.a37{color:#c9d1d9}
-.a90{color:#6e7681}.a91{color:#ff7b72}.a92{color:#56d364}.a93{color:#e3b341}.a94{color:#79c0ff}.a95{color:#d2a8ff}.a96{color:#56d4dd}.a97{color:#f0f6fc}
-</style><style>/* theme */body{background:#000}.toolbar{background:#0f0f10;border-bottom:1px solid rgba(255,255,255,.08)}.toolbar h1{font-weight:400;letter-spacing:.5px}.toolbar a{color:#8b7bff}.btn-sm{background:transparent;border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:6px 14px}.btn-sm:hover{border-color:#fff;background:transparent}</style></head><body>
-<div class='toolbar'>
-<a href='/'>&larr; Back</a>
+:root{--bg:#000;--panel:#0f0f10;--line:rgba(255,255,255,.12);--text:#f2f2f4;--muted:#9a9aa2;--accent:#8b5cff;--ok:#49c98a;--warn:#e7b34b;--err:#ff6b6b}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--text);font:14px -apple-system,'Helvetica Neue',system-ui,sans-serif;display:flex;flex-direction:column;padding:12px 16px;gap:10px}
+a{color:var(--accent);text-decoration:none}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+h1{font-size:20px;font-weight:600;margin-right:auto}
+#state{font-size:12px;color:var(--muted)}
+#state.on{color:var(--ok)}
+#state.off{color:var(--err)}
+button,input{font:inherit;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 10px;min-height:34px}
+button{cursor:pointer}
+input{flex:1 1 180px;min-width:0}
+#log{flex:1;min-height:0;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px;font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+.E{color:var(--err)}.W{color:var(--warn)}.hide{display:none}
+</style></head><body>
+<header>
 <h1>System Logs</h1>
-<span id='dot' class='dot'></span>
-<button class='btn-sm' onclick='clear_log()'>Clear</button>
-<button class='btn-sm' id='scroll-btn' onclick='toggle_scroll()'>Auto-scroll: ON</button>
-</div>
-<div id='log'><div id='anchor'></div></div>
+<span id='state'>Connecting</span>
+<a href='/'>Back</a>
+</header>
+<header>
+<input id='filter' type='search' placeholder='Show only lines containing' aria-label='Filter'>
+<button id='pause' type='button'>Pause</button>
+<button id='clear' type='button'>Clear</button>
+<button id='save' type='button'>Save</button>
+</header>
+<div id='log' role='log' aria-live='off'></div>
 <script>
-var log=document.getElementById('log'),dot=document.getElementById('dot'),anchor=document.getElementById('anchor'),autoScroll=true,maxLines=2000;
-function set_auto(v){autoScroll=v;document.getElementById('scroll-btn').textContent='Auto-scroll: '+(v?'ON':'OFF');}
-function toggle_scroll(){set_auto(!autoScroll);if(autoScroll)log.scrollTop=log.scrollHeight;}
-function at_bottom(){return log.scrollHeight-log.scrollTop-log.clientHeight<40;}
-// Auto-scroll must yield to the reader: scrolling up pauses it so new lines
-// never yank the view back down; scrolling to the bottom resumes it.
-log.addEventListener('scroll',function(){
-  if(autoScroll&&!at_bottom())set_auto(false);
-  else if(!autoScroll&&at_bottom())set_auto(true);
-});
-function clear_log(){log.innerHTML='';anchor=document.createElement('div');anchor.id='anchor';log.appendChild(anchor);}
-var ansiRe=/\x1b\[([0-9;]*)m/g;
-var ansiCls={'30':1,'31':1,'32':1,'33':1,'34':1,'35':1,'36':1,'37':1,'90':1,'91':1,'92':1,'93':1,'94':1,'95':1,'96':1,'97':1};
-var letterCls={'E':'a31','W':'a33','I':'a32','D':'a30','V':'a30'};
-function colorize(text){
-  var frag=document.createDocumentFragment();
-  text.split('\n').forEach(function(line){
-    if(!line)return;
-    var wrap=document.createElement('span');
-    var hasAnsi=ansiRe.test(line);
-    ansiRe.lastIndex=0;
-    if(hasAnsi){
-      var last=0,cls=null,m;
-      while((m=ansiRe.exec(line))!==null){
-        if(m.index>last){
-          var s=document.createElement('span');
-          if(cls)s.className=cls;
-          s.textContent=line.substring(last,m.index);
-          wrap.appendChild(s);
-        }
-        var p=m[1].split(';');cls=null;
-        for(var i=0;i<p.length;i++){if(ansiCls[p[i]])cls='a'+p[i];}
-        last=ansiRe.lastIndex;
-      }
-      if(last<line.length){
-        var s=document.createElement('span');
-        if(cls)s.className=cls;
-        s.textContent=line.substring(last);
-        wrap.appendChild(s);
-      }
-    }else{
-      var ch=line.charAt(0);
-      if(letterCls[ch])wrap.className=letterCls[ch];
-      wrap.textContent=line;
-    }
-    wrap.appendChild(document.createTextNode('\n'));
-    frag.appendChild(wrap);
-  });
-  var follow=autoScroll&&at_bottom();
-  log.insertBefore(frag,anchor);
-  var trimmed=0;
-  while(log.childNodes.length>maxLines+1){
-    trimmed+=log.firstChild.offsetHeight||0;
-    log.removeChild(log.firstChild);
-  }
-  if(follow)log.scrollTop=log.scrollHeight;
-  else if(trimmed)log.scrollTop=Math.max(0,log.scrollTop-trimmed);
+const MAX_LINES=2000;
+const logEl=document.getElementById('log'),stateEl=document.getElementById('state'),filterEl=document.getElementById('filter'),pauseEl=document.getElementById('pause');
+let partial='',paused=false,held=[],retry=1000;
+
+function matches(el){const f=filterEl.value.toLowerCase();return !f||el.textContent.toLowerCase().includes(f);}
+function addLine(text){
+  /* Remove the colour codes ESP-IDF puts around its log lines. */
+  const clean=text.replace(/\x1b\[[0-9;]*m/g,'');
+  const el=document.createElement('div');
+  el.textContent=clean;
+  if(/^[EW] \(/.test(clean))el.className=clean[0];
+  if(!matches(el))el.classList.add('hide');
+  logEl.appendChild(el);
+  while(logEl.childElementCount>MAX_LINES)logEl.firstElementChild.remove();
 }
-var ws=null,retryTimer=null,retryMs=2000;
-function schedule_reconnect(){
-  if(document.hidden||!navigator.onLine||retryTimer)return;
-  retryTimer=setTimeout(function(){retryTimer=null;connect();},retryMs);
-  retryMs=Math.min(retryMs*2,15000);
+function addText(chunk){
+  const parts=(partial+chunk).split('\n');
+  partial=parts.pop();
+  const follow=logEl.scrollTop+logEl.clientHeight>=logEl.scrollHeight-30;
+  parts.forEach(addLine);
+  if(follow)logEl.scrollTop=logEl.scrollHeight;
 }
+function setState(text,cls){stateEl.textContent=text;stateEl.className=cls;}
 function connect(){
-  if(document.hidden||!navigator.onLine)return;
-  if(ws&&(ws.readyState===WebSocket.OPEN||ws.readyState===WebSocket.CONNECTING))return;
-  ws=new WebSocket('ws://'+location.host+'/ws/logs');
-  var pending='';
-  function append_text(text){
-    pending+=text;
-    var end=pending.lastIndexOf('\n');
-    if(end>=0){colorize(pending.substring(0,end+1));pending=pending.substring(end+1);}
-    if(pending.length>8192){colorize(pending);pending='';}
-  }
-  ws.onopen=function(){retryMs=2000;dot.classList.add('ok');};
-  ws.onclose=function(){if(pending)colorize(pending);dot.classList.remove('ok');ws=null;schedule_reconnect();};
-  ws.onerror=function(){if(ws)ws.close();};
-  ws.onmessage=function(e){append_text(e.data);};
+  const scheme=location.protocol==='https:'?'wss://':'ws://';
+  const ws=new WebSocket(scheme+location.host+'/ws/logs');
+  ws.onopen=()=>{retry=1000;setState('Connected','on');};
+  ws.onmessage=e=>{if(paused)held.push(e.data);else addText(e.data);};
+  ws.onclose=()=>{setState('Reconnecting','off');setTimeout(connect,retry);retry=Math.min(retry*2,10000);};
+  ws.onerror=()=>ws.close();
 }
-document.addEventListener('visibilitychange',function(){if(!document.hidden)connect();});
-window.addEventListener('online',connect);
-window.addEventListener('offline',function(){if(ws)ws.close();});
-window.addEventListener('pagehide',function(){if(retryTimer){clearTimeout(retryTimer);retryTimer=null;}if(ws)ws.close();});
+pauseEl.onclick=()=>{
+  paused=!paused;
+  pauseEl.textContent=paused?'Resume':'Pause';
+  if(!paused){held.forEach(addText);held=[];}
+};
+document.getElementById('clear').onclick=()=>{logEl.textContent='';partial='';held=[];};
+document.getElementById('save').onclick=()=>{
+  const lines=[...logEl.children].map(el=>el.textContent).join('\n');
+  const link=document.createElement('a');
+  link.href=URL.createObjectURL(new Blob([lines+'\n'],{type:'text/plain'}));
+  link.download='esp32-log-'+new Date().toISOString().replace(/[:.]/g,'-')+'.txt';
+  link.click();
+  setTimeout(()=>URL.revokeObjectURL(link.href),1000);
+};
+filterEl.oninput=()=>{for(const el of logEl.children)el.classList.toggle('hide',!matches(el));};
 connect();
 </script></body></html>

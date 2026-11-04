@@ -1,5 +1,9 @@
-#include <string.h>
 #include "tlv8.h"
+
+#include <string.h>
+
+#define TLV_HEADER_LEN   2u
+#define TLV_FRAGMENT_MAX 255u
 
 void tlv8_encoder_init(tlv8_encoder_t *enc, uint8_t *buffer, size_t capacity) {
   enc->buffer = buffer;
@@ -7,106 +11,114 @@ void tlv8_encoder_init(tlv8_encoder_t *enc, uint8_t *buffer, size_t capacity) {
   enc->capacity = capacity;
 }
 
+static bool put_item(tlv8_encoder_t *enc, uint8_t type, const uint8_t *value,
+                     size_t len) {
+  if (enc->capacity - enc->size < TLV_HEADER_LEN + len) {
+    return false;
+  }
+  enc->buffer[enc->size++] = type;
+  enc->buffer[enc->size++] = (uint8_t)len;
+  if (len) {
+    memcpy(enc->buffer + enc->size, value, len);
+    enc->size += len;
+  }
+  return true;
+}
+
 bool tlv8_encode(tlv8_encoder_t *enc, uint8_t type, const uint8_t *value,
                  size_t len) {
-  size_t offset = 0;
-
-  while (offset < len || (offset == 0 && len == 0)) {
-    size_t chunk_len = len - offset;
-    if (chunk_len > 255) {
-      chunk_len = 255;
-    }
-
-    // Check if we have space
-    if (enc->size + 2 + chunk_len > enc->capacity) {
+  if (len == 0) {
+    return put_item(enc, type, NULL, 0);
+  }
+  while (len) {
+    size_t chunk = len < TLV_FRAGMENT_MAX ? len : TLV_FRAGMENT_MAX;
+    if (!put_item(enc, type, value, chunk)) {
       return false;
     }
-
-    enc->buffer[enc->size++] = type;
-    enc->buffer[enc->size++] = (uint8_t)chunk_len;
-
-    if (chunk_len > 0) {
-      memcpy(enc->buffer + enc->size, value + offset, chunk_len);
-      enc->size += chunk_len;
-    }
-
-    offset += chunk_len;
-
-    // For zero-length values, only write one TLV
-    if (len == 0) {
-      break;
-    }
+    value += chunk;
+    len -= chunk;
   }
-
   return true;
 }
 
 bool tlv8_encode_byte(tlv8_encoder_t *enc, uint8_t type, uint8_t value) {
-  return tlv8_encode(enc, type, &value, 1);
+  return put_item(enc, type, &value, 1);
 }
 
 size_t tlv8_encoder_size(const tlv8_encoder_t *enc) {
   return enc->size;
 }
 
+/* Reads the item at *pos and moves past it. False at the end or if the item
+ * runs past the data. */
+static bool next_item(const uint8_t *data, size_t data_len, size_t *pos,
+                      uint8_t *type, const uint8_t **value, size_t *len) {
+  if (data_len - *pos < TLV_HEADER_LEN) {
+    return false;
+  }
+  size_t item_len = data[*pos + 1];
+  if (data_len - *pos - TLV_HEADER_LEN < item_len) {
+    return false;
+  }
+  *type = data[*pos];
+  *value = data + *pos + TLV_HEADER_LEN;
+  *len = item_len;
+  *pos += TLV_HEADER_LEN + item_len;
+  return true;
+}
+
 const uint8_t *tlv8_find(const uint8_t *data, size_t data_len, uint8_t type,
                          size_t *value_len) {
-  size_t offset = 0;
+  size_t pos = 0, len = 0;
+  uint8_t item_type = 0;
+  const uint8_t *value = NULL;
 
-  while (offset + 2 <= data_len) {
-    uint8_t t = data[offset];
-    uint8_t l = data[offset + 1];
-
-    if (offset + 2 + l > data_len) {
-      break; // Invalid TLV
-    }
-
-    if (t == type) {
-      *value_len = l;
-      return data + offset + 2;
-    }
-
-    offset += 2 + l;
+  if (!data) {
+    return NULL;
   }
-
-  *value_len = 0;
+  while (next_item(data, data_len, &pos, &item_type, &value, &len)) {
+    if (item_type == type) {
+      if (value_len) {
+        *value_len = len;
+      }
+      return value;
+    }
+  }
   return NULL;
 }
 
 bool tlv8_decode_concat(const uint8_t *data, size_t data_len, uint8_t type,
                         uint8_t *out_buffer, size_t out_capacity,
                         size_t *out_len) {
-  size_t offset = 0;
-  size_t out_offset = 0;
+  size_t pos = 0, len = 0, total = 0;
+  uint8_t item_type = 0;
+  const uint8_t *value = NULL;
   bool found = false;
-  bool in_sequence = false;
 
-  while (offset + 2 <= data_len) {
-    uint8_t t = data[offset];
-    uint8_t l = data[offset + 1];
-
-    if (offset + 2 + l > data_len) {
-      break; // Invalid TLV
-    }
-
-    if (t == type) {
-      found = true;
-      in_sequence = true;
-
-      if (out_offset + l > out_capacity) {
-        return false; // Buffer too small
-      }
-
-      memcpy(out_buffer + out_offset, data + offset + 2, l);
-      out_offset += l;
-    } else if (in_sequence) {
-      // Different type encountered after our type - stop concatenating
-      break;
-    }
-
-    offset += 2 + l;
+  if (!data) {
+    return false;
   }
-
-  *out_len = out_offset;
+  while (next_item(data, data_len, &pos, &item_type, &value, &len)) {
+    if (item_type != type) {
+      if (found) {
+        break; /* a value's fragments are adjacent */
+      }
+      continue;
+    }
+    if (out_capacity - total < len) {
+      return false;
+    }
+    if (len) {
+      memcpy(out_buffer + total, value, len);
+    }
+    total += len;
+    found = true;
+    if (len < TLV_FRAGMENT_MAX) {
+      break; /* only a full fragment continues */
+    }
+  }
+  if (found) {
+    *out_len = total;
+  }
   return found;
 }
