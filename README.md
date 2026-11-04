@@ -2,8 +2,7 @@
   <b>Enjoying this project?</b> It is built and tested in my free time. A small
   donation helps buy test hardware and keeps the development going. Thank you! ❤️
   <br><br>
-  <!-- DONATION LINK: replace the # in href="#" below with your donation link -->
-  <a href="#"><img src="https://img.shields.io/badge/Donate-Support%20this%20project-ff5e5b?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="Donate"></a>
+  <a href="https://www.paypal.com/donate/?business=VGY3ZM78NAL78&no_recurring=0&currency_code=EUR"><img src="https://img.shields.io/badge/Donate-PayPal-ff5e5b?style=for-the-badge&logo=paypal&logoColor=white" alt="Donate with PayPal"></a>
 </p>
 
 <p align="center">
@@ -1026,6 +1025,5 @@ affiliated with or endorsed by Apple.
   If this project helped you build your surround system, please consider
   supporting it. 🙏
   <br><br>
-  <!-- DONATION LINK: replace the # in href="#" below with your donation link -->
-  <a href="#"><img src="https://img.shields.io/badge/Donate-Support%20this%20project-ff5e5b?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="Donate"></a>
+  <a href="https://www.paypal.com/donate/?business=VGY3ZM78NAL78&no_recurring=0&currency_code=EUR"><img src="https://img.shields.io/badge/Donate-PayPal-ff5e5b?style=for-the-badge&logo=paypal&logoColor=white" alt="Donate with PayPal"></a>
 </p>
