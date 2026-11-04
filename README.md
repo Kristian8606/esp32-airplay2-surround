@@ -1004,8 +1004,12 @@ afterwards).
   allows redistribution in source and binary form without copyright fees but
   **grants no patent rights**: AAC patent licenses are available through Via
   Licensing or the patent owners.
-- The **rest of this repository** has no license file yet, so no license is
-  granted for it beyond viewing it on GitHub.
+- The **rest of this repository** is based on
+  [rbouteiller/airplay-esp32](https://github.com/rbouteiller/airplay-esp32)
+  and is under its **Non-Commercial License**, Copyright (c) 2026 Remi
+  Bouteiller, in [`LICENSE`](LICENSE): use, copying, changes and
+  distribution for non-commercial purposes only; commercial use needs
+  written permission from the copyright holder.
 - Other components (ESP-IDF, `esp_audio_codec`, libsodium, mDNS, cJSON,
   led_strip) come through the ESP-IDF component manager under their own
   licenses.
