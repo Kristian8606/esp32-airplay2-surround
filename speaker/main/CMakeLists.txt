@@ -18,7 +18,6 @@ set(SPEAKER_SRCS
     "audio/pcm_fifo.c"
     "audio/pcm_rtp_ring.c"
     "audio/audio_playout.c"
-    "audio/audio_crypto.c"
     "spk_link.c"
     "spk_time.c"
     "spk_update.c"
@@ -38,6 +37,7 @@ idf_component_register(
         esp_driver_i2s
         esp_adc
         fdk_aac
+        ap2_core
 )
 
 airplay_embed_web_pages(index logs speedtest eq)

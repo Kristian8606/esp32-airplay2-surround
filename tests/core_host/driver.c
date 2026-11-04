@@ -8,7 +8,8 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include "audio_crypto.h"
+#include "ap2_audio_crypto.h"
+#include "audio_receiver.h"
 #include "mdns.h"
 #include "mdns_airplay.h"
 #include "rtsp_events.h"
@@ -20,7 +21,7 @@ static const char *s_name = "Living Room";
 void wifi_sanitize_hostname(const char *in, char *out, size_t len) { snprintf(out, len, "h-%s", in); for (char *p = out; *p; p++) if (!((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z'))) *p = '-'; }
 void wifi_get_mac_str(char *m, size_t l) { snprintf(m, l, "AA:BB:CC:01:02:03"); }
 esp_err_t settings_get_device_name(char *n, size_t l) { if (!s_name) return ESP_FAIL; snprintf(n, l, "%s", s_name); return ESP_OK; }
-const uint8_t *hap_get_public_key(void) { static uint8_t k[32]; for (int i = 0; i < 32; i++) k[i] = (uint8_t)(i * 7 + 1); return k; }
+const uint8_t *ap2_hap_identity_public_key(void) { static uint8_t k[32]; for (int i = 0; i < 32; i++) k[i] = (uint8_t)(i * 7 + 1); return k; }
 void airplay_get_pairing_id(char *o, size_t l) { snprintf(o, l, "11111111-2222-4333-8444-555555555555"); }
 
 static void js(const char *s) { putchar('"'); for (; s && *s; s++) { unsigned char c = (unsigned char)*s; if (c < 32 || c == '"' || c == '\\' || c > 126) printf("\\u%04x", c); else putchar(c); } putchar('"'); }
@@ -70,7 +71,7 @@ int main(void) {
       static char kh[128]; static audio_encrypt_t e; int ty = 0, cap = 0; memset(&e, 0, sizeof(e)); strcpy(a, "-"); strcpy(b, "-");
       sscanf(line, "%*s %d %127s %d %131071s %131071s", &ty, kh, &cap, a, b); e.type = ty; unhex(kh, e.key, 32); e.key_len = 32;
       size_t il = a[0] == '-' ? 0 : unhex(a, in, sizeof(in)), fl = b[0] == '-' ? 0 : unhex(b, full, sizeof(full)); memset(out, 0xEE, sizeof(out)); int r;
-      if (!strcmp(cmd, "rtp")) r = audio_crypto_decrypt_rtp(&e, in, il, out, (size_t)cap, fl ? full : NULL, fl); else r = audio_crypto_decrypt_buffered(&e, in, il, out, (size_t)cap);
+      if (!strcmp(cmd, "rtp")) r = ap2_audio_decrypt_rtp(audio_encrypt_key(&e), in, il, out, (size_t)cap, fl ? full : NULL, fl); else r = ap2_audio_decrypt_buffered(audio_encrypt_key(&e), in, il, out, (size_t)cap);
       printf("\"r\":%d,\"v\":", r); hex(out, r > 0 ? (size_t)r : 0);
     } else printf("\"bad\":1");
     printf("}\n");

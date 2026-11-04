@@ -2,9 +2,7 @@
 #include "rtsp_handlers.h"
 #include "rtsp_crypto.h"
 #include "rtsp_events.h"
-#include "hap_internal.h"
-#include "srp.h"
-#include "plist.h"
+#include "ap2_compat.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -434,11 +432,10 @@ esp_err_t rtsp_start_event_port_task(int listener, rtsp_conn_t *conn) {
   ctx->volume_owner = conn;
   ctx->peer_ip = conn->client_ip;
   const hap_session_t *hap = conn->hap_session;
-  ctx->encrypted = conn->encrypted_mode && hap && hap->session_established;
+  ctx->encrypted = conn->encrypted_mode && hap && ap2_hap_established(hap);
   if (ctx->encrypted) {
-    const uint8_t *key = hap->shared_secret;
-    size_t len = sizeof(hap->shared_secret);
-    if (hap->pair_setup_transient) key = srp_get_session_key(hap->srp, &len);
+    size_t len = 0;
+    const uint8_t *key = ap2_hap_pairing_secret(hap, &len);
     if (!key || !len) { free(ctx); return ESP_ERR_INVALID_STATE; }
     const char *salt = "Events-Salt";
     const char *tx_info = "Events-Write-Encryption-Key";

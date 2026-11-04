@@ -10,7 +10,7 @@
 
 #include "alac_decoder.h"
 #include "audio_format_log.h"
-#include "audio_crypto.h"
+#include "ap2_audio_crypto.h"
 #include "audio_diag.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -318,9 +318,9 @@ static bool decode_audio_packet(alac_decoder_t *decoder,
 
   const uint8_t *payload = packet + payload_off;
   const size_t payload_len = packet_len - payload_off;
-  int dec_len = audio_crypto_decrypt_rtp(
-      &s_rt.cfg.encrypt, payload, payload_len, s_rt.decrypt_buf,
-      RT_PACKET_MAX, packet, packet_len);
+  int dec_len = ap2_audio_decrypt_rtp(
+      audio_encrypt_key(&s_rt.cfg.encrypt), payload, payload_len,
+      s_rt.decrypt_buf, RT_PACKET_MAX, packet, packet_len);
   if (dec_len <= 0) {
     s_rt.decrypt_errors++;
     if (s_rt.decrypt_errors <= RT_FIRST_PACKET_LOGS) {

@@ -882,7 +882,8 @@ are listed in
 
 | Part | Where | What it does |
 |---|---|---|
-| AirPlay receiver | `main/rtsp`, `main/hap`, `main/plist`, `main/mdns_airplay.c` | mDNS, pairing, RTSP; Gateway only (a speaker is not an AirPlay receiver) |
+| AirPlay receiver | `main/rtsp`, `main/mdns_airplay.c`, `main/ap2_compat.c` | mDNS and RTSP; Gateway only (a speaker is not an AirPlay receiver) |
+| AirPlay 2 core | `components/ap2_core` | pairing, plists and audio decryption, under Apache-2.0; both firmwares |
 | Shared services | `common/network` | Wi-Fi, web server core, OTA and logs |
 | Web pages | `main/web_gateway.c`, `speaker/main/web_speaker.c` | each firmware's own pages and APIs on top of the shared web server |
 | Gateway proxy | `main/gw_proxy.c` | implements the audio engine API on the Gateway and forwards each call (`FWD …` in the log) |
@@ -1004,6 +1005,9 @@ afterwards).
   allows redistribution in source and binary form without copyright fees but
   **grants no patent rights**: AAC patent licenses are available through Via
   Licensing or the patent owners.
+- **`ap2_core`** (`components/ap2_core`), the new AirPlay 2 protocol core, is
+  under the **Apache License 2.0**, Copyright 2026 Kristian Dimitrov:
+  [`LICENSE`](components/ap2_core/LICENSE), [`NOTICE`](components/ap2_core/NOTICE).
 - The **rest of this repository** is based on
   [rbouteiller/airplay-esp32](https://github.com/rbouteiller/airplay-esp32)
   and is under its **Non-Commercial License**, Copyright (c) 2026 Remi

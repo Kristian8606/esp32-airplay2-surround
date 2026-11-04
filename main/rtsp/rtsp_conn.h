@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "hap.h"
+#include "ap2_compat.h"
 #include "audio_receiver.h"
 
 /**

@@ -45,6 +45,12 @@ typedef struct {
   size_t key_len;
 } audio_encrypt_t;
 
+/* The key for ap2_audio_decrypt_*(): NULL for a stream that is not
+ * encrypted. */
+static inline const uint8_t *audio_encrypt_key(const audio_encrypt_t *e) {
+  return e->type == AUDIO_ENCRYPT_CHACHA20_POLY1305 ? e->key : NULL;
+}
+
 typedef enum {
   AUDIO_STREAM_NONE = 0,
   AUDIO_STREAM_REALTIME = 96,  /* AP2 realtime UDP ALAC */

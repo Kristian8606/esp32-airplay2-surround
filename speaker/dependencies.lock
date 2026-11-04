@@ -60,6 +60,6 @@ direct_dependencies:
 - espressif/libsodium
 - espressif/mdns
 - idf
-manifest_hash: fa7cb21e88eaefd56bcfbf4bed6e50b14080e011fb5640a8518c79772df12d82
+manifest_hash: d64c83701a533e07461b829ae27823460d72711471547f9efd0332444de3af20
 target: esp32s3
 version: 3.0.0

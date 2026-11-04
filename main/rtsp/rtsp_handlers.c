@@ -22,13 +22,11 @@
 #include "airplay_audio_formats.h"
 #include "audio_diag.h"
 #include "amp_control.h"
-#include "hap.h"
+#include "ap2_compat.h"
 #include "apple_clock.h"
-#include "plist.h"
 #include "rtsp_fairplay.h"
 #include "settings.h"
 #include "socket_utils.h"
-#include "tlv8.h"
 
 #include "rtsp_events.h"
 #include "airplay_log.h"
@@ -566,8 +564,8 @@ static void handle_post(int socket, rtsp_conn_t *conn,
                          "Content-Type: application/octet-stream\r\n",
                          (const char *)response, response_len);
 
-      if (conn->hap_session && conn->hap_session->pair_setup_state == 4 &&
-          conn->hap_session->session_established) {
+      if (conn->hap_session && ap2_hap_setup_state(conn->hap_session) == 4 &&
+          ap2_hap_established(conn->hap_session)) {
         conn->encrypted_mode = true;
       }
     } else {
@@ -615,17 +613,18 @@ static void handle_post(int socket, rtsp_conn_t *conn,
                                    1024, &response_len);
           // TLV8 pair-verify M3 establishes RTSP channel encryption
           if (err == ESP_OK &&
-              conn->hap_session->pair_verify_state == PAIR_VERIFY_STATE_M4) {
+              ap2_hap_verify_state(conn->hap_session) ==
+                  PAIR_VERIFY_STATE_M4) {
             conn->encrypted_mode = true;
             AP_LOGI(TAG, "RTSP encryption enabled (TLV8 pair-verify)");
           }
         }
       } else {
         // Raw format - used for audio encryption keys, not RTSP encryption
-        if (conn->hap_session->pair_verify_state == 0) {
+        if (ap2_hap_verify_state(conn->hap_session) == 0) {
           err = hap_pair_verify_m1_raw(conn->hap_session, body, body_len,
                                        response, 1024, &response_len);
-        } else if (conn->hap_session->pair_verify_state ==
+        } else if (ap2_hap_verify_state(conn->hap_session) ==
                    PAIR_VERIFY_STATE_M2) {
           err = hap_pair_verify_m3_raw(conn->hap_session, body, body_len,
                                        response, 1024, &response_len);
@@ -898,7 +897,7 @@ static void handle_setup(int socket, rtsp_conn_t *conn,
       rtsp_send_response(socket, conn, 400, "Invalid Audio Key", req->cseq, NULL, NULL, 0);
       return;
     } else if (ekey_len > 16 && conn->hap_session &&
-               conn->hap_session->session_established) {
+               ap2_hap_established(conn->hap_session)) {
       uint8_t nonce[12] = {0};
       /* AEAD may output every ciphertext byte except the authentication tag. */
       uint8_t decrypted_key[sizeof(ekey_encrypted)];
@@ -906,7 +905,7 @@ static void handle_setup(int socket, rtsp_conn_t *conn,
 
       if (crypto_aead_chacha20poly1305_ietf_decrypt(
               decrypted_key, &decrypted_len, NULL, ekey_encrypted, ekey_len,
-              NULL, 0, nonce, conn->hap_session->shared_secret) == 0 &&
+              NULL, 0, nonce, ap2_hap_shared_secret(conn->hap_session)) == 0 &&
           decrypted_len == sizeof(audio_encrypt.key)) {
         audio_encrypt.type = AUDIO_ENCRYPT_CHACHA20_POLY1305;
         memcpy(audio_encrypt.key, decrypted_key, sizeof(audio_encrypt.key));
@@ -932,7 +931,7 @@ static void handle_setup(int socket, rtsp_conn_t *conn,
         has_encryption = true;
       }
     } else if (!encryption_set && conn->hap_session &&
-               conn->hap_session->session_established) {
+               ap2_hap_established(conn->hap_session)) {
       audio_encrypt.type = AUDIO_ENCRYPT_CHACHA20_POLY1305;
       if (hap_derive_audio_key(conn->hap_session, audio_encrypt.key,
                                sizeof(audio_encrypt.key)) == ESP_OK) {

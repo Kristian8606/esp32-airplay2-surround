@@ -18,7 +18,7 @@
 #include "audio_eq.h"
 #include "audio_fade.h"
 #include "audio_loudness.h"
-#include "audio_crypto.h"
+#include "ap2_audio_crypto.h"
 #include "audio_diag.h"
 #include "ap2_buffered_fifo.h"
 #include "pcm_fifo.h"
@@ -2001,8 +2001,8 @@ static void ap2_buffered_processor_task(void *arg) {
           authenticated_head.stream_epoch != head.stream_epoch) {
         if (ap2_buffered_fifo_copy_head(s.transport, &head, s.buffered_packet,
                                          AP2_PACKET_MAX) != ESP_OK) continue;
-        authenticated_len = audio_crypto_decrypt_buffered(
-            &session_encrypt, s.buffered_packet, packet.len,
+        authenticated_len = ap2_audio_decrypt_buffered(
+            audio_encrypt_key(&session_encrypt), s.buffered_packet, packet.len,
             s.decrypt_buf + AAC_DECODER_INPUT_HEADROOM, AP2_PACKET_MAX);
         authenticated_head = head;
         authenticated_valid = authenticated_len > 0;
@@ -2240,8 +2240,8 @@ static void ap2_buffered_processor_task(void *arg) {
         authenticated_head.read_serial == head.read_serial &&
         authenticated_head.stream_epoch == head.stream_epoch;
     const int dec_len = already_authenticated ? authenticated_len :
-        audio_crypto_decrypt_buffered(
-            &session_encrypt, s.buffered_packet, packet.len,
+        ap2_audio_decrypt_buffered(
+            audio_encrypt_key(&session_encrypt), s.buffered_packet, packet.len,
             s.decrypt_buf + AAC_DECODER_INPUT_HEADROOM, AP2_PACKET_MAX);
     authenticated_valid = false;
     if (dec_len == 0) {

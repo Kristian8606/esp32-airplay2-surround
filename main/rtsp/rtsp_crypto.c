@@ -113,17 +113,20 @@ int rtsp_crypto_read_block(int socket, rtsp_conn_t *conn, uint8_t *buffer,
 
   // Decrypt using session keys
   uint8_t nonce[12] = {0};
-  memcpy(nonce + 4, &conn->hap_session->decrypt_nonce, 8);
+  const uint64_t counter =
+      ap2_hap_channel_counter(conn->hap_session, AP2_HAP_RECEIVE);
+  memcpy(nonce + 4, &counter, 8);
 
   unsigned long long plaintext_len;
   if (crypto_aead_chacha20poly1305_ietf_decrypt(
           buffer, &plaintext_len, NULL, encrypted, encrypted_len, len_buf,
-          sizeof(len_buf), nonce, conn->hap_session->decrypt_key) != 0) {
+          sizeof(len_buf), nonce,
+          ap2_hap_channel_key(conn->hap_session, AP2_HAP_RECEIVE)) != 0) {
     ESP_LOGE(TAG, "Failed to decrypt frame");
     return -1;
   }
 
-  conn->hap_session->decrypt_nonce++;
+  ap2_hap_channel_count(conn->hap_session, AP2_HAP_RECEIVE);
 
   return (int)plaintext_len;
 }
@@ -147,7 +150,9 @@ int rtsp_crypto_write_frame(int socket, rtsp_conn_t *conn, const uint8_t *data,
     len_buf[1] = (block_len >> 8) & 0xFF;
 
     uint8_t nonce[12] = {0};
-    memcpy(nonce + 4, &conn->hap_session->encrypt_nonce, 8);
+    const uint64_t counter =
+        ap2_hap_channel_counter(conn->hap_session, AP2_HAP_SEND);
+    memcpy(nonce + 4, &counter, 8);
 
     size_t encrypted_len = block_len + 16; // +16 for Poly1305 tag
     uint8_t *encrypted = crypto_scratch(conn);
@@ -159,7 +164,7 @@ int rtsp_crypto_write_frame(int socket, rtsp_conn_t *conn, const uint8_t *data,
     unsigned long long ct_len;
     crypto_aead_chacha20poly1305_ietf_encrypt(
         encrypted, &ct_len, data + offset, block_len, len_buf, sizeof(len_buf),
-        NULL, nonce, conn->hap_session->encrypt_key);
+        NULL, nonce, ap2_hap_channel_key(conn->hap_session, AP2_HAP_SEND));
 
     if (ct_len != encrypted_len) {
       ESP_LOGE(TAG, "Unexpected encrypted length: %llu", ct_len);
@@ -174,7 +179,7 @@ int rtsp_crypto_write_frame(int socket, rtsp_conn_t *conn, const uint8_t *data,
       return -1;
     }
 
-    conn->hap_session->encrypt_nonce++;
+    ap2_hap_channel_count(conn->hap_session, AP2_HAP_SEND);
     offset += block_len;
   }
 

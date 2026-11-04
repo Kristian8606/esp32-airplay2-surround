@@ -16,16 +16,7 @@ set(GATEWAY_SRCS
     "rtsp/rtsp_fairplay.c"
     "rtsp/rtsp_crypto.c"
     "rtsp/rtsp_remote.c"
-    "plist/plist_xml.c"
-    "plist/bplist_parser.c"
-    "plist/bplist_builder.c"
-    "plist/base64.c"
-    "hap/hap.c"
-    "hap/hap_pair_verify.c"
-    "hap/hap_pair_setup.c"
-    "hap/hap_crypto.c"
-    "hap/srp.c"
-    "hap/tlv8.c"
+    "ap2_compat.c"
     "gw_proxy.c"
     "gw_relay.c"
     "gw_fw.c"
@@ -43,8 +34,9 @@ endif()
 
 idf_component_register(
     SRCS ${AIRPLAY_COMMON_SRCS} ${GATEWAY_SRCS}
-    INCLUDE_DIRS "." "rtsp" "plist" "hap" ${AIRPLAY_COMMON_INCLUDE_DIRS}
+    INCLUDE_DIRS "." "rtsp" ${AIRPLAY_COMMON_INCLUDE_DIRS}
     PRIV_REQUIRES ${AIRPLAY_COMMON_PRIV_REQUIRES} esp_driver_i2s esp_partition
+        ap2_core
 )
 
 airplay_embed_web_pages(index logs speedtest speakers)

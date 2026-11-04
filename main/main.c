@@ -6,7 +6,7 @@
 #include "apple_clock.h"
 #include "gw_speakers.h"
 #include "dns_server.h"
-#include "hap.h"
+#include "ap2_hap.h"
 #include "log_stream.h"
 #include "led.h"
 #include "mdns_airplay.h"
@@ -83,7 +83,7 @@ void app_main(void) {
    * when diagnostics are disabled or no category is selected. */
   (void)AUDIO_DIAG_INIT();
   ESP_ERROR_CHECK(apple_clock_start());
-  ESP_ERROR_CHECK(hap_init());
+  ESP_ERROR_CHECK(ap2_hap_identity_init());
   led_init();
 
   if (provisioning_only) {

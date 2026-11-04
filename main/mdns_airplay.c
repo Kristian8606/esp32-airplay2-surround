@@ -5,7 +5,7 @@
 
 #include "airplay_identity.h"
 #include "esp_log.h"
-#include "hap.h"
+#include "ap2_hap.h"
 #include "mdns.h"
 #include "settings.h"
 #include "wifi.h"
@@ -34,7 +34,7 @@ void mdns_airplay_init(void) {
   char features[32], flags[16], version[8];
   char key_hex[2 * PUBLIC_KEY_BYTES + 1];
   char pairing_id[AIRPLAY_PAIRING_ID_LEN];
-  const uint8_t *key = hap_get_public_key();
+  const uint8_t *key = ap2_hap_identity_public_key();
   size_t digits = 0;
 
   (void)settings_get_device_name(name, sizeof(name));
