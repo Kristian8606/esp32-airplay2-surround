@@ -1,0 +1,78 @@
+[0;32mI (763) pp: pp rom version: e7ae62f[0m
+[0;32mI (763) net80211: net80211 rom version: e7ae62f[0m
+[0;32mI (773) wifi:wifi driver task: 3fcee8c4, prio:23, stack:6656, core=1[0m
+[0;32mI (773) wifi:wifi firmware version: 00ad238[0m
+[0;32mI (773) wifi:wifi certification version: v7.0[0m
+[0;32mI (773) wifi:config NVS flash: enabled[0m
+[0;32mI (773) wifi:config nano formatting: disabled[0m
+[0;32mI (783) wifi:Init data frame dynamic rx buffer num: 85[0m
+[0;32mI (783) wifi:Init static rx mgmt buffer num: 5[0m
+[0;32mI (783) wifi:Init management short buffer num: 32[0m
+[0;32mI (783) wifi:Init static tx buffer num: 16[0m
+[0;32mI (783) wifi:Init tx cache buffer num: 32[0m
+[0;32mI (783) wifi:Init static tx FG buffer num: 2[0m
+[0;32mI (783) wifi:Init static rx buffer size: 1600[0m
+[0;32mI (783) wifi:Init static rx buffer num: 24[0m
+[0;32mI (783) wifi:Init dynamic rx buffer num: 85[0m
+[0;32mI (783) wifi_init: rx ba win: 32[0m
+[0;32mI (783) wifi_init: accept mbox: 6[0m
+[0;32mI (783) wifi_init: tcpip mbox: 64[0m
+[0;32mI (783) wifi_init: udp mbox: 64[0m
+[0;32mI (783) wifi_init: tcp mbox: 64[0m
+[0;32mI (783) wifi_init: tcp tx win: 32768[0m
+[0;32mI (783) wifi_init: tcp rx win: 65535[0m
+[0;32mI (783) wifi_init: tcp mss: 1440[0m
+[0;32mI (783) wifi_init: WiFi/LWIP prefer SPIRAM[0m
+[0;32mI (783) wifi_init: WiFi IRAM OP enabled[0m
+[0;32mI (783) wifi_init: WiFi RX IRAM OP enabled[0m
+[0;32mI (783) wifi_init: LWIP IRAM OP enabled[0m
+[0;32mI (783) wifi:Set ps type: 0, coexist: 0[0m
+[0;32mI (783) wifi: Hostname set to: ESP32-AirPlay-EC8[0m
+[0;32mI (793) phy_init: phy_version 712,87e8c20e,Apr 13 2026,18:51:10[0m
+[0;32mI (843) wifi:mode : sta (aa:bb:cc:dd:ee:ff) + softAP (aa:bb:cc:dd:ee:ff)[0m
+[0;32mI (843) wifi:enable tsf[0m
+[0;32mI (843) wifi:Total power save buffer number: 8[0m
+[0;32mI (853) wifi:Init max length of beacon: 752/752[0m
+[0;32mI (853) wifi: Boot WiFi scan: 1 saved network(s)[0m
+[0;32mI (853) wifi:Init max length of beacon: 752/752[0m
+[0;32mI (853) wifi: AP started[0m
+[0;32mI (853) esp_netif_lwip: DHCP server started on interface WIFI_AP_DEF with IP: 192.0.2.10[0m
+[0;32mI (853) dns_server: DNS server task started[0m
+[0;32mI (853) dns_server: DNS server started, redirecting to 192.0.2.10[0m
+[0;32mI (853) wifi: AP+STA mode started: AP SSID=ESP32-AirPlay-Setup, saved networks=1[0m
+[0;32mI (863) log_stream: Log streaming on /ws/logs[0m
+[0;32mI (863) web_server: Web UI started on port 80[0m
+[0;32mI (3753) wifi: Selected saved WiFi 'HomeNet': aa:bb:cc:dd:ee:ff (rssi=-49, ch=11); BSSID locked until reboot[0m
+[0;32mI (3753) wifi:ap channel adjust o:1,1 n:11,2[0m
+[0;32mI (3753) wifi:new:<11,0>, old:<1,1>, ap:<11,2>, sta:<11,0>, prof:1, snd_ch_cfg:0x0[0m
+[0;32mI (3753) wifi:state: init -> auth (0xb0)[0m
+[0;32mI (4133) wifi:state: auth -> assoc (0x0)[0m
+[0;32mI (4143) wifi:state: assoc -> run (0x10)[0m
+[0;32mI (4163) wifi:connected with HomeNet, aid = 1, channel 11, BW20, bssid = aa:bb:cc:dd:ee:ff[0m
+[0;32mI (4163) wifi:security: WPA3-SAE HUNT_AND_PECK, phy: bgn, rssi: -47, cipher(pairwise:0x3, group:0x3), pmf:1[0m
+[0;32mI (4173) wifi:pm start, type: 0[0m
+[0;32mI (4173) wifi:dp: 1, bi: 102400, li: 3, scale listen interval from 307200 us to 307200 us[0m
+[0;32mI (4173) wifi:set rx beacon pti, rx_bcn_pti: 0, bcn_timeout: 25000, mt_pti: 0, mt_time: 10000[0m
+[0;32mI (4183) wifi:<ba-add>idx:0 (ifx:0, aa:bb:cc:dd:ee:ff), tid:0, ssn:0, winSize:64[0m
+[0;32mI (4213) wifi:AP's beacon interval = 102400 us, DTIM period = 1[0m
+[0;32mI (5223) wifi: Got IP: 192.0.2.10[0m
+[0;32mI (5223) main: WiFi connected[0m
+[0;32mI (5223) main: MEM post-wifi internalFree=162 KiB internalLargest=88 KiB internalMin=158 KiB psramFree=8106 KiB psramLargest=8064 KiB psramMin=8103 KiB[0m
+[0;32mI (5223) apple_clock: two-way clock owns UDP 319/320, identity 14c19ffffe27bec8, asymmetry 0 us[0m
+[0;32mI (5223) rgb_vu: WS2812 audio LED ready GPIO=38 brightness=96 update=30Hz task=core1/prio1[0m
+[0;32mI (5233) gw_proxy: Gateway proxy ready: no decoder, no I2S; audio_receiver calls are logged as FWD[0m
+[0;32mI (5233) main: MEM post-audio-init internalFree=154 KiB internalLargest=80 KiB internalMin=154 KiB psramFree=8086 KiB psramLargest=8064 KiB psramMin=8086 KiB[0m
+[0;32mI (5253) dns_server: DNS server task exiting[0m
+[0;32mI (5263) dns_server: DNS server stopped[0m
+[0;32mI (5263) wifi: STA connected, disabling AP mode[0m
+[0;32mI (5263) wifi:mode : sta (aa:bb:cc:dd:ee:ff)[0m
+[0;32mI (5273) esp_netif_handlers: sta ip: 192.0.2.10, mask: 192.0.2.10, gw: 192.0.2.10[0m
+[0;32mI (5273) mdns_mem: mDNS task will be created from SPIRAM[0m
+[0;32mI (5273) rtsp_server: RTSP server listening on port 7000[0m
+[0;32mI (5273) gw_fw: no speaker firmware stored (1920 KiB available)[0m
+[0;32mI (5273) gw_speakers: speaker control listener on port 7100 (_apsurround._tcp)[0m
+[0;32mI (5283) main: Surround Gateway v4.5.45 ready; Web UI / WiFi scan / logs / OTA: http://192.0.2.10/[0m
+[0;32mI (5283) main_task: Returned from app_main()[0m
+[0;32mI (5963) wifi:<ba-add>idx:1 (ifx:0, aa:bb:cc:dd:ee:ff), tid:6, ssn:2, winSize:64[0m
+[0;32mI (10713) apple_clock: acquiring epoch 0 | rate +0.000 ppm, estimate +0.000 ms | floor RTT 0.00 ms | 0 points / 0 s | seconds +0 -0 far 0 | steps 0 jumps 0 | Delay_Req 0 answered 0 send errors 0[0m
+[0;32mI (10793) gw_speakers: TIME apple_clock ready=0 epoch=0 rate=+0.000 ppm (TSF) | TSF 45 samples -15.357 ppm rms 7.13 us restarts 0[0m

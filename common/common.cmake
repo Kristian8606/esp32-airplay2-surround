@@ -18,7 +18,6 @@ set(AIRPLAY_COMMON_SRCS
     "${AIRPLAY_COMMON_DIR}/network/web_server.c"
     "${AIRPLAY_COMMON_DIR}/network/ota.c"
     "${AIRPLAY_COMMON_DIR}/network/dns_server.c"
-    "${AIRPLAY_COMMON_DIR}/network/log_stream.c"
     "${AIRPLAY_COMMON_DIR}/surround/tsf_fit.c"
     "${AIRPLAY_COMMON_DIR}/surround/sync_pulse.c"
     "${AIRPLAY_COMMON_DIR}/surround/cal_chirp.c"
@@ -48,6 +47,7 @@ set(AIRPLAY_COMMON_PRIV_REQUIRES
     app_update
     esp_app_format
     mbedtls
+    log_stream
 )
 
 # Embed web pages (data/www/<page>.html) into the OTA application image.
