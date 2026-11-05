@@ -1,4 +1,4 @@
-# Code shared by the two firmwares: Wi-Fi, settings, web server core, OTA,
+# Code shared by the two firmwares: Wi-Fi, settings, web server core,
 # logs, the clock state and the Surround sync protocol. Not a component of
 # its own: the Gateway's main/CMakeLists.txt and the speaker's
 # speaker/main/CMakeLists.txt include this file and compile these sources
@@ -16,7 +16,6 @@ set(AIRPLAY_COMMON_SRCS
     "${AIRPLAY_COMMON_DIR}/network/wifi.c"
     "${AIRPLAY_COMMON_DIR}/network/socket_utils.c"
     "${AIRPLAY_COMMON_DIR}/network/web_server.c"
-    "${AIRPLAY_COMMON_DIR}/network/ota.c"
     "${AIRPLAY_COMMON_DIR}/network/dns_server.c"
     "${AIRPLAY_COMMON_DIR}/surround/tsf_fit.c"
     "${AIRPLAY_COMMON_DIR}/surround/sync_pulse.c"
@@ -48,6 +47,7 @@ set(AIRPLAY_COMMON_PRIV_REQUIRES
     esp_app_format
     mbedtls
     log_stream
+    ota
 )
 
 # Embed web pages (data/www/<page>.html) into the OTA application image.
