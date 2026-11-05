@@ -884,7 +884,8 @@ are listed in
 |---|---|---|
 | AirPlay receiver | `main/rtsp`, `main/mdns_airplay.c`, `main/ap2_compat.c` | mDNS and RTSP; Gateway only (a speaker is not an AirPlay receiver) |
 | AirPlay 2 core | `components/ap2_core` | pairing, plists and audio decryption, under Apache-2.0; both firmwares |
-| Shared services | `common/network` | Wi-Fi and web server core |
+| Shared services | `common/network` | web server core and captive DNS |
+| Wi-Fi | `components/wifi` | station on a saved network, setup access point, host name (`wifi` in the log), under Apache-2.0; both firmwares |
 | Live log, firmware update | `components/log_stream`, `components/ota` | the log on `/logs`; update from a `.bin` upload (`ota` in the log), under Apache-2.0; both firmwares |
 | Web pages | `main/web_gateway.c`, `speaker/main/web_speaker.c` | each firmware's own pages and APIs on top of the shared web server |
 | Gateway proxy | `main/gw_proxy.c` | implements the audio engine API on the Gateway and forwards each call (`FWD …` in the log) |
@@ -1009,8 +1010,9 @@ afterwards).
 - **`ap2_core`** (`components/ap2_core`), the new AirPlay 2 protocol core, is
   under the **Apache License 2.0**, Copyright 2026 Kristian Dimitrov:
   [`LICENSE`](components/ap2_core/LICENSE), [`NOTICE`](components/ap2_core/NOTICE).
-- **`log_stream`** and **`ota`** (`components/log_stream`, `components/ota`)
-  are under the **Apache License 2.0**, Copyright 2026 Kristian Dimitrov:
+- **`log_stream`**, **`ota`** and **`wifi`** (`components/log_stream`,
+  `components/ota`, `components/wifi`) are under the **Apache License 2.0**,
+  Copyright 2026 Kristian Dimitrov:
   each folder has its `LICENSE` and `NOTICE`.
 - The **rest of this repository** is based on
   [rbouteiller/airplay-esp32](https://github.com/rbouteiller/airplay-esp32)

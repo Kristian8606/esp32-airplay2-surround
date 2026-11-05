@@ -7,6 +7,6 @@ REPO="$HERE/../.."
 GEN=$(mktemp -d); trap 'rm -rf "$GEN"' EXIT
 printf '#define CONFIG_AIRPLAY_MODEL_ID "AudioAccessory6,1"\n#define CONFIG_AIRPLAY_MULTICHANNEL 1\n' > "$GEN/sdkconfig.h"
 gcc -O1 -g -Wall -Wextra -Wno-unused-parameter -fsanitize=${SANITIZE:-address,undefined} -fno-sanitize-recover=undefined \
-  -I"$GEN" -I"$HERE/stubs" -I"$REPO/components/ap2_core/tests/hap_host/stubs" -I"$REPO/common" -I"$REPO/common/audio" -I"$REPO/common/network" -I"$REPO/main" -I"$REPO/components/ap2_core/include" -I"$P/include" \
+  -I"$GEN" -I"$HERE/stubs" -I"$REPO/components/ap2_core/tests/hap_host/stubs" -I"$REPO/common" -I"$REPO/common/audio" -I"$REPO/common/network" -I"$REPO/components/wifi/include" -I"$REPO/main" -I"$REPO/components/ap2_core/include" -I"$P/include" \
   "$HERE/driver.c" "$S/common/network/socket_utils.c" "$S/common/rtsp_events.c" "$S/main/mdns_airplay.c" "$S/components/ap2_core/src/audio_crypto.c" \
   -L"$P/lib" -lsodium -o "$OUT"

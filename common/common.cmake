@@ -1,4 +1,4 @@
-# Code shared by the two firmwares: Wi-Fi, settings, web server core,
+# Code shared by the two firmwares: settings, web server core,
 # logs, the clock state and the Surround sync protocol. Not a component of
 # its own: the Gateway's main/CMakeLists.txt and the speaker's
 # speaker/main/CMakeLists.txt include this file and compile these sources
@@ -13,7 +13,6 @@ set(AIRPLAY_COMMON_SRCS
     "${AIRPLAY_COMMON_DIR}/settings.c"
     "${AIRPLAY_COMMON_DIR}/led.c"
     "${AIRPLAY_COMMON_DIR}/rtsp_events.c"
-    "${AIRPLAY_COMMON_DIR}/network/wifi.c"
     "${AIRPLAY_COMMON_DIR}/network/socket_utils.c"
     "${AIRPLAY_COMMON_DIR}/network/web_server.c"
     "${AIRPLAY_COMMON_DIR}/network/dns_server.c"
@@ -48,6 +47,7 @@ set(AIRPLAY_COMMON_PRIV_REQUIRES
     mbedtls
     log_stream
     ota
+    wifi
 )
 
 # Embed web pages (data/www/<page>.html) into the OTA application image.
@@ -59,4 +59,14 @@ function(airplay_embed_web_pages)
             "${AIRPLAY_COMMON_DIR}/../data/www/${page}.html" BINARY
             RENAME_TO "web_${page}_html")
     endforeach()
+endfunction()
+
+# The wifi component calls settings.c and dns_server.c, which are compiled
+# into this main component: give it their headers and link it with main.
+# Call after idf_component_register().
+function(airplay_link_wifi)
+    idf_component_get_property(wifi_lib wifi COMPONENT_LIB)
+    target_include_directories(${wifi_lib} PRIVATE
+        "${AIRPLAY_COMMON_DIR}" "${AIRPLAY_COMMON_DIR}/network")
+    target_link_libraries(${wifi_lib} PRIVATE ${COMPONENT_LIB})
 endfunction()

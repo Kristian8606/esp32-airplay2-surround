@@ -6,7 +6,6 @@
 #include "audio_eq.h"
 #include "audio_loudness.h"
 #include "spk_link.h"
-#include "dns_server.h"
 #include "log_stream.h"
 #include "led.h"
 #include "nvs_flash.h"
@@ -22,7 +21,6 @@
 #include "freertos/task.h"
 
 static const char *TAG = "main";
-#define AP_IP_ADDR 0x0104A8C0
 
 static void log_memory_state(const char *where) {
   ESP_LOGI(TAG,
@@ -81,7 +79,6 @@ void app_main(void) {
   if (provisioning_only || !wifi_wait_connected(30000)) {
     ESP_LOGW(TAG,
              "STA not connected; captive WiFi setup remains available at 192.168.4.1");
-    dns_server_start(AP_IP_ADDR);
   } else {
     ESP_LOGI(TAG, "WiFi connected");
   }
