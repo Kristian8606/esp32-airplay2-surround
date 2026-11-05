@@ -5,3 +5,11 @@ This component is part of esp32-airplay2-surround
 (https://github.com/Kristian8606/esp32-airplay2-surround) and is licensed
 under the Apache License, Version 2.0 (see LICENSE in this folder). The rest
 of that repository is under its own license.
+
+Exception: src/fairplay/fairplay_tables.c (the FairPlay setup replies, 580
+bytes) is not covered by the Apache License. It is fixed interop data, the
+same in the open AirPlay receivers, first published in playfair
+(https://github.com/EstebanKubata/playfair, 2015), a reverse-engineered
+implementation of Apple's FairPlay setup; it derives from Apple's FairPlay
+and its legal status is Apple's to decide. It is included only so that
+Apple senders accept this receiver. This is not legal advice.

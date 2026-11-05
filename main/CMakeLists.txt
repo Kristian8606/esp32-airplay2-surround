@@ -13,7 +13,6 @@ set(GATEWAY_SRCS
     "rtsp/rtsp_conn.c"
     "rtsp/rtsp_message.c"
     "rtsp/rtsp_handlers.c"
-    "rtsp/rtsp_fairplay.c"
     "rtsp/rtsp_crypto.c"
     "rtsp/rtsp_remote.c"
     "ap2_compat.c"

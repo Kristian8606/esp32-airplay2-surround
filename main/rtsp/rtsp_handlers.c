@@ -23,8 +23,8 @@
 #include "audio_diag.h"
 #include "amp_control.h"
 #include "ap2_compat.h"
+#include "ap2_fairplay.h"
 #include "apple_clock.h"
-#include "rtsp_fairplay.h"
 #include "settings.h"
 #include "socket_utils.h"
 
@@ -649,19 +649,18 @@ static void handle_post(int socket, rtsp_conn_t *conn,
     free(response);
 
   } else if (strstr(req->path, "/fp-setup")) {
-    uint8_t *fp_response = NULL;
-    size_t fp_response_len = 0;
-
-    if (body && body_len >= 16) {
-      if (rtsp_fairplay_handle(body, body_len, &fp_response,
-                               &fp_response_len) == 0) {
-        rtsp_send_response(socket, conn, 200, "OK", req->cseq,
-                           "Content-Type: application/octet-stream\r\n",
-                           (const char *)fp_response, fp_response_len);
-        free(fp_response);
-        return;
-      }
+    uint8_t fp_reply[AP2_FAIRPLAY_REPLY_MAX];
+    const int fp_len =
+        body ? ap2_fairplay_setup(body, body_len, fp_reply,
+                                  sizeof(fp_reply))
+             : -1;
+    if (fp_len > 0) {
+      rtsp_send_response(socket, conn, 200, "OK", req->cseq,
+                         "Content-Type: application/octet-stream\r\n",
+                         (const char *)fp_reply, (size_t)fp_len);
+      return;
     }
+    ESP_LOGW(TAG, "fp-setup: unknown message (%u bytes)", (unsigned)body_len);
 
     rtsp_send_response(socket, conn, 200, "OK", req->cseq,
                        "Content-Type: application/octet-stream\r\n", "\x00", 1);
