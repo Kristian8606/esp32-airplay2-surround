@@ -6,7 +6,9 @@ an ESP-IDF component under the **Apache License 2.0** ([`LICENSE`](LICENSE),
 [`NOTICE`](NOTICE)).
 
 It takes over the protocol parts of the firmware one at a time: pairing
-(HAP), plist, audio decryption and the FairPlay setup, later RTSP. Where its code comes from is recorded in
+(HAP), plist, audio decryption, the FairPlay setup and the RTSP server.
+The RTSP server's behaviour is described in the repository's
+`docs/rtsp-spec.md`. Where its code comes from is recorded in
 [`PROVENANCE.md`](PROVENANCE.md).
 
 The rest of the repository is under a different license; see the

@@ -356,17 +356,15 @@ menu "AirPlay Logs and Diagnostics"
             logged, never used by playback. Not compiled when off.
 
     config AIRPLAY_LOG_RTSP_REQUESTS
-        bool "Log every RTSP request and response (temporary diagnostics)"
+        bool "Log the start of each RTSP request body"
         default n
         help
-            Prints one "RTSP REQ" line for each request (connection, method,
-            URI, CSeq, content type and length, whether the connection holds
-            the play lock, and the readable strings found in the body) and one
-            "RTSP RSP" line for each answer. Used to see exactly what the
-            sender does around an AutoMix transition or a pause. Turn off when
-            not needed. This single option controls all RTSP REQ and RTSP RSP
-            lines, including feedback, command, SET_PARAMETER and progress.
-            Disabling it does not disable the requests or playback warnings.
+            The RTSP server always logs one line per request (method, path,
+            CSeq, body length) and per reply (code, body length). With this
+            option it also prints the first bytes of each request body as
+            text, except the bodies of SETUP, /pair-setup, /pair-verify and
+            /fp-setup. Used to see what the sender sends, for example around
+            an AutoMix transition or a pause. Turn off when not needed.
 
     config AIRPLAY_DIAG_PLAYOUT
         bool "Playout diagnostics (DMA underruns, holes, silence, re-primes)"

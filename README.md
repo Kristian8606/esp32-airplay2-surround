@@ -882,8 +882,8 @@ are listed in
 
 | Part | Where | What it does |
 |---|---|---|
-| AirPlay receiver | `main/rtsp`, `main/mdns_airplay.c`, `main/ap2_compat.c` | mDNS and RTSP; Gateway only (a speaker is not an AirPlay receiver) |
-| AirPlay 2 core | `components/ap2_core` | pairing, plists, audio decryption and the FairPlay setup replies, under Apache-2.0 (the FairPlay tables excepted); both firmwares |
+| AirPlay receiver | `main/mdns_airplay.c` | mDNS; Gateway only (a speaker is not an AirPlay receiver) |
+| AirPlay 2 core | `components/ap2_core` | pairing, plists, audio decryption, the FairPlay setup replies and the RTSP server (`rtsp` in the log, Gateway only), under Apache-2.0 (the FairPlay tables excepted); both firmwares |
 | Shared services | `common/network` | web server core and captive DNS |
 | Wi-Fi | `components/wifi` | station on a saved network, setup access point, host name (`wifi` in the log), under Apache-2.0; both firmwares |
 | Live log, firmware update | `components/log_stream`, `components/ota` | the log on `/logs`; update from a `.bin` upload (`ota` in the log), under Apache-2.0; both firmwares |

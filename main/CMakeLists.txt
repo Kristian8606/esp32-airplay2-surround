@@ -9,13 +9,6 @@ set(GATEWAY_SRCS
     "web_gateway.c"
     "airplay_identity.c"
     "mdns_airplay.c"
-    "rtsp/rtsp_server.c"
-    "rtsp/rtsp_conn.c"
-    "rtsp/rtsp_message.c"
-    "rtsp/rtsp_handlers.c"
-    "rtsp/rtsp_crypto.c"
-    "rtsp/rtsp_remote.c"
-    "ap2_compat.c"
     "gw_proxy.c"
     "gw_relay.c"
     "gw_fw.c"
@@ -33,10 +26,11 @@ endif()
 
 idf_component_register(
     SRCS ${AIRPLAY_COMMON_SRCS} ${GATEWAY_SRCS}
-    INCLUDE_DIRS "." "rtsp" ${AIRPLAY_COMMON_INCLUDE_DIRS}
+    INCLUDE_DIRS "." ${AIRPLAY_COMMON_INCLUDE_DIRS}
     PRIV_REQUIRES ${AIRPLAY_COMMON_PRIV_REQUIRES} esp_driver_i2s esp_partition
         ap2_core
 )
 
 airplay_embed_web_pages(index logs speedtest speakers)
 airplay_link_wifi()
+airplay_link_ap2_core()

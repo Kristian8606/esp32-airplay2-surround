@@ -46,7 +46,11 @@ int main(void) {
       printf("]");
     } else if (!strcmp(cmd, "crypto")) {
       uint8_t e[256], i[64], s[64]; size_t el = 999, il = 999, sl = 999; int ce = 256, ci = 64, cs = 64; sscanf(a, "%d,%d,%d", &ce, &ci, &cs);
-      bool r = ap2_bplist_stream_crypto(body, blen, n1, ce ? e : NULL, (size_t)ce, &el, ci ? i : NULL, (size_t)ci, &il, cs ? s : NULL, (size_t)cs, &sl);
+      /* A buffer left out goes with a NULL length, as the RTSP server passes it. */
+      bool r = ap2_bplist_stream_crypto(body, blen, n1, ce ? e : NULL, (size_t)ce, ce ? &el : NULL, ci ? i : NULL, (size_t)ci, ci ? &il : NULL, cs ? s : NULL, (size_t)cs, cs ? &sl : NULL);
+      if (!ce) el = 0;
+      if (!ci) il = 0;
+      if (!cs) sl = 0;
       printf("\"r\":%d,\"el\":%zu,\"il\":%zu,\"sl\":%zu,", r, el, il, sl);
       hex("e", e, r && el < 257 ? el : 0); printf(","); hex("i", i, r && il < 65 ? il : 0); printf(","); hex("s", s, r && sl < 65 ? sl : 0);
     } else if (!strcmp(cmd, "binit")) { size_t l = ap2_reply_setup_session(outb, (size_t)atoi(a), (uint16_t)n1); hex("v", outb, l);

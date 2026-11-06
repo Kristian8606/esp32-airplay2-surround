@@ -541,10 +541,14 @@ static bool copy_field(const bp_doc_t *doc, const bp_obj_t *dict,
                        const char *key, uint8_t *out, size_t capacity,
                        size_t *out_len) {
   bp_obj_t value;
+  size_t len = 0;
+  bool found = out && bp_dict_find(doc, dict, key, &value) &&
+               copy_data(&value, out, capacity, &len) && len > 0;
 
-  *out_len = 0;
-  return out && bp_dict_find(doc, dict, key, &value) &&
-         copy_data(&value, out, capacity, out_len) && *out_len > 0;
+  if (out_len) {
+    *out_len = len;
+  }
+  return found;
 }
 
 bool ap2_bplist_stream_crypto(const uint8_t *plist, size_t plist_len,
@@ -556,9 +560,15 @@ bool ap2_bplist_stream_crypto(const uint8_t *plist, size_t plist_len,
   bp_doc_t doc;
   bp_obj_t streams;
 
-  *ekey_len = 0;
-  *eiv_len = 0;
-  *shk_len = 0;
+  if (ekey_len) {
+    *ekey_len = 0;
+  }
+  if (eiv_len) {
+    *eiv_len = 0;
+  }
+  if (shk_len) {
+    *shk_len = 0;
+  }
   if (!get_streams(&doc, &streams, plist, plist_len)) {
     return false;
   }

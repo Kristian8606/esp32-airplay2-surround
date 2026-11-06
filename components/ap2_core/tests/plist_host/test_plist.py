@@ -174,7 +174,7 @@ def check_doc(d, doc):
             n = len(want)
             ok(d.read('kv', str(n), i, b)['r'] == 1, 'kv exact')
             if n: ok(d.read('kv', str(n - 1), i, b)['r'] == 0, 'kv short')
-    want_type = random.choice((96, 103, 5)); caps = random.choice(('64,16,32', '256,64,64', '0,16,32', '72,0,0'))
+    want_type = random.choice((96, 103, 5)); caps = random.choice(('64,16,32', '256,64,64', '0,16,32', '72,0,0', '0,0,32'))
     ce, ci, cs = map(int, caps.split(','))
     r = d.read('crypto', caps, want_type, b); hit = None
     for s in (streams if isinstance(streams, list) else []):

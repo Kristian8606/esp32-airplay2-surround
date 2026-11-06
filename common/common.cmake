@@ -70,3 +70,15 @@ function(airplay_link_wifi)
         "${AIRPLAY_COMMON_DIR}" "${AIRPLAY_COMMON_DIR}/network")
     target_link_libraries(${wifi_lib} PRIVATE ${COMPONENT_LIB})
 endfunction()
+
+# The RTSP server in ap2_core calls the audio engine, settings, clock,
+# amplifier, events and identity, which are compiled into this main
+# component: give it their headers and link it with main.
+# Call after idf_component_register().
+function(airplay_link_ap2_core)
+    idf_component_get_property(ap2_core_lib ap2_core COMPONENT_LIB)
+    target_include_directories(${ap2_core_lib} PRIVATE
+        "${AIRPLAY_COMMON_DIR}" "${AIRPLAY_COMMON_DIR}/audio"
+        "${AIRPLAY_COMMON_DIR}/network")
+    target_link_libraries(${ap2_core_lib} PRIVATE ${COMPONENT_LIB})
+endfunction()

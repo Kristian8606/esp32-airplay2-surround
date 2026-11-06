@@ -98,7 +98,7 @@ bool ap2_bplist_stream_keys(const uint8_t *plist, size_t plist_len,
 
 /* The "ekey", "eiv" and "shk" data of the first stream of this type. True
  * if any was found; a value too big for its buffer counts as absent. Any
- * buffer may be NULL. */
+ * buffer may be NULL, and so may its length pointer. */
 bool ap2_bplist_stream_crypto(const uint8_t *plist, size_t plist_len,
                               int64_t stream_type, uint8_t *ekey,
                               size_t ekey_capacity, size_t *ekey_len,
