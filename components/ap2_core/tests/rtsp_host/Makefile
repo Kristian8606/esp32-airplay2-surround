@@ -7,13 +7,14 @@
 
 CC ?= cc
 SRC := ../../src/rtsp
-# The firmware's own headers (audio engine, settings, clock, amplifier,
-# identity) are in common/; the session events are in components/helpers.
+# The firmware's own headers (audio engine, clock, amplifier, identity) are
+# in common/; the session events are in components/helpers, the settings in
+# components/settings.
 FW := ../../../../common
 CFLAGS ?= -std=c11 -O1 -g -Wall -Wextra -Werror -Wshadow -Wno-unused-parameter
 SAN ?= undefined
 CFLAGS += -fsanitize=$(SAN) -fno-sanitize-recover=all -fno-omit-frame-pointer
-CFLAGS += -I../../include -I../../../helpers/include -I$(FW) -I$(FW)/audio -I$(FW)/network -I$(SRC) -Istubs -DCONFIG_AIRPLAY_LOG_RTSP_REQUESTS
+CFLAGS += -I../../include -I../../../helpers/include -I../../../settings/include -I$(FW) -I$(FW)/audio -I$(FW)/network -I$(SRC) -Istubs -DCONFIG_AIRPLAY_LOG_RTSP_REQUESTS
 # libsodium (spec "Placement"), linked with -lsodium. Its place comes from
 # pkg-config, else Homebrew, else the compiler's default paths.
 SODIUM_PREFIX := $(shell brew --prefix libsodium 2>/dev/null)

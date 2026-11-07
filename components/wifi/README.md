@@ -13,10 +13,8 @@ ESP-IDF component under the **Apache License 2.0** ([`LICENSE`](LICENSE),
 - `src/wifi.c`: netifs, events, timers, scans
 - `tests/`: host tests of the first two (`make -C tests`)
 
-`settings.h` (saved networks, device name) is a source of each firmware's
-main component: `common/common.cmake` gives this component its include path
-and links it with main. The captive DNS (`dns_server.h`) is in
-`components/helpers`.
+The saved networks and the device name come from `components/settings`,
+the captive DNS (`dns_server.h`) from `components/helpers`.
 
 ## Start
 

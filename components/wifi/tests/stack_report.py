@@ -48,8 +48,8 @@ def compile_level(cc, src_dir, level, out):
             "-I" + src_dir,
             "-I" + os.path.join(ROOT, "tests", "stubs"),
             "-I" + os.path.join(ROOT, "tests", "idf_stub"),
-            "-I" + os.path.join(ROOT, "..", "..", "common"),
-            "-I" + os.path.join(ROOT, "..", "..", "common", "network"),
+            "-I" + os.path.join(ROOT, "..", "helpers", "include"),
+            "-I" + os.path.join(ROOT, "..", "settings", "include"),
             "-o", base + ".s", os.path.join(src_dir, src),
         ]
         subprocess.run(args, check=True)

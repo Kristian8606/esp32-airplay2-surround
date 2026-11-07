@@ -1,7 +1,7 @@
 # ap2_core: the AirPlay 2 protocol core (Apache-2.0): pairing, plists,
 # audio decryption, the FairPlay setup replies, the RTSP server and the
 # mDNS announcement. The RTSP server and the announcement call the firmware
-# (audio engine, settings, clock, amplifier, identity): the firmware gives
+# (audio engine, clock, amplifier, identity): the firmware gives
 # its headers and links it with airplay_link_ap2_core() in
 # common/common.cmake. Session events come from the helpers component.
 idf_component_register(
@@ -30,5 +30,5 @@ idf_component_register(
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "src/hap" "src/plist" "src/fairplay" "src/rtsp" "src/mdns"
     PRIV_REQUIRES nvs_flash mbedtls esp_hw_support lwip esp_timer helpers
-                  wifi espressif__mdns
+                  wifi espressif__mdns settings
 )

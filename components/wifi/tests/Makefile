@@ -12,9 +12,9 @@ SAN ?= undefined
 CFLAGS ?= -std=c11 -O1 -g -Wall -Wextra -Werror -Wshadow -Wconversion \
 	-Wno-sign-conversion -fsanitize=$(SAN) -fno-sanitize-recover=all \
 	-fno-omit-frame-pointer
-# idf_stub/ for esp_log.h; the firmware's common/ for settings.h
+# idf_stub/ for esp_log.h; components/settings for settings.h
 # (src/wifi_saved.c).
-CPPFLAGS += -I../src -Istubs -Iidf_stub -I../../../common
+CPPFLAGS += -I../src -Istubs -Iidf_stub -I../../settings/include
 SRCS = main.c test_logic.c test_ctl.c test_saved.c ../src/wifi_logic.c \
 	../src/wifi_ctl.c ../src/wifi_saved.c
 

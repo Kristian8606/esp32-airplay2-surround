@@ -9,8 +9,10 @@
 
 CC ?= cc
 WARN := -std=gnu17 -g -Wall -Wextra -Werror -Wshadow -Wformat=2
-# The firmware headers (airplay_identity.h, settings.h) are in common/.
+# airplay_identity.h is in the firmware's common/, settings.h in
+# components/settings.
 CPPFLAGS += -Ifakes -I../../include -I../../src/mdns -I../../../../common \
+            -I../../../settings/include \
             -I../../../wifi/include
 
 BUILD := build

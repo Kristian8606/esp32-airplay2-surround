@@ -1,4 +1,4 @@
-# Code shared by the two firmwares: settings, web server core,
+# Code shared by the two firmwares: web server core,
 # logs, the clock state and the Surround sync protocol. Not a component of
 # its own: the Gateway's main/CMakeLists.txt and the speaker's
 # speaker/main/CMakeLists.txt include this file and compile these sources
@@ -10,7 +10,6 @@ set(AIRPLAY_COMMON_DIR "${CMAKE_CURRENT_LIST_DIR}")
 set(AIRPLAY_COMMON_SRCS
     "${AIRPLAY_COMMON_DIR}/amp_control.c"
     "${AIRPLAY_COMMON_DIR}/firmware_id.c"
-    "${AIRPLAY_COMMON_DIR}/settings.c"
     "${AIRPLAY_COMMON_DIR}/network/web_server.c"
     "${AIRPLAY_COMMON_DIR}/surround/tsf_fit.c"
     "${AIRPLAY_COMMON_DIR}/surround/sync_pulse.c"
@@ -46,6 +45,7 @@ set(AIRPLAY_COMMON_PRIV_REQUIRES
     wifi
     helpers
     led
+    settings
 )
 
 # Embed web pages (data/www/<page>.html) into the OTA application image.
@@ -59,17 +59,7 @@ function(airplay_embed_web_pages)
     endforeach()
 endfunction()
 
-# The wifi component calls settings.c, which is compiled into this main
-# component: give it its header and link it with main.
-# Call after idf_component_register().
-function(airplay_link_wifi)
-    idf_component_get_property(wifi_lib wifi COMPONENT_LIB)
-    target_include_directories(${wifi_lib} PRIVATE
-        "${AIRPLAY_COMMON_DIR}" "${AIRPLAY_COMMON_DIR}/network")
-    target_link_libraries(${wifi_lib} PRIVATE ${COMPONENT_LIB})
-endfunction()
-
-# The RTSP server in ap2_core calls the audio engine, settings, clock,
+# The RTSP server in ap2_core calls the audio engine, clock,
 # amplifier and identity, which are compiled into this main
 # component: give it their headers and link it with main.
 # Call after idf_component_register().
