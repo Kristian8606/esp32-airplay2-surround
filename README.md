@@ -1001,18 +1001,10 @@ afterwards).
 
 ## Licenses and credits
 
-- **The code.** All of the code in this repository was written by Kristian
-  Dimitrov with Claude Code (Anthropic). The AirPlay 2 core
-  (`components/ap2_core`: pairing, plists, audio decryption, FairPlay
-  set-up, RTSP server, mDNS) and the shared modules (`wifi`, `ota`,
-  `log_stream`, `helpers`, `led`, `settings`, `web_server`) were written
-  from scratch, most of them from behaviour specifications
-  ([`docs/`](docs)); the Gateway, the speaker's audio engine and the web
-  pages are the project's own.
 - **This repository** is under the **Apache License 2.0**, Copyright 2026
-  Kristian Dimitrov: [`LICENSE`](LICENSE), [`NOTICE`](NOTICE). The
-  components in `components/` carry their own copy of it and a `NOTICE`.
-  The exceptions are below.
+  Kristian Dimitrov: [`LICENSE`](LICENSE), [`NOTICE`](NOTICE). The project
+  has been rewritten in full; the components in `components/` carry their
+  own copy of the license and a `NOTICE`. The exceptions are below.
 - **FairPlay setup replies** (`components/ap2_core/src/fairplay/fairplay_tables.c`)
   are fixed interop data from reverse engineering, not under the Apache
   License; see [`components/ap2_core/NOTICE`](components/ap2_core/NOTICE).
