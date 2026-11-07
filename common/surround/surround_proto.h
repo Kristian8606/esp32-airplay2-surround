@@ -9,7 +9,7 @@
  * version; a speaker whose version differs does not join (the Gateway may
  * first send it FW_UPDATE, see SURROUND_PROTO_FW_UPDATE).
  *
- * Gateway -> speaker messages are the audio_receiver.h calls RTSP makes on
+ * Gateway -> speaker messages are the sound_engine.h calls RTSP makes on
  * the Gateway, with the same arguments; the speaker makes the same calls
  * locally. The audio stream travels on a separate TCP connection
  * (gw_relay.c connects to the port in START_RESULT), so a backlog of audio
@@ -53,8 +53,8 @@
 #define SURROUND_TIME_INTERVAL_MS 125U
 #define SURROUND_STATUS_MS        2000U
 
-/* audio_stream_type_t values, for code that does not include
- * audio_receiver.h. */
+/* sound_stream_t values, for code that does not include
+ * sound_engine.h. */
 #define SURROUND_STREAM_REALTIME 96U
 #define SURROUND_STREAM_BUFFERED 103U
 
@@ -67,7 +67,7 @@ typedef enum {
   SURROUND_MSG_STATUS = 0x05, /* what it plays, every SURROUND_STATUS_MS */
   SURROUND_MSG_CAL_RESULT = 0x06, /* answer to CAL_PLAY */
 
-  /* Gateway -> speaker: audio_receiver.h calls */
+  /* Gateway -> speaker: sound_engine.h calls */
   SURROUND_MSG_SET_STREAM_TYPE = 0x10,
   SURROUND_MSG_SET_FORMAT = 0x11,
   SURROUND_MSG_SET_ENCRYPTION = 0x12,
@@ -135,7 +135,7 @@ typedef struct __attribute__((packed)) {
 } surround_realtime_anchor_t;
 
 typedef struct __attribute__((packed)) {
-  uint8_t stream_type; /* audio_stream_type_t */
+  uint8_t stream_type; /* sound_stream_t */
 } surround_stream_type_t;
 
 typedef struct __attribute__((packed)) {
@@ -147,7 +147,7 @@ typedef struct __attribute__((packed)) {
 } surround_format_t;
 
 typedef struct __attribute__((packed)) {
-  uint8_t type; /* audio_encrypt_type_t */
+  uint8_t type; /* sound_cipher_kind_t */
   uint8_t key_len;
   uint8_t key[32];
   uint8_t iv[16];

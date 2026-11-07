@@ -3,7 +3,7 @@
 #include <math.h>
 #include <string.h>
 
-#include "audio_receiver.h"
+#include "sound_engine.h"
 #include "esp_log.h"
 #include "settings.h"
 #include "airplay_log.h"
@@ -89,8 +89,8 @@ void audio_loudness_get_status(audio_loudness_status_t *out) {
   if (!out) return;
   memset(out, 0, sizeof(*out));
   const uint32_t cfg = __atomic_load_n(&s_cfg, __ATOMIC_ACQUIRE);
-  int32_t gain = audio_receiver_get_volume_q15();
-  if (audio_receiver_get_output_mute_mask() == 3U) gain = 0;
+  int32_t gain = sound_engine_get_volume_q15();
+  if (sound_engine_get_output_mute_mask() == 3U) gain = 0;
   out->enabled = (cfg & CFG_ENABLED) != 0U;
   out->reference_db = (int32_t)(cfg & 0xffU);
   out->output_silent = gain <= 0;

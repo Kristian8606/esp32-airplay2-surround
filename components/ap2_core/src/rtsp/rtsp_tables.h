@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "audio_receiver.h"
+#include "sound_engine.h"
 
 /* The volume and format tables and the small text formats of the requests.
  * No ESP-IDF. */
@@ -44,7 +44,7 @@ void rtsp_format_volume(double volume, char *out, size_t capacity);
 /* The engine format of an audioFormat bit for a stream type (96 or 103).
  * False when the pair is not in the table. */
 bool rtsp_format_lookup(int64_t stream_type, uint64_t audio_format,
-                        audio_format_t *format);
+                        sound_format_t *format);
 
 /* ---- Time (spec "SETRATEANCHORTIME") ---- */
 

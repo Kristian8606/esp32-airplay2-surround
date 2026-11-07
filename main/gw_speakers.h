@@ -14,7 +14,7 @@
  * pings them. Call after mdns_airplay_init(). */
 esp_err_t gw_speakers_start(void);
 
-/* Forward one audio_receiver call to the speakers. Never waits on a
+/* Forward one sound_engine call to the speakers. Never waits on a
  * socket: a speaker whose socket cannot take the whole frame at once is
  * dropped.
  *

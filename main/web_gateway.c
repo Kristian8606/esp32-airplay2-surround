@@ -12,7 +12,7 @@
 #include "gw_calib.h"
 #include "gw_fw.h"
 #include "gw_speakers.h"
-#include "audio_receiver.h"
+#include "sound_engine.h"
 #include "rtsp_remote.h"
 #include "rtsp_server.h"
 
@@ -224,7 +224,7 @@ static esp_err_t calibration_get_handler(httpd_req_t *req) {
   cJSON_AddStringToObject(r, "message", st.message);
   cJSON_AddNumberToObject(r, "step", st.step);
   cJSON_AddNumberToObject(r, "steps", st.steps);
-  cJSON_AddBoolToObject(r, "stream_active", !audio_receiver_is_idle());
+  cJSON_AddBoolToObject(r, "stream_active", !sound_engine_is_idle());
   cJSON_AddBoolToObject(r, "sender_stopped", st.sender_stopped);
   if (st.noise_valid) {
     cJSON_AddNumberToObject(r, "noise_dbfs", roundf(st.noise_dbfs * 10.0f) / 10.0f);

@@ -9,7 +9,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include "ap2_audio_crypto.h"
-#include "audio_receiver.h"
+#include "sound_engine.h"
 #include "mdns.h"
 #include "mdns_airplay.h"
 #include "rtsp_events.h"
@@ -68,10 +68,10 @@ int main(void) {
     } else if (!strcmp(cmd, "emit")) { sscanf(line, "%*s %d", &n1); ev_n = 0; rtsp_events_emit((rtsp_event_t)n1); printf("\"log\":["); for (int i = 0; i < ev_n; i++) printf("%s%d", i ? "," : "", ev_log[i]); printf("]");
     } else if (!strcmp(cmd, "rtp") || !strcmp(cmd, "buf")) {
       /* cmd type keyhex cap inhex fullhex */
-      static char kh[128]; static audio_encrypt_t e; int ty = 0, cap = 0; memset(&e, 0, sizeof(e)); strcpy(a, "-"); strcpy(b, "-");
+      static char kh[128]; static sound_cipher_t e; int ty = 0, cap = 0; memset(&e, 0, sizeof(e)); strcpy(a, "-"); strcpy(b, "-");
       sscanf(line, "%*s %d %127s %d %131071s %131071s", &ty, kh, &cap, a, b); e.type = ty; unhex(kh, e.key, 32); e.key_len = 32;
       size_t il = a[0] == '-' ? 0 : unhex(a, in, sizeof(in)), fl = b[0] == '-' ? 0 : unhex(b, full, sizeof(full)); memset(out, 0xEE, sizeof(out)); int r;
-      if (!strcmp(cmd, "rtp")) r = ap2_audio_decrypt_rtp(audio_encrypt_key(&e), in, il, out, (size_t)cap, fl ? full : NULL, fl); else r = ap2_audio_decrypt_buffered(audio_encrypt_key(&e), in, il, out, (size_t)cap);
+      if (!strcmp(cmd, "rtp")) r = ap2_audio_decrypt_rtp(sound_cipher_key(&e), in, il, out, (size_t)cap, fl ? full : NULL, fl); else r = ap2_audio_decrypt_buffered(sound_cipher_key(&e), in, il, out, (size_t)cap);
       printf("\"r\":%d,\"v\":", r); hex(out, r > 0 ? (size_t)r : 0);
     } else printf("\"bad\":1");
     printf("}\n");

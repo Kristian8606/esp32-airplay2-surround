@@ -8,7 +8,7 @@ set(SPEAKER_SRCS
     "${AIRPLAY_COMMON_DIR}/network/ptp_clock.c"
     "main.c"
     "web_speaker.c"
-    "audio/audio_receiver.c"
+    "audio/sound_engine.c"
     "audio/ap2_buffered_fifo.c"
     "audio/audio_eq.c"
     "audio/audio_loudness.c"

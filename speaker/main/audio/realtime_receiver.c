@@ -319,7 +319,7 @@ static bool decode_audio_packet(alac_decoder_t *decoder,
   const uint8_t *payload = packet + payload_off;
   const size_t payload_len = packet_len - payload_off;
   int dec_len = ap2_audio_decrypt_rtp(
-      audio_encrypt_key(&s_rt.cfg.encrypt), payload, payload_len,
+      sound_cipher_key(&s_rt.cfg.encrypt), payload, payload_len,
       s_rt.decrypt_buf, RT_PACKET_MAX, packet, packet_len);
   if (dec_len <= 0) {
     s_rt.decrypt_errors++;
@@ -629,8 +629,8 @@ static void service_d7_anchor(void) {
                                            s_rt.last_d7_raw_ptp_ns, &local_ns)) {
     return;
   }
-  audio_realtime_anchor_result_t anchor_result = {0};
-  if (!audio_receiver_set_realtime_anchor_local(
+  sound_realtime_anchor_result_t anchor_result = {0};
+  if (!sound_engine_set_realtime_anchor_local(
           s_rt.last_d7_clock_id, ps.gm_change_count,
           ps.mastership_age_ms, s_rt.last_d7_raw_ptp_ns, local_ns,
           s_rt.last_d7_frame1, &anchor_result)) {

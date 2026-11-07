@@ -10,7 +10,7 @@ typedef struct ap2_buffered_fifo ap2_buffered_fifo_t;
 
 /* Transport token for one complete frame at the sole consumer's cursor.
  * header contains the first 12 body bytes verbatim; media interpretation stays
- * in audio_receiver. wire_len includes the two length bytes. */
+ * in sound_engine. wire_len includes the two length bytes. */
 typedef struct {
   uint16_t wire_len;
   uint8_t header[12];

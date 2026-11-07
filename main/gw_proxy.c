@@ -1,4 +1,4 @@
-/* Gateway build: the audio_receiver.h API without a decoder or I2S output.
+/* Gateway build: the sound_engine.h API without a decoder or I2S output.
  *
  * RTSP (rtsp_handlers.c, rtsp_server.c, rtsp_conn.c) is built unchanged and
  * calls these functions exactly as on a speaker. Each call keeps the state
@@ -8,7 +8,7 @@
  * The buffered audio stream is accepted by gw_relay.c, the realtime UDP
  * stream by gw_rt_relay.c; both copy it unchanged to every speaker. */
 
-#include "audio_receiver.h"
+#include "sound_engine.h"
 
 #include <inttypes.h>
 #include <math.h>
@@ -27,10 +27,10 @@
 static const char *TAG = "gw_proxy";
 
 /* The key is copied between these two structs byte for byte. */
-static_assert(sizeof(((audio_encrypt_t *)0)->key) ==
+static_assert(sizeof(((sound_cipher_t *)0)->key) ==
                   sizeof(((surround_encryption_t *)0)->key),
               "key size");
-static_assert(sizeof(((audio_encrypt_t *)0)->iv) ==
+static_assert(sizeof(((sound_cipher_t *)0)->iv) ==
                   sizeof(((surround_encryption_t *)0)->iv),
               "iv size");
 
@@ -40,45 +40,45 @@ static struct {
   bool started; /* a stream was started and not stopped yet */
   bool session; /* the speakers hold stream state (format or start) */
   bool playing;
-  audio_stream_type_t stream_type;
-  audio_format_t format;
-  audio_encrypt_t encrypt;
+  sound_stream_t stream_type;
+  sound_format_t format;
+  sound_cipher_t encrypt;
   int32_t volume_q15;
   uint16_t buffered_port;
 } s = {.volume_q15 = 32768};
 
-static const char *stream_type_name(audio_stream_type_t t) {
+static const char *stream_type_name(sound_stream_t t) {
   switch (t) {
-    case AUDIO_STREAM_BUFFERED: return "buffered";
-    case AUDIO_STREAM_REALTIME: return "realtime";
+    case SOUND_STREAM_BUFFERED: return "buffered";
+    case SOUND_STREAM_REALTIME: return "realtime";
     default: return "none";
   }
 }
 
-esp_err_t audio_receiver_init(void) {
+esp_err_t sound_engine_init(void) {
   taskENTER_CRITICAL(&s_mux);
   s.initialized = true;
   taskEXIT_CRITICAL(&s_mux);
-  ESP_LOGI(TAG, "Gateway proxy ready: no decoder, no I2S; audio_receiver "
+  ESP_LOGI(TAG, "Gateway proxy ready: no decoder, no I2S; sound_engine "
                 "calls are logged as FWD");
   return ESP_OK;
 }
 
-bool audio_receiver_is_initialized(void) { return s.initialized; }
+bool sound_engine_is_initialized(void) { return s.initialized; }
 
-bool audio_receiver_is_idle(void) {
+bool sound_engine_is_idle(void) {
   return !s.started && gw_relay_is_idle() && gw_rt_relay_is_idle();
 }
 
-esp_err_t audio_receiver_release_for_wifi_scan(void) {
-  audio_receiver_stop();
+esp_err_t sound_engine_release_for_wifi_scan(void) {
+  sound_engine_stop();
   taskENTER_CRITICAL(&s_mux);
   s.initialized = false;
   taskEXIT_CRITICAL(&s_mux);
   return gw_relay_is_idle() && gw_rt_relay_is_idle() ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
-void audio_receiver_set_format(const audio_format_t *format) {
+void sound_engine_set_format(const sound_format_t *format) {
   if (!format) return;
   taskENTER_CRITICAL(&s_mux);
   s.format = *format;
@@ -97,13 +97,13 @@ void audio_receiver_set_format(const audio_format_t *format) {
   gw_speakers_send(SURROUND_MSG_SET_FORMAT, &m, sizeof(m));
 }
 
-uint32_t audio_receiver_get_sample_rate(void) {
+uint32_t sound_engine_get_sample_rate(void) {
   const int rate = s.format.sample_rate;
-  return rate > 0 ? (uint32_t)rate : AUDIO_PIPELINE_RATE_HZ;
+  return rate > 0 ? (uint32_t)rate : SOUND_PIPELINE_RATE_HZ;
 }
 
-void audio_receiver_set_encryption(const audio_encrypt_t *encrypt) {
-  audio_encrypt_t next = {0};
+void sound_engine_set_encryption(const sound_cipher_t *encrypt) {
+  sound_cipher_t next = {0};
   if (encrypt) next = *encrypt;
   taskENTER_CRITICAL(&s_mux);
   s.encrypt = next;
@@ -120,7 +120,7 @@ void audio_receiver_set_encryption(const audio_encrypt_t *encrypt) {
   gw_speakers_send(SURROUND_MSG_SET_ENCRYPTION, &m, sizeof(m));
 }
 
-void audio_receiver_set_stream_type(audio_stream_type_t type) {
+void sound_engine_set_stream_type(sound_stream_t type) {
   taskENTER_CRITICAL(&s_mux);
   s.stream_type = type;
   taskEXIT_CRITICAL(&s_mux);
@@ -129,12 +129,12 @@ void audio_receiver_set_stream_type(audio_stream_type_t type) {
   gw_speakers_send(SURROUND_MSG_SET_STREAM_TYPE, &m, sizeof(m));
 }
 
-esp_err_t audio_receiver_start_buffered(uint16_t tcp_port) {
-  const audio_format_t f = s.format;
+esp_err_t sound_engine_start_buffered(uint16_t tcp_port) {
+  const sound_format_t f = s.format;
   /* Accept and refuse the same formats as the speaker's receiver. */
   const int codec_type = strcmp(f.codec, "AAC") == 0 ? 4 :
       strcmp(f.codec, "ALAC") == 0 ? 2 : -1;
-  if (!airplay_audio_format_resolve(AUDIO_STREAM_BUFFERED, 0, codec_type,
+  if (!airplay_audio_format_resolve(SOUND_STREAM_BUFFERED, 0, codec_type,
                                     f.sample_rate, f.frame_size,
                                     f.bits_per_sample, f.channels)) {
     ESP_LOGE(TAG,
@@ -160,14 +160,14 @@ esp_err_t audio_receiver_start_buffered(uint16_t tcp_port) {
   return ESP_OK;
 }
 
-esp_err_t audio_receiver_start_stream(uint16_t data_port, uint16_t control_port,
+esp_err_t sound_engine_start_stream(uint16_t data_port, uint16_t control_port,
                                       uint16_t tcp_port) {
-  if (s.stream_type == AUDIO_STREAM_BUFFERED) {
-    return audio_receiver_start_buffered(tcp_port);
+  if (s.stream_type == SOUND_STREAM_BUFFERED) {
+    return sound_engine_start_buffered(tcp_port);
   }
-  if (s.stream_type == AUDIO_STREAM_REALTIME) {
+  if (s.stream_type == SOUND_STREAM_REALTIME) {
     /* The speaker's realtime receiver takes exactly this format. */
-    const audio_format_t f = s.format;
+    const sound_format_t f = s.format;
     if (strcmp(f.codec, "ALAC") != 0 || f.sample_rate != 44100 ||
         f.channels != 2 || f.bits_per_sample != 16 || f.frame_size != 352) {
       ESP_LOGE(TAG,
@@ -193,7 +193,7 @@ esp_err_t audio_receiver_start_stream(uint16_t data_port, uint16_t control_port,
   return ESP_ERR_NOT_SUPPORTED;
 }
 
-void audio_receiver_stop(void) {
+void sound_engine_stop(void) {
   gw_relay_stop();
   gw_rt_relay_stop();
   taskENTER_CRITICAL(&s_mux);
@@ -213,39 +213,39 @@ void audio_receiver_stop(void) {
   }
 }
 
-uint16_t audio_receiver_get_buffered_port(void) { return s.buffered_port; }
+uint16_t sound_engine_get_buffered_port(void) { return s.buffered_port; }
 
 /* RTSP calls this inside a critical section (rtsp_conn.c volume_lock), where
  * a speaker only stores an atomic. So does the Gateway: no log, lock or
  * socket here; the speakers task forwards it (gw_speakers_post_volume). */
-void audio_receiver_set_volume_q15(int32_t volume_q15) {
+void sound_engine_set_volume_q15(int32_t volume_q15) {
   if (volume_q15 < 0) volume_q15 = 0;
   if (volume_q15 > 32768) volume_q15 = 32768;
   __atomic_store_n(&s.volume_q15, volume_q15, __ATOMIC_RELEASE);
   gw_speakers_post_volume(volume_q15);
 }
 
-int32_t audio_receiver_get_volume_q15(void) {
+int32_t sound_engine_get_volume_q15(void) {
   return __atomic_load_n(&s.volume_q15, __ATOMIC_ACQUIRE);
 }
 
-void audio_receiver_seek_flush(void) {
+void sound_engine_seek_flush(void) {
   AP_LOGI(TAG, "FWD seek_flush");
   gw_speakers_send(SURROUND_MSG_SEEK_FLUSH, NULL, 0);
 }
 
-void audio_receiver_realtime_flush_to_rtp(uint32_t flush_rtp) {
+void sound_engine_realtime_flush_to_rtp(uint32_t flush_rtp) {
   AP_LOGI(TAG, "FWD realtime_flush_to_rtp rtp=%" PRIu32, flush_rtp);
   const surround_realtime_flush_t m = {.rtp = flush_rtp};
   gw_speakers_send(SURROUND_MSG_REALTIME_FLUSH_TO_RTP, &m, sizeof(m));
 }
 
-void audio_receiver_realtime_flush_wait_sender_anchor(void) {
+void sound_engine_realtime_flush_wait_sender_anchor(void) {
   AP_LOGI(TAG, "FWD realtime_flush_wait_sender_anchor");
   gw_speakers_send(SURROUND_MSG_REALTIME_FLUSH_WAIT_ANCHOR, NULL, 0);
 }
 
-esp_err_t audio_receiver_set_deferred_flush_range(uint32_t from_seq,
+esp_err_t sound_engine_set_deferred_flush_range(uint32_t from_seq,
                                                    uint32_t from_ts,
                                                    uint32_t until_seq,
                                                    uint32_t until_ts,
@@ -265,7 +265,7 @@ esp_err_t audio_receiver_set_deferred_flush_range(uint32_t from_seq,
   return ESP_OK;
 }
 
-void audio_receiver_set_immediate_flush(uint32_t until_seq, uint32_t until_ts) {
+void sound_engine_set_immediate_flush(uint32_t until_seq, uint32_t until_ts) {
   AP_LOGI(TAG, "FWD set_immediate_flush until %" PRIu32 "/%" PRIu32, until_seq,
           until_ts);
   const surround_immediate_flush_t m = {.until_seq = until_seq,
@@ -275,7 +275,7 @@ void audio_receiver_set_immediate_flush(uint32_t until_seq, uint32_t until_ts) {
   gw_relay_flush(until_seq);
 }
 
-void audio_receiver_pause(void) {
+void sound_engine_pause(void) {
   taskENTER_CRITICAL(&s_mux);
   s.playing = false;
   taskEXIT_CRITICAL(&s_mux);
@@ -284,7 +284,7 @@ void audio_receiver_pause(void) {
   gw_speakers_send(SURROUND_MSG_PAUSE, NULL, 0);
 }
 
-void audio_receiver_set_playing(bool playing) {
+void sound_engine_set_playing(bool playing) {
   taskENTER_CRITICAL(&s_mux);
   s.playing = playing;
   taskEXIT_CRITICAL(&s_mux);
@@ -294,7 +294,7 @@ void audio_receiver_set_playing(bool playing) {
   gw_speakers_send(SURROUND_MSG_SET_PLAYING, &m, sizeof(m));
 }
 
-void audio_receiver_set_anchor_time(uint64_t clock_id, uint64_t network_time_ns,
+void sound_engine_set_anchor_time(uint64_t clock_id, uint64_t network_time_ns,
                                     uint32_t rtp_time) {
   apple_clock_line_t ps = {0};
   apple_clock_get(&ps);
@@ -319,10 +319,10 @@ void audio_receiver_set_anchor_time(uint64_t clock_id, uint64_t network_time_ns,
   gw_speakers_send(SURROUND_MSG_SET_ANCHOR, &m, sizeof(m));
 }
 
-bool audio_receiver_set_realtime_anchor_local(
+bool sound_engine_set_realtime_anchor_local(
     uint64_t clock_id, uint32_t gm_epoch, uint32_t mastership_age_ms,
     uint64_t remote_ptp_ns, uint64_t candidate_local_ns, uint32_t rtp_time,
-    audio_realtime_anchor_result_t *result) {
+    sound_realtime_anchor_result_t *result) {
   /* RTSP converted the anchor with the Gateway's clock; each speaker
    * converts the sender time again with its own. */
   AP_LOGI(TAG,
@@ -340,7 +340,7 @@ bool audio_receiver_set_realtime_anchor_local(
   return true;
 }
 
-void audio_receiver_set_client_control(uint32_t client_ip,
+void sound_engine_set_client_control(uint32_t client_ip,
                                        uint16_t client_control_port) {
   /* The speakers send their NACKs to the Gateway, which passes them on. */
   gw_rt_relay_set_sender_control(client_ip, client_control_port);
@@ -355,7 +355,7 @@ void audio_receiver_set_client_control(uint32_t client_ip,
   if (m.port) gw_speakers_send(SURROUND_MSG_SET_CLIENT_CONTROL, &m, sizeof(m));
 }
 
-void audio_receiver_set_playout_latency_samples(uint32_t latency_samples) {
+void sound_engine_set_playout_latency_samples(uint32_t latency_samples) {
   AP_LOGI(TAG, "FWD set_playout_latency_samples %" PRIu32, latency_samples);
   const surround_playout_latency_t m = {.latency_samples = latency_samples};
   gw_speakers_send(SURROUND_MSG_SET_PLAYOUT_LATENCY, &m, sizeof(m));

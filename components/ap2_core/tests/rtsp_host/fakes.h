@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /* Fakes of the firmware and ap2_core interfaces and of rtsp_port.h, for the
  * host tests. Every call that changes something is written to a call log
- * as text, e.g. "audio_receiver_set_volume_q15(8192)". */
+ * as text, e.g. "sound_engine_set_volume_q15(8192)". */
 #pragma once
 
 #include <stdbool.h>

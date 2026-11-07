@@ -12,7 +12,7 @@
 #include "aac_decoder.h"
 #include "airplay_log.h"
 #include "amp_control.h"
-#include "audio_receiver.h"
+#include "sound_engine.h"
 #include "cal_chirp.h"
 #include "cal_playback.h"
 #include "firmware_id.h"
@@ -46,10 +46,10 @@ static const char *TAG = "spk_link";
 #define SPK_LINK_TX_TIMEOUT_MS 2000
 
 /* The key is copied between these two structs byte for byte. */
-static_assert(sizeof(((audio_encrypt_t *)0)->key) ==
+static_assert(sizeof(((sound_cipher_t *)0)->key) ==
                   sizeof(((surround_encryption_t *)0)->key),
               "key size");
-static_assert(sizeof(((audio_encrypt_t *)0)->iv) ==
+static_assert(sizeof(((sound_cipher_t *)0)->iv) ==
                   sizeof(((surround_encryption_t *)0)->iv),
               "iv size");
 
@@ -165,27 +165,27 @@ static void send_hello(int fd) {
  * "mono mix" speaker plays the mix. */
 static void apply_stereo_route(void) {
   const int role = aac_decoder_get_speaker();
-  audio_stereo_route_t route;
+  sound_stereo_route_t route;
   switch (role) {
     case AAC_SPEAKER_L:
-      route = AUDIO_STEREO_ROUTE_LEFT;
+      route = SOUND_STEREO_ROUTE_LEFT;
       break;
     case AAC_SPEAKER_R:
-      route = AUDIO_STEREO_ROUTE_RIGHT;
+      route = SOUND_STEREO_ROUTE_RIGHT;
       break;
     case AAC_SPEAKER_C:
     case AAC_SPEAKER_LS:
     case AAC_SPEAKER_RS:
     case AAC_SPEAKER_LRS:
     case AAC_SPEAKER_RRS:
-      route = AUDIO_STEREO_ROUTE_MUTE;
+      route = SOUND_STEREO_ROUTE_MUTE;
       break;
     case AAC_SPEAKER_LFE:
     default:
-      route = AUDIO_STEREO_ROUTE_MONO;
+      route = SOUND_STEREO_ROUTE_MONO;
       break;
   }
-  audio_receiver_set_stereo_route(route);
+  sound_engine_set_stereo_route(route);
   static const char *const names[] = {"stereo", "left", "right", "mono mix",
                                       "silent"};
   AP_LOGI(TAG, "stereo sources: %s (role %s)", names[route],
@@ -194,7 +194,7 @@ static void apply_stereo_route(void) {
 
 static void apply_volume(void) {
   const double gain = pow(10.0, (double)s_trim_db10 / 200.0);
-  audio_receiver_set_volume_q15((int32_t)lround(s_sender_volume_q15 * gain));
+  sound_engine_set_volume_q15((int32_t)lround(s_sender_volume_q15 * gain));
 }
 
 static void send_config(int fd) {
@@ -237,7 +237,7 @@ static void set_config(int fd, const surround_set_config_t *m) {
   if (m->fields & SURROUND_SET_DELAY) {
     if (m->delay_us >= SURROUND_DELAY_MIN_US &&
         m->delay_us <= SURROUND_DELAY_MAX_US &&
-        audio_receiver_set_extra_delay_us(m->delay_us) == ESP_OK) {
+        sound_engine_set_extra_delay_us(m->delay_us) == ESP_OK) {
       s_delay_us = m->delay_us;
       tuning = true;
       AP_LOGI(TAG, "CMD set_config delay %" PRId32 " us", s_delay_us);
@@ -262,8 +262,8 @@ static bool pick_udp_ports(uint16_t *data_port, uint16_t *control_port) {
 }
 
 static void send_status(int fd) {
-  audio_receiver_playback_info_t pi;
-  audio_receiver_get_playback_info(&pi);
+  sound_engine_playback_info_t pi;
+  sound_engine_get_playback_info(&pi);
   surround_status_t st = {
       .stream_type = (uint8_t)pi.stream_type,
       .sample_rate = pi.format.sample_rate > 0 ? (uint32_t)pi.format.sample_rate : 0U,
@@ -300,7 +300,7 @@ static void stream_ended(void) {
   amp_control_session_disconnected();
 }
 
-/* One forwarded call: the same audio_receiver call RTSP made on the Gateway,
+/* One forwarded call: the same sound_engine call RTSP made on the Gateway,
  * plus the amplifier and LED events RTSP would raise around it. */
 static void dispatch(int fd, uint8_t type, const uint8_t *p, size_t len) {
 #define PAYLOAD(T, v)                                                    \
@@ -337,12 +337,12 @@ static void dispatch(int fd, uint8_t type, const uint8_t *p, size_t len) {
     case SURROUND_MSG_SET_STREAM_TYPE: {
       PAYLOAD(surround_stream_type_t, m);
       AP_LOGI(TAG, "CMD set_stream_type %u", (unsigned)m.stream_type);
-      audio_receiver_set_stream_type((audio_stream_type_t)m.stream_type);
+      sound_engine_set_stream_type((sound_stream_t)m.stream_type);
       break;
     }
     case SURROUND_MSG_SET_FORMAT: {
       PAYLOAD(surround_format_t, m);
-      audio_format_t f = {
+      sound_format_t f = {
           .sample_rate = m.sample_rate,
           .channels = m.channels,
           .bits_per_sample = m.bits_per_sample,
@@ -352,27 +352,27 @@ static void dispatch(int fd, uint8_t type, const uint8_t *p, size_t len) {
       strlcpy(f.codec, m.codec, sizeof(f.codec));
       AP_LOGI(TAG, "CMD set_format %s %d Hz %d ch %d bit %d frames", f.codec,
               f.sample_rate, f.channels, f.bits_per_sample, f.frame_size);
-      audio_receiver_set_format(&f);
+      sound_engine_set_format(&f);
       break;
     }
     case SURROUND_MSG_SET_ENCRYPTION: {
       PAYLOAD(surround_encryption_t, m);
-      audio_encrypt_t e = {
-          .type = (audio_encrypt_type_t)m.type,
+      sound_cipher_t e = {
+          .type = (sound_cipher_kind_t)m.type,
           .key_len = m.key_len <= sizeof(e.key) ? m.key_len : 0U,
       };
       memcpy(e.key, m.key, sizeof(e.key));
       memcpy(e.iv, m.iv, sizeof(e.iv));
       AP_LOGI(TAG, "CMD set_encryption type=%u key_len=%u", (unsigned)m.type,
               (unsigned)e.key_len);
-      audio_receiver_set_encryption(&e);
+      sound_engine_set_encryption(&e);
       break;
     }
     case SURROUND_MSG_START_BUFFERED: {
-      const esp_err_t err = audio_receiver_start_buffered(0);
+      const esp_err_t err = sound_engine_start_buffered(0);
       const surround_start_result_t r = {
           .err = err,
-          .port = err == ESP_OK ? audio_receiver_get_buffered_port() : 0,
+          .port = err == ESP_OK ? sound_engine_get_buffered_port() : 0,
       };
       AP_LOGI(TAG, "CMD start_buffered: %s, audio port %u",
               esp_err_to_name(err), (unsigned)r.port);
@@ -387,7 +387,7 @@ static void dispatch(int fd, uint8_t type, const uint8_t *p, size_t len) {
       surround_start_result_t r = {.err = ESP_FAIL};
       uint16_t data_port = 0, control_port = 0;
       if (pick_udp_ports(&data_port, &control_port)) {
-        r.err = audio_receiver_start_stream(data_port, control_port, 0);
+        r.err = sound_engine_start_stream(data_port, control_port, 0);
         if (r.err == ESP_OK) {
           r.rt_data_port = data_port;
           r.rt_control_port = control_port;
@@ -407,18 +407,18 @@ static void dispatch(int fd, uint8_t type, const uint8_t *p, size_t len) {
       PAYLOAD(surround_client_control_t, m);
       AP_LOGI(TAG, "CMD set_client_control: NACKs to the Gateway port %u",
               (unsigned)m.port);
-      audio_receiver_set_client_control(s_gateway_ip, m.port);
+      sound_engine_set_client_control(s_gateway_ip, m.port);
       break;
     }
     case SURROUND_MSG_REALTIME_FLUSH_TO_RTP: {
       PAYLOAD(surround_realtime_flush_t, m);
       AP_LOGI(TAG, "CMD realtime_flush_to_rtp %" PRIu32, m.rtp);
-      audio_receiver_realtime_flush_to_rtp(m.rtp);
+      sound_engine_realtime_flush_to_rtp(m.rtp);
       break;
     }
     case SURROUND_MSG_REALTIME_FLUSH_WAIT_ANCHOR:
       AP_LOGI(TAG, "CMD realtime_flush_wait_sender_anchor");
-      audio_receiver_realtime_flush_wait_sender_anchor();
+      sound_engine_realtime_flush_wait_sender_anchor();
       break;
     case SURROUND_MSG_REALTIME_ANCHOR: {
       PAYLOAD(surround_realtime_anchor_t, m);
@@ -429,8 +429,8 @@ static void dispatch(int fd, uint8_t type, const uint8_t *p, size_t len) {
       uint64_t local_ns = 0;
       if (ptp_clock_realtime_snapshot_to_local(&ps, m.clock_id, m.remote_ptp_ns,
                                                &local_ns)) {
-        audio_realtime_anchor_result_t res = {0};
-        const bool published = audio_receiver_set_realtime_anchor_local(
+        sound_realtime_anchor_result_t res = {0};
+        const bool published = sound_engine_set_realtime_anchor_local(
             m.clock_id, ps.gm_change_count, ps.mastership_age_ms,
             m.remote_ptp_ns, local_ns, m.rtp_time, &res);
         AP_LOGI(TAG, "CMD realtime anchor clock=%016" PRIx64 " rtp=%" PRIu32
@@ -456,11 +456,11 @@ static void dispatch(int fd, uint8_t type, const uint8_t *p, size_t len) {
       if (!s_stream_started) {
         int64_t emit_us[SURROUND_CAL_BURSTS_MAX] = {0};
         int n = 0;
-        esp_err_t err = audio_receiver_play_cal_chirps(m.kind, m.level_db,
+        esp_err_t err = sound_engine_play_cal_chirps(m.kind, m.level_db,
                                                        bursts, emit_us, &n);
         /* The sound leaves the speaker the output latency later. */
         const int64_t out_ns =
-            (int64_t)audio_receiver_get_output_latency_us() * 1000LL;
+            (int64_t)sound_engine_get_output_latency_us() * 1000LL;
         for (int i = 0; err == ESP_OK && i < n; ++i) {
           int64_t tsf = 0;
           if (!spk_time_tsf_at(emit_us[i] * 1000LL + out_ns, &tsf)) {
@@ -481,8 +481,8 @@ static void dispatch(int fd, uint8_t type, const uint8_t *p, size_t len) {
       if (s_stream_started) {
         /* The update does not wait: this speaker leaves the stream. */
         AP_LOGI(TAG, "stopping the stream for the firmware update");
-        audio_receiver_set_playing(false);
-        audio_receiver_stop();
+        sound_engine_set_playing(false);
+        sound_engine_stop();
         stream_ended();
       }
       spk_update_start(s_gateway_ip, &m);
@@ -490,14 +490,14 @@ static void dispatch(int fd, uint8_t type, const uint8_t *p, size_t len) {
     }
     case SURROUND_MSG_STOP:
       AP_LOGI(TAG, "CMD stop");
-      audio_receiver_stop();
+      sound_engine_stop();
       stream_ended();
       break;
     case SURROUND_MSG_SET_VOLUME: {
       PAYLOAD(surround_volume_t, m);
       AP_LOGI(TAG, "CMD set_volume_q15 %" PRId32 " (trim %.1f dB)",
               m.volume_q15, s_trim_db10 / 10.0);
-      /* The same range audio_receiver_set_volume_q15() accepts. */
+      /* The same range sound_engine_set_volume_q15() accepts. */
       s_sender_volume_q15 = m.volume_q15 < 0 ? 0
                             : m.volume_q15 > 32768 ? 32768 : m.volume_q15;
       apply_volume();
@@ -505,7 +505,7 @@ static void dispatch(int fd, uint8_t type, const uint8_t *p, size_t len) {
     }
     case SURROUND_MSG_SEEK_FLUSH:
       AP_LOGI(TAG, "CMD seek_flush");
-      audio_receiver_seek_flush();
+      sound_engine_seek_flush();
       break;
     case SURROUND_MSG_DEFERRED_FLUSH: {
       PAYLOAD(surround_deferred_flush_t, m);
@@ -514,7 +514,7 @@ static void dispatch(int fd, uint8_t type, const uint8_t *p, size_t len) {
               " until %" PRIu32 "/%" PRIu32 " ts_valid=%u",
               m.from_seq, m.from_ts, m.until_seq, m.until_ts,
               (unsigned)m.timestamps_valid);
-      (void)audio_receiver_set_deferred_flush_range(
+      (void)sound_engine_set_deferred_flush_range(
           m.from_seq, m.from_ts, m.until_seq, m.until_ts,
           m.timestamps_valid != 0U);
       break;
@@ -523,18 +523,18 @@ static void dispatch(int fd, uint8_t type, const uint8_t *p, size_t len) {
       PAYLOAD(surround_immediate_flush_t, m);
       AP_LOGI(TAG, "CMD set_immediate_flush until %" PRIu32 "/%" PRIu32,
               m.until_seq, m.until_ts);
-      audio_receiver_set_immediate_flush(m.until_seq, m.until_ts);
+      sound_engine_set_immediate_flush(m.until_seq, m.until_ts);
       break;
     }
     case SURROUND_MSG_PAUSE:
       AP_LOGI(TAG, "CMD pause");
-      audio_receiver_pause();
+      sound_engine_pause();
       rtsp_events_emit(RTSP_EVENT_PAUSED);
       break;
     case SURROUND_MSG_SET_PLAYING: {
       PAYLOAD(surround_playing_t, m);
       AP_LOGI(TAG, "CMD set_playing %u", (unsigned)m.playing);
-      audio_receiver_set_playing(m.playing != 0U);
+      sound_engine_set_playing(m.playing != 0U);
       rtsp_events_emit(m.playing ? RTSP_EVENT_PLAYING : RTSP_EVENT_PAUSED);
       break;
     }
@@ -543,7 +543,7 @@ static void dispatch(int fd, uint8_t type, const uint8_t *p, size_t len) {
       AP_LOGI(TAG, "CMD set_anchor_time clock=%016" PRIx64 " ptp=%" PRIu64
                    " rtp=%" PRIu32,
               m.clock_id, m.network_time_ns, m.rtp_time);
-      audio_receiver_set_anchor_time(m.clock_id, m.network_time_ns,
+      sound_engine_set_anchor_time(m.clock_id, m.network_time_ns,
                                      m.rtp_time);
       break;
     }
@@ -551,7 +551,7 @@ static void dispatch(int fd, uint8_t type, const uint8_t *p, size_t len) {
       PAYLOAD(surround_playout_latency_t, m);
       AP_LOGI(TAG, "CMD set_playout_latency_samples %" PRIu32,
               m.latency_samples);
-      audio_receiver_set_playout_latency_samples(m.latency_samples);
+      sound_engine_set_playout_latency_samples(m.latency_samples);
       break;
     }
     default:
@@ -684,8 +684,8 @@ static void link_task(void *arg) {
      * link starts from a clean receiver like a new AirPlay session. */
     if (s_stream_started) {
       AP_LOGI(TAG, "link lost during a stream: stopping it");
-      audio_receiver_set_playing(false);
-      audio_receiver_stop();
+      sound_engine_set_playing(false);
+      sound_engine_stop();
       stream_ended();
     }
     s_idle = true;
@@ -715,7 +715,7 @@ esp_err_t spk_link_start(void) {
   if (trim >= SURROUND_TRIM_MIN_DB10 && trim <= SURROUND_TRIM_MAX_DB10)
     s_trim_db10 = trim;
   if (delay >= SURROUND_DELAY_MIN_US && delay <= SURROUND_DELAY_MAX_US &&
-      audio_receiver_set_extra_delay_us(delay) == ESP_OK)
+      sound_engine_set_extra_delay_us(delay) == ESP_OK)
     s_delay_us = delay;
   apply_volume();
   apply_stereo_route();

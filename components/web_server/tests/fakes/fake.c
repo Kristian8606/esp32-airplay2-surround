@@ -11,7 +11,7 @@
 #include <string.h>
 #include <strings.h>
 
-#include "audio_receiver.h"
+#include "sound_engine.h"
 #include "esp_app_desc.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -689,7 +689,7 @@ void firmware_id(char *out, size_t len) {
   snprintf(out, len, "%s", fake_fw.firmware_id);
 }
 
-esp_err_t audio_receiver_init(void) {
+esp_err_t sound_engine_init(void) {
   fake_call("audio_init");
   if (fake_fw.audio_init_err == ESP_OK) {
     fake_fw.audio_initialized = true;
@@ -697,9 +697,9 @@ esp_err_t audio_receiver_init(void) {
   return fake_fw.audio_init_err;
 }
 
-bool audio_receiver_is_initialized(void) { return fake_fw.audio_initialized; }
+bool sound_engine_is_initialized(void) { return fake_fw.audio_initialized; }
 
-esp_err_t audio_receiver_release_for_wifi_scan(void) {
+esp_err_t sound_engine_release_for_wifi_scan(void) {
   fake_call("audio_release");
   if (fake_fw.audio_release_err == ESP_OK) {
     fake_fw.audio_initialized = false;

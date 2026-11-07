@@ -7,7 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "audio_receiver.h"
+#include "sound_engine.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -163,7 +163,7 @@ esp_err_t web_audio_pause(httpd_req_t *req, const char *what, bool *paused) {
     what = "";
   }
   *paused = false;
-  if (!audio_receiver_is_initialized()) {
+  if (!sound_engine_is_initialized()) {
     return ESP_OK;
   }
 
@@ -187,7 +187,7 @@ esp_err_t web_audio_pause(httpd_req_t *req, const char *what, bool *paused) {
     vTaskDelay(pdMS_TO_TICKS(SOURCE_POLL_MS));
   }
 
-  err = audio_receiver_release_for_wifi_scan();
+  err = sound_engine_release_for_wifi_scan();
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "%s: audio memory not released (%s)", what,
              esp_err_to_name(err));
@@ -209,7 +209,7 @@ esp_err_t web_audio_resume(httpd_req_t *req, const char *what) {
   if (what == NULL) {
     what = "";
   }
-  esp_err_t err = audio_receiver_init();
+  esp_err_t err = sound_engine_init();
   if (err == ESP_OK) {
     err = web_role_source_start();
   }

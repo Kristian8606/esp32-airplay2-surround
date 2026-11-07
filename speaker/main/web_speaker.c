@@ -11,7 +11,7 @@
 #include "airplay_log.h"
 #include "audio_eq.h"
 #include "audio_loudness.h"
-#include "audio_receiver.h"
+#include "sound_engine.h"
 #include "cJSON.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -34,7 +34,7 @@ static esp_err_t eq_page_handler(httpd_req_t *req) {
 #define CONFIG_AIRPLAY_OUTPUT_LATENCY_US 0
 #endif
 static void add_latency_state(cJSON *r) {
-  cJSON_AddNumberToObject(r, "latency_us", audio_receiver_get_output_latency_us());
+  cJSON_AddNumberToObject(r, "latency_us", sound_engine_get_output_latency_us());
   cJSON_AddNumberToObject(r, "default_us", CONFIG_AIRPLAY_OUTPUT_LATENCY_US);
 #if CONFIG_AIRPLAY_LATENCY_CAL
   cJSON_AddBoolToObject(r, "measure_available", true);
@@ -65,9 +65,9 @@ static esp_err_t latency_post_handler(httpd_req_t *req) {
   if (reset && cJSON_IsTrue(reset)) {
     e = settings_clear_output_latency();
     if (e == ESP_OK)
-      e = audio_receiver_set_output_latency_us(CONFIG_AIRPLAY_OUTPUT_LATENCY_US, false);
+      e = sound_engine_set_output_latency_us(CONFIG_AIRPLAY_OUTPUT_LATENCY_US, false);
   } else if (v && cJSON_IsNumber(v)) {
-    e = audio_receiver_set_output_latency_us((int32_t)v->valuedouble, true);
+    e = sound_engine_set_output_latency_us((int32_t)v->valuedouble, true);
   }
   cJSON_AddBoolToObject(r, "success", e == ESP_OK);
   if (e != ESP_OK)
@@ -217,7 +217,7 @@ static esp_err_t latency_measure_handler(httpd_req_t *req) {
   }
   if (restore) web_log_memory("latency-test-released");
   latency_cal_result_t res;
-  esp_err_t e = audio_receiver_measure_output_latency(&res, audible);
+  esp_err_t e = sound_engine_measure_output_latency(&res, audible);
   if (restore && web_audio_resume(req, "Latency test") != ESP_OK) {
     return ESP_FAIL;
   }
@@ -225,7 +225,7 @@ static esp_err_t latency_measure_handler(httpd_req_t *req) {
   cJSON_AddBoolToObject(r, "success", e == ESP_OK && res.ok);
   if (e == ESP_OK && res.ok) {
     /* A successful measurement becomes the saved value. */
-    esp_err_t se = audio_receiver_set_output_latency_us(res.latency_us, true);
+    esp_err_t se = sound_engine_set_output_latency_us(res.latency_us, true);
     cJSON_AddBoolToObject(r, "saved", se == ESP_OK);
   }
   cJSON_AddNumberToObject(r, "measured_us", res.latency_us);
@@ -272,7 +272,7 @@ static void eq_config_to_json(const audio_eq_config_t *cfg, cJSON *root) {
 }
 
 static void output_mute_to_json(cJSON *root) {
-  const uint32_t mask = audio_receiver_get_output_mute_mask();
+  const uint32_t mask = sound_engine_get_output_mute_mask();
   cJSON_AddBoolToObject(root, "left_muted", (mask & 1U) != 0U);
   cJSON_AddBoolToObject(root, "right_muted", (mask & 2U) != 0U);
 }
@@ -303,7 +303,7 @@ static esp_err_t output_mute_post_handler(httpd_req_t *req) {
     httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
     return ESP_ERR_NO_MEM;
   }
-  audio_receiver_set_output_muted(ch, mute);
+  sound_engine_set_output_muted(ch, mute);
   cJSON_AddBoolToObject(root, "success", true);
   output_mute_to_json(root);
   web_send_json(req, root);

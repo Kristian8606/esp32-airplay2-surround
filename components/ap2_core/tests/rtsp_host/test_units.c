@@ -385,7 +385,7 @@ static void test_volume_text(void) {
 }
 
 static void test_formats(void) {
-  audio_format_t f;
+  sound_format_t f;
   /* every row of the table */
   CHECK(rtsp_format_lookup(96, 0x40000, &f));
   CHECK_STR(f.codec, "ALAC");

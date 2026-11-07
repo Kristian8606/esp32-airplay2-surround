@@ -8,7 +8,7 @@ menu "Surround Build Role"
             speakers.
             Gateway: the AirPlay receiver the Apple TV plays to (mDNS,
             pairing, RTSP, PTP), without a decoder or I2S output; a proxy
-            forwards every audio_receiver call and the raw audio stream to
+            forwards every sound_engine call and the raw audio stream to
             the speakers.
             Speaker: follows the Gateway and plays one channel through I2S;
             not an AirPlay receiver of its own.

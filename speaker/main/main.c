@@ -1,5 +1,5 @@
 /* Surround speaker firmware: follows the Gateway and plays one channel. */
-#include "audio_receiver.h"
+#include "sound_engine.h"
 #include "audio_diag.h"
 #include "amp_control.h"
 #include "aac_decoder.h"
@@ -101,7 +101,7 @@ void app_main(void) {
              "WiFi provisioning mode: audio engine deferred until credentials are saved and device restarts");
     log_memory_state("setup-ready");
   } else {
-    ESP_ERROR_CHECK(audio_receiver_init());
+    ESP_ERROR_CHECK(sound_engine_init());
     log_memory_state("post-audio-init");
     /* Sync test pulse (off unless enabled in menuconfig). */
     esp_err_t pulse_err = sync_pulse_start();

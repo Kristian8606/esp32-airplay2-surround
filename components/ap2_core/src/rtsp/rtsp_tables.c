@@ -82,15 +82,15 @@ static const format_row_t FORMATS[] = {
 };
 
 bool rtsp_format_lookup(int64_t stream_type, uint64_t audio_format,
-                        audio_format_t *format) {
-  if (stream_type != AUDIO_STREAM_REALTIME &&
-      stream_type != AUDIO_STREAM_BUFFERED) {
+                        sound_format_t *format) {
+  if (stream_type != SOUND_STREAM_REALTIME &&
+      stream_type != SOUND_STREAM_BUFFERED) {
     return false;
   }
   for (size_t i = 0; i < sizeof(FORMATS) / sizeof(FORMATS[0]); i++) {
     const format_row_t *row = &FORMATS[i];
     if (row->bit != audio_format) continue;
-    if (stream_type == AUDIO_STREAM_REALTIME && !row->realtime_too) {
+    if (stream_type == SOUND_STREAM_REALTIME && !row->realtime_too) {
       return false;
     }
     memset(format, 0, sizeof(*format));

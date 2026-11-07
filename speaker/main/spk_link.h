@@ -8,8 +8,8 @@
  *
  * Finds the Gateway (CONFIG_AIRPLAY_SURROUND_GATEWAY_HOST, else mDNS
  * _apsurround._tcp), connects, sends HELLO and makes every forwarded
- * audio_receiver call locally. Reconnects whenever the link drops; a stream
- * in progress is stopped first. Call after audio_receiver_init(). */
+ * sound_engine call locally. Reconnects whenever the link drops; a stream
+ * in progress is stopped first. Call after sound_engine_init(). */
 esp_err_t spk_link_start(void);
 
 /* Web page (Wi-Fi scan, latency test): drop the link, stop the stream and

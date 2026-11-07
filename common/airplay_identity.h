@@ -19,11 +19,10 @@
 /* statusFlags / "flags" / "sf": 0x4 = audio receiver. */
 #define AIRPLAY_STATUS_FLAGS   0x4
 
-/* Feature bits advertised in mDNS "features"/"ft" and GET /info.
- * Key bits:
- *   Bit 38: SupportsCoreUtilsPairingAndEncryption
- *   Bit 46: SupportsHKPairingAndAccessControl
- *   Bit 48: SupportsTransientPairing */
+/* Feature bits of mDNS "features"/"ft" and GET /info, high and low 32 bits:
+ * bits 9, 11, 14, 18, 19, 20, 30, 38, 40, 41, 46, 47 and 48 (bit 22 off).
+ * The high ones announce AirPlay 2 pairing: 38 and 46 for the encrypted,
+ * paired control channel, 48 for transient (PIN-less) pairing. */
 #define AIRPLAY_FEATURES_HI 0x1C340
 #define AIRPLAY_FEATURES_LO 0x401C4A00 /* bit 22 off */
 

@@ -16,7 +16,7 @@
 #include "led.h"
 #if CONFIG_AIRPLAY_I2S_KEEP_RUNNING
 #include "audio_fade.h"
-#include "audio_receiver.h" /* AUDIO_PIPELINE_RATE_HZ */
+#include "sound_engine.h" /* SOUND_PIPELINE_RATE_HZ */
 #include "soc/soc_caps.h"
 #if SOC_CACHE_INTERNAL_MEM_VIA_L1CACHE
 #include "esp_cache.h"
@@ -40,7 +40,7 @@ static void live_dither_step(void);
 #define I2S_DMA_DESC_NUM  AUDIO_PLAYOUT_DMA_BLOCKS
 #define I2S_DMA_FRAME_NUM AUDIO_PLAYOUT_FRAMES
 /* Initial rate; the playout task switches it to the active stream's rate. */
-#define I2S_RATE_HZ       AUDIO_PIPELINE_RATE_HZ
+#define I2S_RATE_HZ       SOUND_PIPELINE_RATE_HZ
 #define I2S_MIN_RATE_HZ   44100U
 /* Every descriptor holds one tagged block, plus the batch being written. */
 #define TX_TAG_Q_CAP      16U

@@ -13,7 +13,7 @@
 #include "ap2_plist.h"
 #include "ap2_tlv8.h"
 #include "apple_clock.h"
-#include "audio_receiver.h"
+#include "sound_engine.h"
 #include "airplay_identity.h"
 #include "rtsp_events.h"
 #include "rtsp_port.h"
@@ -222,53 +222,53 @@ void rtsp_events_emit(rtsp_event_t event) {
   call("event(%s)", names[event]);
 }
 
-bool audio_receiver_is_idle(void) { return true; }
-void audio_receiver_set_stream_type(audio_stream_type_t type) {
+bool sound_engine_is_idle(void) { return true; }
+void sound_engine_set_stream_type(sound_stream_t type) {
   call("audio_set_stream_type(%d)", (int)type);
 }
-void audio_receiver_set_format(const audio_format_t *f) {
+void sound_engine_set_format(const sound_format_t *f) {
   call("audio_set_format(%s,%d,%d,%d,%d)", f->codec, f->sample_rate, f->channels,
        f->bits_per_sample, f->frame_size);
 }
-void audio_receiver_set_encryption(const audio_encrypt_t *e) {
+void sound_engine_set_encryption(const sound_cipher_t *e) {
   call("audio_set_encryption(%d,%zu,%02x%02x)", (int)e->type, e->key_len, e->key[0],
        e->key[31]);
 }
-esp_err_t audio_receiver_start_stream(uint16_t data_port, uint16_t control_port,
+esp_err_t sound_engine_start_stream(uint16_t data_port, uint16_t control_port,
                                       uint16_t tcp_port) {
   call("audio_start_stream(%u,%u,%u)", data_port, control_port, tcp_port);
   return fake.start_stream_err;
 }
-esp_err_t audio_receiver_start_buffered(uint16_t tcp_port) {
+esp_err_t sound_engine_start_buffered(uint16_t tcp_port) {
   call("audio_start_buffered(%u)", tcp_port);
   return fake.start_buffered_err;
 }
-uint16_t audio_receiver_get_buffered_port(void) { return 7100; }
-void audio_receiver_stop(void) { call("audio_stop()"); }
-void audio_receiver_set_volume_q15(int32_t q15) { call("audio_set_volume_q15(%" PRId32 ")", q15); }
-void audio_receiver_set_immediate_flush(uint32_t until_seq, uint32_t until_ts) {
+uint16_t sound_engine_get_buffered_port(void) { return 7100; }
+void sound_engine_stop(void) { call("audio_stop()"); }
+void sound_engine_set_volume_q15(int32_t q15) { call("audio_set_volume_q15(%" PRId32 ")", q15); }
+void sound_engine_set_immediate_flush(uint32_t until_seq, uint32_t until_ts) {
   call("audio_immediate_flush(%" PRIu32 ",%" PRIu32 ")", until_seq, until_ts);
 }
-esp_err_t audio_receiver_set_deferred_flush_range(uint32_t from_seq, uint32_t from_ts,
+esp_err_t sound_engine_set_deferred_flush_range(uint32_t from_seq, uint32_t from_ts,
                                                   uint32_t until_seq, uint32_t until_ts,
                                                   bool timestamps_valid) {
   call("audio_deferred_flush(%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%d)",
        from_seq, from_ts, until_seq, until_ts, timestamps_valid);
   return ESP_OK;
 }
-void audio_receiver_realtime_flush_to_rtp(uint32_t flush_rtp) {
+void sound_engine_realtime_flush_to_rtp(uint32_t flush_rtp) {
   call("audio_realtime_flush(%" PRIu32 ")", flush_rtp);
 }
-void audio_receiver_pause(void) { call("audio_pause()"); }
-void audio_receiver_set_playing(bool playing) { call("audio_set_playing(%d)", playing); }
-void audio_receiver_set_anchor_time(uint64_t clock_id, uint64_t ns, uint32_t rtp) {
+void sound_engine_pause(void) { call("audio_pause()"); }
+void sound_engine_set_playing(bool playing) { call("audio_set_playing(%d)", playing); }
+void sound_engine_set_anchor_time(uint64_t clock_id, uint64_t ns, uint32_t rtp) {
   call("audio_anchor(%" PRIx64 ",%" PRIu64 ",%" PRIu32 ")", clock_id, ns, rtp);
 }
-void audio_receiver_set_client_control(uint32_t client_ip, uint16_t port) {
+void sound_engine_set_client_control(uint32_t client_ip, uint16_t port) {
   const uint8_t *b = (const uint8_t *)&client_ip;
   call("audio_client_control(%u.%u.%u.%u,%u)", b[0], b[1], b[2], b[3], port);
 }
-void audio_receiver_set_playout_latency_samples(uint32_t samples) {
+void sound_engine_set_playout_latency_samples(uint32_t samples) {
   call("audio_latency(%" PRIu32 ")", samples);
 }
 

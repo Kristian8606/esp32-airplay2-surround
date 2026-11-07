@@ -11,7 +11,7 @@
 #include <unistd.h>
 
 #include "airplay_log.h"
-#include "audio_receiver.h"
+#include "sound_engine.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -72,7 +72,7 @@ static const char *TAG = "gw_relay";
 #define GW_RELAY_PACE_BURST_S 2.0
 /* RTP jumps more than this (a seek, a new track): pacing starts over. */
 #define GW_RELAY_PACE_JUMP_S  1.0
-/* Buffered frames carry a 23-bit sequence number (audio_receiver.c). */
+/* Buffered frames carry a 23-bit sequence number (sound_engine.c). */
 #define GW_RELAY_SEQ_MASK    0x007fffffU
 
 typedef struct {
@@ -343,7 +343,7 @@ static void advance_release(int64_t now_us) {
       s.pace_valid = false;
     }
   }
-  const double rate = (double)audio_receiver_get_sample_rate();
+  const double rate = (double)sound_engine_get_sample_rate();
   s.paced = false;
   while (s.release_flush_gen == s.flush_gen && s.release_ix < s.ix_head) {
     const uint32_t rtp = fx(s.release_ix)->rtp;

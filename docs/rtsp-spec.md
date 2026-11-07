@@ -20,7 +20,7 @@ the behaviour.
 
 The Gateway is the AirPlay 2 receiver the senders see. It plays nothing
 itself: it accepts the session, takes the audio, and passes every playback
-decision to the audio engine interface (`audio_receiver.h`), which the
+decision to the audio engine interface (`sound_engine.h`), which the
 Gateway implements by forwarding to its speakers. This server is the
 control side: the RTSP connection on TCP port 7000, pairing, the encrypted
 control channel, the event channel back to the sender, and the
@@ -62,7 +62,7 @@ disconnected.
 
 The server uses:
 
-- **Audio engine** (`audio_receiver.h`): set stream type, format,
+- **Audio engine** (`sound_engine.h`): set stream type, format,
   encryption key, start realtime or buffered reception, stop, volume (Q15
   gain), the flush calls, pause, playing on/off, the anchor time, the
   sender's control address, the playout latency, whether the engine is idle.
@@ -371,7 +371,7 @@ decimals are what `printf("%.2f")` gives for the value as stored (nearest;
 
 ### `PAUSE`
 
-`audio_receiver_pause()`, 200 [probe].
+`sound_engine_pause()`, 200 [probe].
 
 ### `SETRATEANCHORTIME`
 
@@ -382,7 +382,7 @@ Senders also send `networkTimeFlags`.
 
 - `rate` 1: the anchor (clock id, network time in ns = secs × 10⁹ + frac
   × 10⁹ / 2⁶⁴, RTP time) to the engine, then playing on.
-- `rate` 0: `audio_receiver_pause()` (the anchor fields are 0, or the body
+- `rate` 0: `sound_engine_pause()` (the anchor fields are 0, or the body
   holds `rate` alone: 53 bytes) [log].
 - `rate` came as an integer: the 53-byte body only fits an integer 0, and
   the 190-byte one an integer 1 [log]. A real is accepted as well; another
@@ -425,8 +425,8 @@ the session alive [public notes].
 
 ### `TEARDOWN`
 
-- With `streams`: playing off (`audio_receiver_set_playing(false)`), then
-  `audio_receiver_stop()`; the session stays, the connection stays open
+- With `streams`: playing off (`sound_engine_set_playing(false)`), then
+  `sound_engine_stop()`; the session stays, the connection stays open
   [log].
 - Without: playing off, stop, end the session: release the session and the
   sender's clock, close the event port, clear the engine's stream type and

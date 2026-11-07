@@ -13,7 +13,7 @@
 #include "ap2_plist.h"
 #include "ap2_tlv8.h"
 #include "apple_clock.h"
-#include "audio_receiver.h"
+#include "sound_engine.h"
 #include "rtsp_core_internal.h"
 #include "rtsp_events.h"
 #include "rtsp_frame.h"
@@ -121,7 +121,7 @@ double rtsp_core_current_volume(void) {
 static void set_volume(double volume) {
   s.volume = volume;
   s.volume_known = true;
-  audio_receiver_set_volume_q15(rtsp_volume_to_q15(volume));
+  sound_engine_set_volume_q15(rtsp_volume_to_q15(volume));
 }
 
 /* A change by the sender: to the engine and to the settings (RAM only; it
@@ -166,7 +166,7 @@ static void event_port_close(rtsp_conn_t *c) {
 
 static esp_err_t session_start(rtsp_conn_t *c) {
   uint8_t key[32];
-  audio_encrypt_t enc;
+  sound_cipher_t enc;
   char ip[16];
 
   if (ap2_hap_audio_key(c->hap, key, sizeof(key)) != ESP_OK) {
@@ -183,10 +183,10 @@ static esp_err_t session_start(rtsp_conn_t *c) {
   s.stream = false;
 
   memset(&enc, 0, sizeof(enc));
-  enc.type = AUDIO_ENCRYPT_CHACHA20_POLY1305;
+  enc.type = SOUND_CIPHER_CHACHA20_POLY1305;
   memcpy(enc.key, key, sizeof(key));
   enc.key_len = sizeof(key);
-  audio_receiver_set_encryption(&enc);
+  sound_engine_set_encryption(&enc);
   wipe(&enc, sizeof(enc));
   wipe(key, sizeof(key));
 
@@ -202,27 +202,27 @@ static esp_err_t session_start(rtsp_conn_t *c) {
 }
 
 static void stream_stop(void) {
-  audio_receiver_set_playing(false);
-  audio_receiver_stop();
+  sound_engine_set_playing(false);
+  sound_engine_stop();
   s.stream = false;
 }
 
 static void session_end(void) {
   rtsp_conn_t *h = s.holder;
-  audio_encrypt_t none;
+  sound_cipher_t none;
 
   if (h == NULL) return;
-  audio_receiver_set_playing(false);
-  audio_receiver_stop();
+  sound_engine_set_playing(false);
+  sound_engine_stop();
   s.stream = false;
   s.holder = NULL;
   apple_clock_release();
   rtsp_remote_detach();
   event_port_close(h);
-  audio_receiver_set_stream_type(AUDIO_STREAM_NONE);
+  sound_engine_set_stream_type(SOUND_STREAM_NONE);
   memset(&none, 0, sizeof(none));
-  none.type = AUDIO_ENCRYPT_NONE;
-  audio_receiver_set_encryption(&none);
+  none.type = SOUND_CIPHER_NONE;
+  sound_engine_set_encryption(&none);
   amp_control_session_disconnected();
   rtsp_events_emit(RTSP_EVENT_DISCONNECTED);
   if (rtsp_port_settings_persist_volume() != ESP_OK) {
@@ -463,14 +463,14 @@ static void do_setup_stream(rtsp_conn_t *c, const rtsp_msg_t *m, reply_t *r,
   const ap2_bplist_key_t *k_type, *k_format, *k_control;
   int64_t type;
   uint64_t audio_format;
-  audio_format_t format;
+  sound_format_t format;
   uint8_t shk[32];
   size_t shk_len = 0;
   uint16_t client_control = 0;
   uint16_t data_port = 0, control_port = 0;
   uint32_t buffer_size = 0;
   uint32_t latency;
-  audio_encrypt_t enc;
+  sound_cipher_t enc;
   esp_err_t err;
   size_t n;
 
@@ -501,7 +501,7 @@ static void do_setup_stream(rtsp_conn_t *c, const rtsp_msg_t *m, reply_t *r,
     refuse(r, CODE_BAD_REQUEST, "format not in the table");
     return;
   }
-  if (type == AUDIO_STREAM_REALTIME) {
+  if (type == SOUND_STREAM_REALTIME) {
     k_control = find_key(keys, key_count, "controlPort", AP2_BPLIST_INT);
     if (k_control == NULL || k_control->int_value <= 0 ||
         k_control->int_value > 65535) {
@@ -539,42 +539,42 @@ static void do_setup_stream(rtsp_conn_t *c, const rtsp_msg_t *m, reply_t *r,
     stream_stop();
   }
 
-  audio_receiver_set_stream_type((audio_stream_type_t)type);
-  audio_receiver_set_format(&format);
+  sound_engine_set_stream_type((sound_stream_t)type);
+  sound_engine_set_format(&format);
   memset(&enc, 0, sizeof(enc));
-  enc.type = AUDIO_ENCRYPT_CHACHA20_POLY1305;
+  enc.type = SOUND_CIPHER_CHACHA20_POLY1305;
   memcpy(enc.key, shk, sizeof(shk));
   enc.key_len = sizeof(shk);
-  audio_receiver_set_encryption(&enc);
+  sound_engine_set_encryption(&enc);
   wipe(&enc, sizeof(enc));
   wipe(shk, sizeof(shk));
-  apple_clock_select(c->peer_ip, type == AUDIO_STREAM_REALTIME);
+  apple_clock_select(c->peer_ip, type == SOUND_STREAM_REALTIME);
 
-  if (type == AUDIO_STREAM_REALTIME) {
+  if (type == SOUND_STREAM_REALTIME) {
     latency = REALTIME_LATENCY_SAMPLES;
     err = rtsp_port_udp_pair(&data_port, &control_port);
-    if (err == ESP_OK) err = audio_receiver_start_stream(data_port, control_port, 0);
+    if (err == ESP_OK) err = sound_engine_start_stream(data_port, control_port, 0);
     if (err != ESP_OK) {
       stream_stop();
       refuse(r, CODE_INTERNAL, "realtime reception does not start");
       return;
     }
-    audio_receiver_set_playout_latency_samples(latency);
-    audio_receiver_set_client_control(c->peer_ip, client_control);
-    audio_receiver_set_playing(true);
+    sound_engine_set_playout_latency_samples(latency);
+    sound_engine_set_client_control(c->peer_ip, client_control);
+    sound_engine_set_playing(true);
     rtsp_events_emit(RTSP_EVENT_PLAYING);
   } else {
     latency = 0;
-    err = audio_receiver_start_buffered(0);
+    err = sound_engine_start_buffered(0);
     if (err != ESP_OK) {
       stream_stop();
       refuse(r, CODE_INTERNAL, "buffered reception does not start");
       return;
     }
-    data_port = audio_receiver_get_buffered_port();
+    data_port = sound_engine_get_buffered_port();
     control_port = 0;
     buffer_size = AP2_BUFFERED_AUDIO_ADVERTISED_BYTES;
-    audio_receiver_set_playout_latency_samples(latency);
+    sound_engine_set_playout_latency_samples(latency);
   }
   s.stream = true;
   s.stream_type = type;
@@ -735,7 +735,7 @@ static void do_set_rate_anchor_time(rtsp_conn_t *c, const rtsp_msg_t *m,
     return;
   }
   if (rate == 0.0) {
-    audio_receiver_pause();
+    sound_engine_pause();
     rtsp_events_emit(RTSP_EVENT_PAUSED);
     RTSP_LOGI("rate 0: pause");
     return;
@@ -749,8 +749,8 @@ static void do_set_rate_anchor_time(rtsp_conn_t *c, const rtsp_msg_t *m,
     return;
   }
   ns = rtsp_network_time_ns((uint64_t)secs, (uint64_t)frac);
-  audio_receiver_set_anchor_time((uint64_t)timeline, ns, (uint32_t)rtp);
-  audio_receiver_set_playing(true);
+  sound_engine_set_anchor_time((uint64_t)timeline, ns, (uint32_t)rtp);
+  sound_engine_set_playing(true);
   rtsp_events_emit(RTSP_EVENT_PLAYING);
   RTSP_LOGI("rate non-zero: play from rtp %" PRIu32, (uint32_t)rtp);
 }
@@ -771,7 +771,7 @@ static void do_flush_buffered(rtsp_conn_t *c, const rtsp_msg_t *m,
     have_from_ts =
         ap2_bplist_int(m->body, m->body_len, "flushFromTS", &from_ts);
     if (!have_from_ts) from_ts = 0;
-    if (audio_receiver_set_deferred_flush_range(
+    if (sound_engine_set_deferred_flush_range(
             (uint32_t)from_seq, (uint32_t)from_ts, (uint32_t)until_seq,
             (uint32_t)until_ts, have_from_ts) != ESP_OK) {
       refuse(r, CODE_INTERNAL, "deferred flush refused by the engine");
@@ -781,7 +781,7 @@ static void do_flush_buffered(rtsp_conn_t *c, const rtsp_msg_t *m,
               (uint32_t)until_seq);
     return;
   }
-  audio_receiver_set_immediate_flush((uint32_t)until_seq, (uint32_t)until_ts);
+  sound_engine_set_immediate_flush((uint32_t)until_seq, (uint32_t)until_ts);
   RTSP_LOGI("flush until %" PRIu32, (uint32_t)until_seq);
 }
 
@@ -793,13 +793,13 @@ static void do_flush(rtsp_conn_t *c, const rtsp_msg_t *m, reply_t *r) {
     refuse(r, CODE_BAD_REQUEST, "FLUSH without RTP-Info rtptime");
     return;
   }
-  audio_receiver_realtime_flush_to_rtp(rtptime);
+  sound_engine_realtime_flush_to_rtp(rtptime);
   RTSP_LOGI("realtime flush to rtp %" PRIu32, rtptime);
 }
 
 static void do_pause(rtsp_conn_t *c) {
   if (!holds(c)) return;
-  audio_receiver_pause();
+  sound_engine_pause();
   rtsp_events_emit(RTSP_EVENT_PAUSED);
 }
 

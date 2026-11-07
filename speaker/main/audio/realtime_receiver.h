@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #include "audio_playout.h"
-#include "audio_receiver.h"
+#include "sound_engine.h"
 #include "esp_err.h"
 
 typedef bool (*realtime_pcm_sink_t)(uint32_t rtp, int16_t *pcm,
@@ -42,8 +42,8 @@ typedef struct {
 } realtime_receiver_usage_t;
 
 typedef struct {
-  audio_format_t format;
-  audio_encrypt_t encrypt;
+  sound_format_t format;
+  sound_cipher_t encrypt;
   realtime_pcm_sink_t pcm_sink;
   void *pcm_sink_ctx;
   realtime_deadline_cb_t deadline_cb;

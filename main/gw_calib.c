@@ -8,7 +8,7 @@
 #include <string.h>
 
 #include "airplay_log.h"
-#include "audio_receiver.h"
+#include "sound_engine.h"
 #include "cal_chirp.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -583,10 +583,10 @@ static bool stop_sender(void) {
   set_message(GW_CAL_BUSY, "Disconnecting the AirPlay sender");
   rtsp_server_stop();
   for (int i = 0; i < CAL_SENDER_STOP_MS / 100; ++i) {
-    if (rtsp_server_is_idle() && audio_receiver_is_idle()) return true;
+    if (rtsp_server_is_idle() && sound_engine_is_idle()) return true;
     vTaskDelay(pdMS_TO_TICKS(100));
   }
-  return rtsp_server_is_idle() && audio_receiver_is_idle();
+  return rtsp_server_is_idle() && sound_engine_is_idle();
 }
 
 static void store_noise(bool valid, float rms, float peak) {
@@ -655,7 +655,7 @@ static void run_speakers(bool mic_ok, const char *mic_why, const cal_noise_t *no
           memcpy(kept.note, t.note, sizeof(kept.note));
         }
         if (run == RUN_OK || run == RUN_FAILED || run == RUN_CLIPPED) break;
-        if (!audio_receiver_is_idle()) break; /* a stream started */
+        if (!sound_engine_is_idle()) break; /* a stream started */
       }
       o = kept;
     }
@@ -722,7 +722,7 @@ static void calib_task(void *arg) {
   } else {
     /* Reserve the listener even without an active stream: a new sender must
      * not enter during the quiet-room recording or the chirps. */
-    const bool had_sender = !audio_receiver_is_idle();
+    const bool had_sender = !sound_engine_is_idle();
     const bool quiet = stop_sender();
     stopped_airplay = had_sender;
     if (!quiet) {

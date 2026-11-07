@@ -1,6 +1,6 @@
 # Gateway firmware: the AirPlay receiver the Apple TV plays to (mDNS,
 # pairing, RTSP, PTP). It has no decoder and no I2S: gw_proxy.c implements
-# the audio_receiver.h API that RTSP calls and forwards every call and the
+# the sound_engine.h API that RTSP calls and forwards every call and the
 # raw audio to the speakers.
 include("${CMAKE_CURRENT_LIST_DIR}/../common/common.cmake")
 

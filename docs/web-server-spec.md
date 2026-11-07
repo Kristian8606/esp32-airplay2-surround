@@ -34,7 +34,7 @@ components `settings`, `wifi`, `ota`, `log_stream` (their headers are in
 It also calls code compiled into each firmware's main component: the
 `web_role_*` functions (`web_server_internal.h`), `firmware_id()`
 (`deps/firmware_id.h`), three audio engine functions
-(`deps/audio_receiver.h`) and the three embedded pages below. The firmware
+(`deps/sound_engine.h`) and the three embedded pages below. The firmware
 gives the component those headers and links it with main (as it does for
 other components); the component must not include any other firmware
 header.
@@ -230,7 +230,7 @@ psramFree=<KiB> psramLargest=<KiB>` (`heap_caps_*` with
 
 ### web_audio_pause(req, what, &paused) [black box]
 
-- Audio engine not initialised (`audio_receiver_is_initialized()` false):
+- Audio engine not initialised (`sound_engine_is_initialized()` false):
   `paused = false`, `ESP_OK`, nothing else.
 - Else: `web_role_source_stop()`; then wait until `web_role_source_idle()`
   is true, checking every 50 ms, at most 30 s. Still not idle: `ESP_LOGE`
@@ -238,14 +238,14 @@ psramFree=<KiB> psramLargest=<KiB>` (`heap_caps_*` with
   `503 Service
   Unavailable`, `text/plain`, `AirPlay clients are still stopping;
   recovering service`, 250 ms, `esp_restart()`, `ESP_FAIL`.
-- Then `audio_receiver_release_for_wifi_scan()`; an error: `ESP_LOGE`,
+- Then `sound_engine_release_for_wifi_scan()`; an error: `ESP_LOGE`,
   `web_role_source_start()`, `500` with `<what>: audio memory not
   released`, `ESP_FAIL` (decided).
 - Success: `paused = true`, `ESP_OK`.
 
 ### web_audio_resume(req, what) [black box]
 
-`audio_receiver_init()`, then `web_role_source_start()`. Either failing:
+`sound_engine_init()`, then `web_role_source_start()`. Either failing:
 `ESP_LOGE` `<what>: audio restore failed (<err>); restarting`, `500` with
 `Audio restore failed; restarting`, 250 ms, `esp_restart()`, `ESP_FAIL`
 (decided wording).
@@ -259,7 +259,7 @@ psramFree=<KiB> psramLargest=<KiB>` (`heap_caps_*` with
 3. `web_recv_json()` and the upload after the third receive timeout:
    `ESP_FAIL`.
 4. The upload uses the same rule of at most 3 timeouts.
-5. `web_audio_resume()`: when `audio_receiver_init()` fails,
+5. `web_audio_resume()`: when `sound_engine_init()` fails,
    `web_role_source_start()` is not called (the ESP restarts).
 6. `bytes=` that is not a plain decimal number (`12abc`, `1.5`, `+5`,
    ` 5`): 1 MiB.

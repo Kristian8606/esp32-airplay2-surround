@@ -1,4 +1,4 @@
-#include "audio_receiver.h"
+#include "sound_engine.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -158,7 +158,7 @@
  * deadline is this close do we commit one frame of silence through EQ. */
 #define AP2_RT_STAGE_COMMIT_MARGIN_US REALTIME_RECOVERY_FINAL_MARGIN_US
 
-static const char *TAG = "audio_receiver";
+static const char *TAG = "sound_engine";
 static const char *STATUS_TAG = "audio_status";
 
 static void apply_stereo_route(float *block, uint32_t frames,
@@ -181,10 +181,10 @@ typedef struct {
   uint32_t generation;          /* timing/playout epoch */
   uint32_t media_revision;      /* changes on every buffered anchor update */
   uint32_t pcm_generation;      /* buffered media-store epoch; realtime == generation */
-  audio_format_t format;
+  sound_format_t format;
   uint32_t format_generation;
   bool timeline_reset_pending;
-  audio_stream_type_t stream_type;
+  sound_stream_t stream_type;
   uint32_t playout_latency_samples;
 } timing_snapshot_t;
 
@@ -197,9 +197,9 @@ typedef struct {
 } output_sync_state_t;
 
 typedef struct {
-  audio_format_t format;
-  audio_encrypt_t encrypt;
-  audio_stream_type_t stream_type;
+  sound_format_t format;
+  sound_cipher_t encrypt;
+  sound_stream_t stream_type;
 
   uint16_t port;
   volatile bool engine_running;
@@ -279,7 +279,7 @@ typedef struct {
 } ap2_state_t;
 
 static ap2_state_t s = {
-    .stream_type = AUDIO_STREAM_NONE,
+    .stream_type = SOUND_STREAM_NONE,
     .generation = 1,
     .buffered_pcm_generation = 1,
     .format_generation = 1,
@@ -602,7 +602,7 @@ static void snapshot_state_locked(timing_snapshot_t *out) {
   out->generation = s.generation;
   out->media_revision = s.media_revision;
   out->pcm_generation =
-      s.stream_type == AUDIO_STREAM_BUFFERED ? s.buffered_pcm_generation
+      s.stream_type == SOUND_STREAM_BUFFERED ? s.buffered_pcm_generation
                                              : s.generation;
   out->format = s.format;
   out->format_generation = s.format_generation;
@@ -647,7 +647,7 @@ static void refresh_timing_snapshot(timing_snapshot_t *out) {
   bias_start_us = s.rt_media_rebase_start_us;
   taskEXIT_CRITICAL(&s.state_mux);
 
-  if (out->stream_type == AUDIO_STREAM_BUFFERED && out->anchor_valid &&
+  if (out->stream_type == SOUND_STREAM_BUFFERED && out->anchor_valid &&
       !out->timeline_reset_pending) {
     ptp_clock_snapshot_t ps = {0};
     ptp_clock_get_snapshot(&ps);
@@ -668,7 +668,7 @@ static void refresh_timing_snapshot(timing_snapshot_t *out) {
                 out->anchor_ptp_ns, ps.filtered_offset_ns, &local_anchor)) {
           bool refreshed = false;
           taskENTER_CRITICAL(&s.state_mux);
-          if (s.stream_type == AUDIO_STREAM_BUFFERED && s.anchor_valid &&
+          if (s.stream_type == SOUND_STREAM_BUFFERED && s.anchor_valid &&
               !s.timeline_reset_pending && s.generation == out->generation &&
               s.media_revision == out->media_revision &&
               s.anchor_rtp == out->anchor_rtp &&
@@ -714,7 +714,7 @@ static void refresh_timing_snapshot(timing_snapshot_t *out) {
                   &new_remote_anchor)) {
             bool committed = false;
             taskENTER_CRITICAL(&s.state_mux);
-            if (s.stream_type == AUDIO_STREAM_BUFFERED && s.anchor_valid &&
+            if (s.stream_type == SOUND_STREAM_BUFFERED && s.anchor_valid &&
                 !s.timeline_reset_pending && s.generation == out->generation &&
                 s.media_revision == out->media_revision &&
                 s.anchor_rtp == out->anchor_rtp &&
@@ -741,7 +741,7 @@ static void refresh_timing_snapshot(timing_snapshot_t *out) {
     }
   }
 
-  if (out->stream_type == AUDIO_STREAM_REALTIME && out->anchor_valid &&
+  if (out->stream_type == SOUND_STREAM_REALTIME && out->anchor_valid &&
       !out->timeline_reset_pending && out->anchor_ptp_ns != 0U) {
     ptp_realtime_snapshot_t ps;
     ptp_clock_get_realtime_snapshot(&ps);
@@ -850,7 +850,7 @@ static uint32_t commit_anchor_epoch_locked(void) {
      * rewind cache. Realtime ALAC still owns a generation-scoped raw stage ring
      * and the PCM FIFO, because its recovery/EQ chronology is one continuous
      * realtime epoch. */
-    if (s.stream_type == AUDIO_STREAM_REALTIME) {
+    if (s.stream_type == SOUND_STREAM_REALTIME) {
       if (s.pcm_fifo) {
         pcm_fifo_set_generation(s.pcm_fifo, gen);
       }
@@ -876,7 +876,7 @@ static inline int32_t rtp_delta(uint32_t a, uint32_t b) {
  * acquisition. */
 static bool timing_clock_ready(const timing_snapshot_t *snap) {
   if (!snap || !snap->anchor_valid || snap->timeline_reset_pending) return false;
-  if (snap->stream_type == AUDIO_STREAM_BUFFERED)
+  if (snap->stream_type == SOUND_STREAM_BUFFERED)
     return snap->anchor_local_valid && snap->anchor_local_ns != 0;
   return snap->anchor_local_ns != 0;
 }
@@ -964,7 +964,7 @@ static void buffered_timing_watchdog(const timing_snapshot_t *snap) {
   static int64_t wd_last_reset_us = 0;
   static uint32_t wd_resets = 0;
 
-  const bool waiting = snap->stream_type == AUDIO_STREAM_BUFFERED &&
+  const bool waiting = snap->stream_type == SOUND_STREAM_BUFFERED &&
                        snap->playing && snap->anchor_valid &&
                        !snap->timeline_reset_pending &&
                        !snap->anchor_local_valid;
@@ -1167,8 +1167,8 @@ static void audio_status_task(void *arg) {
     timing_snapshot_t snap;
     snapshot_state(&snap);
     const bool active = __atomic_load_n(&s.engine_running, __ATOMIC_ACQUIRE) && snap.playing &&
-        (snap.stream_type == AUDIO_STREAM_BUFFERED ||
-         snap.stream_type == AUDIO_STREAM_REALTIME);
+        (snap.stream_type == SOUND_STREAM_BUFFERED ||
+         snap.stream_type == SOUND_STREAM_REALTIME);
     /* Events wake this task early; the status line keeps its own 2 s
      * deadline (restarting the full wait on every wake hid it for a minute
      * while the servo retuned every second). */
@@ -1191,9 +1191,9 @@ static void audio_status_task(void *arg) {
     if (next_status_us < esp_timer_get_time()) next_status_us = 0;
     snapshot_state(&snap);
     if (!__atomic_load_n(&s.engine_running, __ATOMIC_ACQUIRE) || !snap.playing ||
-        (snap.stream_type != AUDIO_STREAM_BUFFERED &&
-         snap.stream_type != AUDIO_STREAM_REALTIME)) continue;
-    const audio_stream_type_t task_stream = snap.stream_type;
+        (snap.stream_type != SOUND_STREAM_BUFFERED &&
+         snap.stream_type != SOUND_STREAM_REALTIME)) continue;
+    const sound_stream_t task_stream = snap.stream_type;
     buffered_timing_watchdog(&snap);
 #if defined(CONFIG_AIRPLAY_DIAG_PLAYOUT) && CONFIG_AIRPLAY_DIAG_PLAYOUT
     status_print_playout_diag();
@@ -1226,7 +1226,7 @@ static void audio_status_task(void *arg) {
         snap.format.codec, snap.format.bits_per_sample,
         input_bits_buffer, sizeof(input_bits_buffer));
 
-    if (task_stream == AUDIO_STREAM_BUFFERED) {
+    if (task_stream == SOUND_STREAM_BUFFERED) {
       ap2_buffered_fifo_usage_t usage = {0};
       ap2_buffered_fifo_get_usage(s.transport, &usage);
       buffered_control_snapshot_t control = {0};
@@ -1276,7 +1276,7 @@ static void audio_status_task(void *arg) {
                  (unsigned)(usage.capacity_bytes / 1024U), (unsigned long)rx_kbps,
                  status_frames_to_ms(pcm_frames, sr));
       }
-    } else if (task_stream == AUDIO_STREAM_REALTIME) {
+    } else if (task_stream == SOUND_STREAM_REALTIME) {
       realtime_receiver_usage_t usage = {0};
       realtime_receiver_get_usage(&usage);
       const uint32_t pressure[4] = {usage.dropped_data, usage.dropped_rtx,
@@ -1465,13 +1465,13 @@ static void status_print_audio_events(void) {
           ESP_LOGW(TAG, "AUDIO EVT %lu ms: PLAY START gen=%ld rtp=%lu %s"
                         " (I2S kept running, %ld ms of zeros before)",
                    ms, (long)e.a, (unsigned long)(uint32_t)e.b,
-                   e.c == AUDIO_STREAM_REALTIME ? "ALAC" : "AAC",
+                   e.c == SOUND_STREAM_REALTIME ? "ALAC" : "AAC",
                    last_idle_us ? (long)((e.t_us - last_idle_us) / 1000LL) : -1L);
         else
           ESP_LOGW(TAG, "AUDIO EVT %lu ms: I2S PLAY START gen=%ld rtp=%lu %s"
                         " (%ld ms after last I2S stop)",
                    ms, (long)e.a, (unsigned long)(uint32_t)e.b,
-                   e.c == AUDIO_STREAM_REALTIME ? "ALAC" : "AAC",
+                   e.c == SOUND_STREAM_REALTIME ? "ALAC" : "AAC",
                    last_stop_us ? (long)((e.t_us - last_stop_us) / 1000LL) : -1L);
         break;
       case AEVT_I2S_IDLE:
@@ -1634,7 +1634,7 @@ static pcm_store_result_t pcm_store_with_backpressure(
     xSemaphoreTake(s.publish_mutex, portMAX_DELAY);
     timing_snapshot_t snap;
     snapshot_state(&snap);
-    if (!__atomic_load_n(&s.rx_running, __ATOMIC_ACQUIRE) || snap.stream_type != AUDIO_STREAM_BUFFERED ||
+    if (!__atomic_load_n(&s.rx_running, __ATOMIC_ACQUIRE) || snap.stream_type != SOUND_STREAM_BUFFERED ||
         snap.pcm_generation != pcm_generation || snap.timeline_reset_pending ||
         !ap2_buffered_fifo_epoch_is_current(s.transport, stream_epoch) ||
         buffered_control_packet_flushed_locked(packet_seq)) {
@@ -1705,7 +1705,7 @@ static bool pcm_rewind_for_resend(uint32_t rtp, uint32_t pcm_generation,
   timing_snapshot_t snap;
   snapshot_state(&snap);
   uint32_t wanted = 0;
-  if (snap.stream_type == AUDIO_STREAM_BUFFERED &&
+  if (snap.stream_type == SOUND_STREAM_BUFFERED &&
       snap.pcm_generation == pcm_generation && !snap.timeline_reset_pending &&
       ap2_buffered_fifo_epoch_is_current(s.transport, stream_epoch) &&
       !buffered_control_packet_flushed_locked(packet_seq) && snap.playing &&
@@ -1754,7 +1754,7 @@ static bool buffered_select_format(
   timing_snapshot_t snap;
   snapshot_state(&snap);
   bool valid = s_buffered_control.revision == decision->revision &&
-      snap.stream_type == AUDIO_STREAM_BUFFERED &&
+      snap.stream_type == SOUND_STREAM_BUFFERED &&
       snap.pcm_generation == pcm_generation &&
       __atomic_load_n(&s.rx_running, __ATOMIC_ACQUIRE) &&
       ap2_buffered_fifo_epoch_is_current(s.transport, head->stream_epoch);
@@ -1794,14 +1794,14 @@ static bool buffered_select_format(
       __atomic_store_n(&s.i2s_flush_requested, true, __ATOMIC_RELEASE);
       (void)reset_buffered_pcm_store();
     }
-    audio_format_t next = {
+    sound_format_t next = {
         .sample_rate = format->sample_rate,
         .channels = 2,
         .bits_per_sample = format->bits_per_sample,
         .frame_size = format->frame_size,
     };
     strlcpy(next.codec, format->codec, sizeof(next.codec));
-    audio_receiver_set_format(&next);
+    sound_engine_set_format(&next);
   }
   xSemaphoreGive(s.publish_mutex);
   xSemaphoreGive(s_buffered_control.mutex);
@@ -1862,7 +1862,7 @@ static void ap2_buffered_processor_task(void *arg) {
 #endif
 
   /* Immutable for this producer lifetime; SETUP owns key publication. */
-  audio_encrypt_t session_encrypt;
+  sound_cipher_t session_encrypt;
   taskENTER_CRITICAL(&s.state_mux);
   session_encrypt = s.encrypt;
   taskEXIT_CRITICAL(&s.state_mux);
@@ -1981,7 +1981,7 @@ static void ap2_buffered_processor_task(void *arg) {
       continue;
     }
 
-    if (!airplay_audio_format_supported(payload_format, AUDIO_STREAM_BUFFERED)) {
+    if (!airplay_audio_format_supported(payload_format, SOUND_STREAM_BUFFERED)) {
       (void)buffered_consume_head(&head, &decision, NULL);
       early_hold_since_us = 0;
       if ((++unsupported_skipped & 0xFFU) == 1U)
@@ -1998,7 +1998,7 @@ static void ap2_buffered_processor_task(void *arg) {
         if (ap2_buffered_fifo_copy_head(s.transport, &head, s.buffered_packet,
                                          AP2_PACKET_MAX) != ESP_OK) continue;
         authenticated_len = ap2_audio_decrypt_buffered(
-            audio_encrypt_key(&session_encrypt), s.buffered_packet, packet.len,
+            sound_cipher_key(&session_encrypt), s.buffered_packet, packet.len,
             s.decrypt_buf + AAC_DECODER_INPUT_HEADROOM, AP2_PACKET_MAX);
         authenticated_head = head;
         authenticated_valid = authenticated_len > 0;
@@ -2043,7 +2043,7 @@ static void ap2_buffered_processor_task(void *arg) {
       sd_active = false;
 #endif
     }
-    if (snap.stream_type != AUDIO_STREAM_BUFFERED || !snap.playing ||
+    if (snap.stream_type != SOUND_STREAM_BUFFERED || !snap.playing ||
         !snap.anchor_valid || snap.timeline_reset_pending ||
         !timing_clock_ready(&snap)) {
       ap2_buffered_fifo_wait(s.transport, AP2_NO_TIMING_WAIT_MS);
@@ -2237,7 +2237,7 @@ static void ap2_buffered_processor_task(void *arg) {
         authenticated_head.stream_epoch == head.stream_epoch;
     const int dec_len = already_authenticated ? authenticated_len :
         ap2_audio_decrypt_buffered(
-            audio_encrypt_key(&session_encrypt), s.buffered_packet, packet.len,
+            sound_cipher_key(&session_encrypt), s.buffered_packet, packet.len,
             s.decrypt_buf + AAC_DECODER_INPUT_HEADROOM, AP2_PACKET_MAX);
     authenticated_valid = false;
     if (dec_len == 0) {
@@ -2391,7 +2391,7 @@ static bool realtime_playout_deadline(uint32_t rtp,
 
   timing_snapshot_t snap;
   snapshot_state(&snap);
-  if (snap.stream_type != AUDIO_STREAM_REALTIME || !snap.playing ||
+  if (snap.stream_type != SOUND_STREAM_REALTIME || !snap.playing ||
       !snap.anchor_valid || snap.timeline_reset_pending) {
     return false;
   }
@@ -2417,7 +2417,7 @@ static bool realtime_pcm_sink_locked(uint32_t rtp, int16_t *pcm, size_t frames,
    * blocking newer packets. */
   timing_snapshot_t snap;
   snapshot_state(&snap);
-  if (snap.stream_type != AUDIO_STREAM_REALTIME) {
+  if (snap.stream_type != SOUND_STREAM_REALTIME) {
     return false;
   }
 
@@ -2460,7 +2460,7 @@ static bool realtime_pcm_sink_locked(uint32_t rtp, int16_t *pcm, size_t frames,
 
   taskENTER_CRITICAL(&s.state_mux);
   if (s.generation != snap.generation || s.timeline_reset_pending ||
-      s.stream_type != AUDIO_STREAM_REALTIME) {
+      s.stream_type != SOUND_STREAM_REALTIME) {
     taskEXIT_CRITICAL(&s.state_mux);
     return false;
   }
@@ -2514,7 +2514,7 @@ static void realtime_stage_task(void *arg) {
 
     timing_snapshot_t snap;
     snapshot_state(&snap);
-    if (snap.stream_type != AUDIO_STREAM_REALTIME || !snap.anchor_valid ||
+    if (snap.stream_type != SOUND_STREAM_REALTIME || !snap.anchor_valid ||
         snap.timeline_reset_pending || snap.format.frame_size <= 0 ||
         snap.format.frame_size > (int)AP2_PCM_CAPACITY_FRAMES) {
       (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
@@ -2576,7 +2576,7 @@ static void realtime_stage_task(void *arg) {
       taskENTER_CRITICAL(&s.state_mux);
       const bool current =
           __atomic_load_n(&s.realtime_stage_running, __ATOMIC_ACQUIRE) &&
-          s.stream_type == AUDIO_STREAM_REALTIME &&
+          s.stream_type == SOUND_STREAM_REALTIME &&
           s.generation == snap.generation && !s.timeline_reset_pending &&
           s.realtime_stage_generation == snap.generation &&
           s.realtime_stage_cursor_valid && s.realtime_stage_cursor_rtp == cursor;
@@ -2660,7 +2660,7 @@ static void apply_output_volume_f32(float *pcm, uint32_t frames,
   int32_t volume = __atomic_load_n(&s_volume_target_q15, __ATOMIC_ACQUIRE);
   if (volume < 0) volume = 0;
   if (volume > 32768) volume = 32768;
-  const uint32_t muted = audio_receiver_get_output_mute_mask();
+  const uint32_t muted = sound_engine_get_output_mute_mask();
   const int32_t target[2] = {
       (muted & 1U) ? 0 : volume, (muted & 2U) ? 0 : volume};
   const int32_t start[2] = {current_q15[0], current_q15[1]};
@@ -2723,9 +2723,9 @@ static void fade_in_apply(float *pcm, uint32_t frames) {
                       AP2_FADE_IN_FRAMES);
 }
 
-static uint32_t s_stereo_route = AUDIO_STEREO_ROUTE_STEREO;
+static uint32_t s_stereo_route = SOUND_STEREO_ROUTE_STEREO;
 
-void audio_receiver_set_stereo_route(audio_stereo_route_t route) {
+void sound_engine_set_stereo_route(sound_stereo_route_t route) {
   __atomic_store_n(&s_stereo_route, (uint32_t)route, __ATOMIC_RELEASE);
 }
 
@@ -2735,14 +2735,14 @@ void audio_receiver_set_stereo_route(audio_stereo_route_t route) {
  * multichannel block is already this speaker's channel. */
 static void apply_stereo_route(float *block, uint32_t frames,
                                bool multichannel) {
-  const audio_stereo_route_t route = (audio_stereo_route_t)__atomic_load_n(
+  const sound_stereo_route_t route = (sound_stereo_route_t)__atomic_load_n(
       &s_stereo_route, __ATOMIC_ACQUIRE);
-  if (route == AUDIO_STEREO_ROUTE_STEREO || multichannel) return;
+  if (route == SOUND_STEREO_ROUTE_STEREO || multichannel) return;
   for (uint32_t i = 0; i < frames; ++i) {
     float *f = block + (size_t)i * 2U;
-    const float v = route == AUDIO_STEREO_ROUTE_LEFT    ? f[0]
-                    : route == AUDIO_STEREO_ROUTE_RIGHT ? f[1]
-                    : route == AUDIO_STEREO_ROUTE_MONO  ? 0.5f * (f[0] + f[1])
+    const float v = route == SOUND_STEREO_ROUTE_LEFT    ? f[0]
+                    : route == SOUND_STEREO_ROUTE_RIGHT ? f[1]
+                    : route == SOUND_STEREO_ROUTE_MONO  ? 0.5f * (f[0] + f[1])
                                                         : 0.0f;
     f[0] = v;
     f[1] = v;
@@ -2911,7 +2911,7 @@ static esp_err_t playout_run_latency_calibration_blocks(
     const bool is_burst = cal_block_is_burst(idx, NULL);
     if (is_burst) {
       latency_cal_fill_burst(burst, AUDIO_PLAYOUT_FRAMES, CAL_I2S_RATE_HZ);
-      const uint32_t muted = audio_receiver_get_output_mute_mask();
+      const uint32_t muted = sound_engine_get_output_mute_mask();
       for (uint32_t f = 0; muted && f < AUDIO_PLAYOUT_FRAMES; ++f) {
         if (muted & 1U) burst[f * 2U] = 0;
         if (muted & 2U) burst[f * 2U + 1U] = 0;
@@ -3015,7 +3015,7 @@ static esp_err_t roomcal_play(cal_chirp_kind_t kind, float gain, int bursts,
     }
     /* Silence too, so the filters ring out naturally after each chirp. */
     audio_eq_process(block, frames, 2, (int)rate);
-    const uint32_t muted = audio_receiver_get_output_mute_mask();
+    const uint32_t muted = sound_engine_get_output_mute_mask();
     for (uint32_t f = 0; muted && f < frames; ++f) {
       if (muted & 1U) block[2U * f] = 0.0f;
       if (muted & 2U) block[2U * f + 1U] = 0.0f;
@@ -3042,7 +3042,7 @@ static esp_err_t roomcal_play(cal_chirp_kind_t kind, float gain, int bursts,
   return *n_emit == bursts ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
-esp_err_t audio_receiver_play_cal_chirps(int kind, int level_db, int bursts,
+esp_err_t sound_engine_play_cal_chirps(int kind, int level_db, int bursts,
                                          int64_t *emit_us, int *n_emit) {
   if (!emit_us || !n_emit || bursts < 1) return ESP_ERR_INVALID_ARG;
   *n_emit = 0;
@@ -3056,7 +3056,7 @@ esp_err_t audio_receiver_play_cal_chirps(int kind, int level_db, int bursts,
   if (level_db > 0) level_db = 0;
   if (level_db < -60) level_db = -60;
   float *block = malloc(AUDIO_PLAYOUT_FRAMES * 2U * sizeof(float));
-  esp_err_t err = block ? audio_receiver_release_for_wifi_scan() : ESP_ERR_NO_MEM;
+  esp_err_t err = block ? sound_engine_release_for_wifi_scan() : ESP_ERR_NO_MEM;
   if (err == ESP_OK) err = audio_playout_init();
   if (err == ESP_OK) {
     amp_control_session_connected();
@@ -3068,7 +3068,7 @@ esp_err_t audio_receiver_play_cal_chirps(int kind, int level_db, int bursts,
   }
   free(block);
   /* Whatever happened, the engine is needed for the next stream. */
-  const esp_err_t init_err = audio_receiver_init();
+  const esp_err_t init_err = sound_engine_init();
   __atomic_store_n(&s_roomcal_busy, false, __ATOMIC_RELEASE);
   AP_LOGI(TAG, "ROOM CAL %s chirps at %d dBFS: %s, %d emitted",
           kind == CAL_CHIRP_LOW ? "low" : "wide", level_db, esp_err_to_name(err),
@@ -3109,7 +3109,7 @@ static void ap2_playout_task(void *arg) {
   uint32_t cursor_generation = 0;
   const int32_t initial_volume =
       __atomic_load_n(&s_volume_target_q15, __ATOMIC_ACQUIRE);
-  const uint32_t initial_mute = audio_receiver_get_output_mute_mask();
+  const uint32_t initial_mute = sound_engine_get_output_mute_mask();
   int32_t volume_current_q15[2] = {
       (initial_mute & 1U) ? 0 : initial_volume,
       (initial_mute & 2U) ? 0 : initial_volume};
@@ -3414,7 +3414,7 @@ static void ap2_playout_task(void *arg) {
        * written right after it starts one block later. */
       const int sr = snap.format.sample_rate > 0 ? snap.format.sample_rate : 44100;
       uint32_t guard_frames = AP2_START_PRIME_GUARD_BLOCKS * AUDIO_PLAYOUT_FRAMES;
-      if (snap.stream_type == AUDIO_STREAM_REALTIME)
+      if (snap.stream_type == SOUND_STREAM_REALTIME)
         guard_frames += (uint32_t)(((uint64_t)sr * AP2_REALTIME_PRIME_MS) / 1000ULL);
       const audio_out_sample_t *silence = s_silence_block;
       /* The first real block starts after the probe, i.e. after up to every
@@ -3488,11 +3488,11 @@ static void ap2_playout_task(void *arg) {
           align_snap.playing && align_snap.anchor_valid &&
           !align_snap.timeline_reset_pending &&
           align_snap.generation == snap.generation &&
-          (snap.stream_type != AUDIO_STREAM_BUFFERED ||
+          (snap.stream_type != SOUND_STREAM_BUFFERED ||
            align_snap.media_revision == snap.media_revision) &&
           !__atomic_load_n(&s.i2s_flush_requested, __ATOMIC_ACQUIRE) &&
           timing_clock_ready(&align_snap) &&
-          (snap.stream_type != AUDIO_STREAM_REALTIME ||
+          (snap.stream_type != SOUND_STREAM_REALTIME ||
            (align_snap.anchor_clock_id == snap.anchor_clock_id &&
             align_snap.anchor_ptp_ns == snap.anchor_ptp_ns &&
             align_snap.anchor_rtp == snap.anchor_rtp));
@@ -3534,7 +3534,7 @@ static void ap2_playout_task(void *arg) {
 #if defined(CONFIG_AIRPLAY_DIAG_PLAYOUT) && CONFIG_AIRPLAY_DIAG_PLAYOUT
       pd_last_write_us = 0;
 #endif
-      if (snap.stream_type == AUDIO_STREAM_BUFFERED &&
+      if (snap.stream_type == SOUND_STREAM_BUFFERED &&
           start_logged_gen != snap.generation &&
           s_anchor_commit_gen == snap.generation && s_anchor_commit_us != 0) {
         start_logged_gen = snap.generation;
@@ -3562,7 +3562,7 @@ static void ap2_playout_task(void *arg) {
       uint32_t guard_start = desired_rtp;
       uint32_t guard_frames =
           AP2_START_PRIME_GUARD_BLOCKS * AUDIO_PLAYOUT_FRAMES;
-      if (snap.stream_type == AUDIO_STREAM_REALTIME) {
+      if (snap.stream_type == SOUND_STREAM_REALTIME) {
         guard_frames += (uint32_t)(((uint64_t)sr * AP2_REALTIME_PRIME_MS) /
                                    1000ULL);
       } else {
@@ -3609,11 +3609,11 @@ static void ap2_playout_task(void *arg) {
       if (!after_wait.playing || !after_wait.anchor_valid ||
           after_wait.timeline_reset_pending ||
           after_wait.generation != snap.generation ||
-          (snap.stream_type == AUDIO_STREAM_BUFFERED &&
+          (snap.stream_type == SOUND_STREAM_BUFFERED &&
            after_wait.media_revision != snap.media_revision) ||
           __atomic_load_n(&s.i2s_flush_requested, __ATOMIC_ACQUIRE) ||
           !timing_clock_ready(&after_wait) ||
-          (snap.stream_type == AUDIO_STREAM_REALTIME &&
+          (snap.stream_type == SOUND_STREAM_REALTIME &&
            (after_wait.anchor_clock_id != snap.anchor_clock_id ||
             after_wait.anchor_ptp_ns != snap.anchor_ptp_ns ||
             after_wait.anchor_rtp != snap.anchor_rtp))) {
@@ -3694,11 +3694,11 @@ static void ap2_playout_task(void *arg) {
       if (!align_snap.playing || !align_snap.anchor_valid ||
           align_snap.timeline_reset_pending ||
           align_snap.generation != snap.generation ||
-          (snap.stream_type == AUDIO_STREAM_BUFFERED &&
+          (snap.stream_type == SOUND_STREAM_BUFFERED &&
            align_snap.media_revision != snap.media_revision) ||
           __atomic_load_n(&s.i2s_flush_requested, __ATOMIC_ACQUIRE) ||
           !timing_clock_ready(&align_snap) ||
-          (snap.stream_type == AUDIO_STREAM_REALTIME &&
+          (snap.stream_type == SOUND_STREAM_REALTIME &&
            (align_snap.anchor_clock_id != snap.anchor_clock_id ||
             align_snap.anchor_ptp_ns != snap.anchor_ptp_ns ||
             align_snap.anchor_rtp != snap.anchor_rtp))) {
@@ -3740,12 +3740,12 @@ static void ap2_playout_task(void *arg) {
       if (!commit_snap.playing || !commit_snap.anchor_valid ||
           commit_snap.timeline_reset_pending ||
           commit_snap.generation != snap.generation ||
-          (snap.stream_type == AUDIO_STREAM_BUFFERED &&
+          (snap.stream_type == SOUND_STREAM_BUFFERED &&
            commit_snap.media_revision != snap.media_revision) ||
           __atomic_load_n(&s.i2s_flush_requested, __ATOMIC_ACQUIRE) ||
           __atomic_load_n(&s.playout_servo_reset_requested, __ATOMIC_ACQUIRE) ||
           !timing_clock_ready(&commit_snap) ||
-          (snap.stream_type == AUDIO_STREAM_REALTIME &&
+          (snap.stream_type == SOUND_STREAM_REALTIME &&
            (commit_snap.anchor_clock_id != snap.anchor_clock_id ||
             commit_snap.anchor_ptp_ns != snap.anchor_ptp_ns ||
             commit_snap.anchor_rtp != snap.anchor_rtp))) {
@@ -3764,7 +3764,7 @@ static void ap2_playout_task(void *arg) {
 #if defined(CONFIG_AIRPLAY_DIAG_PLAYOUT) && CONFIG_AIRPLAY_DIAG_PLAYOUT
       pd_last_write_us = 0;
 #endif
-      if (snap.stream_type == AUDIO_STREAM_BUFFERED &&
+      if (snap.stream_type == SOUND_STREAM_BUFFERED &&
           start_logged_gen != snap.generation &&
           s_anchor_commit_gen == snap.generation && s_anchor_commit_us != 0) {
         start_logged_gen = snap.generation;
@@ -3945,7 +3945,7 @@ static void ap2_playout_task(void *arg) {
 
 
 
-esp_err_t audio_receiver_init(void) {
+esp_err_t sound_engine_init(void) {
   ESP_RETURN_ON_ERROR(realtime_receiver_reserve_data_task_memory(), TAG,
                       "ALAC data task memory reservation failed");
   {
@@ -4094,18 +4094,18 @@ esp_err_t audio_receiver_init(void) {
   return ESP_OK;
 }
 
-bool audio_receiver_is_initialized(void) {
+bool sound_engine_is_initialized(void) {
   return __atomic_load_n(&s.engine_running, __ATOMIC_ACQUIRE) && s.playout_task && s.realtime_stage_task &&
          s.codec_workspace && s.transport && s.pcm_fifo && s.realtime_stage_ring;
 }
 
-esp_err_t audio_receiver_release_for_wifi_scan(void) {
+esp_err_t sound_engine_release_for_wifi_scan(void) {
   if (!__atomic_load_n(&s.engine_running, __ATOMIC_ACQUIRE) && !s.codec_workspace && !s.transport) return ESP_OK;
 
   /* First reach the same hard media boundary used for codec/session changes.
    * The RTSP server is stopped by the caller, so no new producer can appear
    * while the stores are being dismantled. */
-  audio_receiver_stop();
+  sound_engine_stop();
 
   if (s.processor_task || !realtime_receiver_is_idle() ||
       (s.transport && !ap2_buffered_fifo_is_idle(s.transport))) {
@@ -4133,7 +4133,7 @@ esp_err_t audio_receiver_release_for_wifi_scan(void) {
     /* No large allocation has been freed yet. Restore the normal engine
      * lifecycle rather than returning a half-stopped receiver to the web
      * server. */
-    (void)audio_receiver_init();
+    (void)sound_engine_init();
     return ESP_ERR_TIMEOUT;
   }
 
@@ -4141,7 +4141,7 @@ esp_err_t audio_receiver_release_for_wifi_scan(void) {
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "failed to detach realtime shared workspace: %s",
              esp_err_to_name(err));
-    (void)audio_receiver_init();
+    (void)sound_engine_init();
     return err;
   }
   s.realtime_workspace_bound = false;
@@ -4154,7 +4154,7 @@ esp_err_t audio_receiver_release_for_wifi_scan(void) {
        * do not free codec_workspace underneath that reader. */
       ESP_LOGE(TAG, "WiFi scan release: FIFO destroy failed: %s",
                esp_err_to_name(err));
-      (void)audio_receiver_init();
+      (void)sound_engine_init();
       return err;
     }
     s.transport = NULL;
@@ -4187,7 +4187,7 @@ esp_err_t audio_receiver_release_for_wifi_scan(void) {
   s.anchor_valid = false;
   s.anchor_local_valid = false;
   s.realtime_stage_cursor_valid = false;
-  s.stream_type = AUDIO_STREAM_NONE;
+  s.stream_type = SOUND_STREAM_NONE;
   s.port = 0;
   taskEXIT_CRITICAL(&s.state_mux);
 
@@ -4211,7 +4211,7 @@ static bool realtime_stage_stop_and_wait(void) {
   return idle;
 }
 
-bool audio_receiver_is_idle(void) {
+bool sound_engine_is_idle(void) {
   return !__atomic_load_n(&s.rx_running, __ATOMIC_ACQUIRE) && !s.processor_task &&
          (!s.transport || ap2_buffered_fifo_is_idle(s.transport)) &&
          realtime_receiver_is_idle() &&
@@ -4223,13 +4223,13 @@ bool audio_receiver_is_idle(void) {
          !__atomic_load_n(&s.playout_servo_reset_requested, __ATOMIC_ACQUIRE);
 }
 
-void audio_receiver_set_format(const audio_format_t *f) {
+void sound_engine_set_format(const sound_format_t *f) {
   if (!f) {
     return;
   }
   if (f->sample_rate > 0) audio_eq_prepare(f->sample_rate);
   taskENTER_CRITICAL(&s.state_mux);
-  const audio_format_t previous = s.format;
+  const sound_format_t previous = s.format;
   s.format = *f;
   s.format_generation++;
   if (s.format_generation == 0) {
@@ -4260,15 +4260,15 @@ void audio_receiver_set_format(const audio_format_t *f) {
   audio_status_notify();
 }
 
-uint32_t audio_receiver_get_sample_rate(void) {
+uint32_t sound_engine_get_sample_rate(void) {
   taskENTER_CRITICAL(&s.state_mux);
   const int rate = s.format.sample_rate;
   taskEXIT_CRITICAL(&s.state_mux);
-  return rate > 0 ? (uint32_t)rate : AUDIO_PIPELINE_RATE_HZ;
+  return rate > 0 ? (uint32_t)rate : SOUND_PIPELINE_RATE_HZ;
 }
 
-void audio_receiver_set_encryption(const audio_encrypt_t *e) {
-  audio_encrypt_t next = {0};
+void sound_engine_set_encryption(const sound_cipher_t *e) {
+  sound_cipher_t next = {0};
   if (e) next = *e;
   taskENTER_CRITICAL(&s.state_mux);
   s.encrypt = next;
@@ -4277,7 +4277,7 @@ void audio_receiver_set_encryption(const audio_encrypt_t *e) {
            (unsigned)next.key_len);
 }
 
-void audio_receiver_set_stream_type(audio_stream_type_t t) {
+void sound_engine_set_stream_type(sound_stream_t t) {
   bool changed;
   taskENTER_CRITICAL(&s.state_mux);
   changed = s.stream_type != t;
@@ -4286,12 +4286,12 @@ void audio_receiver_set_stream_type(audio_stream_type_t t) {
   if (changed) audio_status_notify();
 }
 
-esp_err_t audio_receiver_start_buffered(uint16_t port) {
+esp_err_t sound_engine_start_buffered(uint16_t port) {
   timing_snapshot_t fmt_snap;
   snapshot_state(&fmt_snap);
   const int codec_type = strcmp(fmt_snap.format.codec, "AAC") == 0 ? 4 :
       strcmp(fmt_snap.format.codec, "ALAC") == 0 ? 2 : -1;
-  if (!airplay_audio_format_resolve(AUDIO_STREAM_BUFFERED, 0, codec_type,
+  if (!airplay_audio_format_resolve(SOUND_STREAM_BUFFERED, 0, codec_type,
                                     fmt_snap.format.sample_rate,
                                     fmt_snap.format.frame_size,
                                     fmt_snap.format.bits_per_sample,
@@ -4353,7 +4353,7 @@ esp_err_t audio_receiver_start_buffered(uint16_t port) {
   return ESP_OK;
 }
 
-esp_err_t audio_receiver_start_stream(uint16_t data_port, uint16_t control_port,
+esp_err_t sound_engine_start_stream(uint16_t data_port, uint16_t control_port,
                                       uint16_t tcp_port) {
   const uint32_t quiesce_req =
       __atomic_load_n(&s.playout_quiesce_req, __ATOMIC_ACQUIRE);
@@ -4372,11 +4372,11 @@ esp_err_t audio_receiver_start_stream(uint16_t data_port, uint16_t control_port,
     return ESP_ERR_INVALID_STATE;
   }
 
-  if (s.stream_type == AUDIO_STREAM_BUFFERED) {
-    return audio_receiver_start_buffered(tcp_port);
+  if (s.stream_type == SOUND_STREAM_BUFFERED) {
+    return sound_engine_start_buffered(tcp_port);
   }
 
-  if (s.stream_type == AUDIO_STREAM_REALTIME) {
+  if (s.stream_type == SOUND_STREAM_REALTIME) {
     timing_snapshot_t fmt_snap;
     snapshot_state(&fmt_snap);
     if (strcmp(fmt_snap.format.codec, "ALAC") != 0 ||
@@ -4429,7 +4429,7 @@ esp_err_t audio_receiver_start_stream(uint16_t data_port, uint16_t control_port,
     realtime_stage_kick();
     AUDIO_DIAG_LIFECYCLE_REALTIME_EPOCH(rt_gen);
 
-    audio_encrypt_t session_encrypt;
+    sound_cipher_t session_encrypt;
     taskENTER_CRITICAL(&s.state_mux);
     session_encrypt = s.encrypt;
     taskEXIT_CRITICAL(&s.state_mux);
@@ -4465,7 +4465,7 @@ static bool wait_playout_quiesced(uint32_t request, uint32_t timeout_ms) {
   return __atomic_load_n(&s.playout_quiesce_ack, __ATOMIC_ACQUIRE) == request;
 }
 
-void audio_receiver_stop(void) {
+void sound_engine_stop(void) {
   /* A codec switch is a hard session boundary. Stop both possible producers
    * first; no compressed, decoded or timing state is allowed to bleed into
    * the next AAC/ALAC SETUP. */
@@ -4526,23 +4526,23 @@ void audio_receiver_stop(void) {
   s.port = 0;
 }
 
-uint16_t audio_receiver_get_buffered_port(void) { return s.port; }
+uint16_t sound_engine_get_buffered_port(void) { return s.port; }
 
-void audio_receiver_set_volume_q15(int32_t volume_q15) {
+void sound_engine_set_volume_q15(int32_t volume_q15) {
   if (volume_q15 < 0) volume_q15 = 0;
   if (volume_q15 > 32768) volume_q15 = 32768;
   __atomic_store_n(&s_volume_target_q15, volume_q15, __ATOMIC_RELEASE);
 }
 
-int32_t audio_receiver_get_volume_q15(void) {
+int32_t sound_engine_get_volume_q15(void) {
   return __atomic_load_n(&s_volume_target_q15, __ATOMIC_ACQUIRE);
 }
 
-uint32_t audio_receiver_get_output_mute_mask(void) {
+uint32_t sound_engine_get_output_mute_mask(void) {
   return __atomic_load_n(&s_output_mute_mask, __ATOMIC_ACQUIRE);
 }
 
-esp_err_t audio_receiver_set_output_muted(uint32_t channel, bool muted) {
+esp_err_t sound_engine_set_output_muted(uint32_t channel, bool muted) {
   if (channel > 1U) return ESP_ERR_INVALID_ARG;
   const uint32_t bit = 1U << channel;
   if (muted) __atomic_fetch_or(&s_output_mute_mask, bit, __ATOMIC_ACQ_REL);
@@ -4550,24 +4550,24 @@ esp_err_t audio_receiver_set_output_muted(uint32_t channel, bool muted) {
   return ESP_OK;
 }
 
-void audio_receiver_seek_flush(void) {
+void sound_engine_seek_flush(void) {
   timing_snapshot_t snap;
   snapshot_state(&snap);
-  if (snap.stream_type == AUDIO_STREAM_BUFFERED) {
+  if (snap.stream_type == SOUND_STREAM_BUFFERED) {
     /* Plain buffered FLUSH supplies no 23-bit endpoint. Use the same single
      * no-boundary path as FLUSHBUFFERED until seq 0, including immediate PCM
      * invalidation; it must not retain old PCM through the next anchor. */
-    audio_receiver_set_immediate_flush(0U, 0U);
+    sound_engine_set_immediate_flush(0U, 0U);
   } else {
     mark_timeline_discontinuity();
   }
 }
 
-void audio_receiver_realtime_flush_to_rtp(uint32_t flush_rtp) {
+void sound_engine_realtime_flush_to_rtp(uint32_t flush_rtp) {
   timing_snapshot_t snap;
   snapshot_state(&snap);
-  if (snap.stream_type != AUDIO_STREAM_REALTIME) {
-    audio_receiver_seek_flush();
+  if (snap.stream_type != SOUND_STREAM_REALTIME) {
+    sound_engine_seek_flush();
     return;
   }
 
@@ -4577,7 +4577,7 @@ void audio_receiver_realtime_flush_to_rtp(uint32_t flush_rtp) {
    * chronological staging floor forward to the same RTP boundary. */
   xSemaphoreTake(s.publish_mutex, portMAX_DELAY);
   snapshot_state(&snap);
-  if (snap.stream_type != AUDIO_STREAM_REALTIME) {
+  if (snap.stream_type != SOUND_STREAM_REALTIME) {
     xSemaphoreGive(s.publish_mutex);
     return;
   }
@@ -4592,7 +4592,7 @@ void audio_receiver_realtime_flush_to_rtp(uint32_t flush_rtp) {
   uint32_t old_cursor = 0;
   bool old_cursor_valid = false;
   taskENTER_CRITICAL(&s.state_mux);
-  if (s.stream_type == AUDIO_STREAM_REALTIME &&
+  if (s.stream_type == SOUND_STREAM_REALTIME &&
       s.generation == snap.generation && !s.timeline_reset_pending) {
     old_cursor_valid = s.realtime_stage_cursor_valid &&
                        s.realtime_stage_generation == snap.generation;
@@ -4626,14 +4626,14 @@ void audio_receiver_realtime_flush_to_rtp(uint32_t flush_rtp) {
   }
 }
 
-void audio_receiver_realtime_flush_wait_sender_anchor(void) {
+void sound_engine_realtime_flush_wait_sender_anchor(void) {
   mark_timeline_discontinuity();
   AP_LOGI(TAG,
            "REALTIME FLUSH no RTP boundary: local timing invalidated; "
            "waiting for D7/SETRATE (no arrival-time fallback)");
 }
 
-esp_err_t audio_receiver_set_deferred_flush_range(
+esp_err_t sound_engine_set_deferred_flush_range(
     uint32_t from_seq, uint32_t from_ts, uint32_t until_seq, uint32_t until_ts,
     bool timestamps_valid) {
   if (!s_buffered_control.mutex || !s.publish_mutex) return ESP_ERR_INVALID_STATE;
@@ -4641,7 +4641,7 @@ esp_err_t audio_receiver_set_deferred_flush_range(
   xSemaphoreTake(s.publish_mutex, portMAX_DELAY);
   timing_snapshot_t snap;
   snapshot_state(&snap);
-  esp_err_t err = snap.stream_type == AUDIO_STREAM_BUFFERED
+  esp_err_t err = snap.stream_type == SOUND_STREAM_BUFFERED
       ? buffered_control_add_deferred_locked(from_seq, from_ts, until_seq,
                                               until_ts, timestamps_valid)
       : ESP_ERR_INVALID_STATE;
@@ -4654,7 +4654,7 @@ esp_err_t audio_receiver_set_deferred_flush_range(
   return err;
 }
 
-void audio_receiver_set_immediate_flush(uint32_t until_seq, uint32_t until_ts) {
+void sound_engine_set_immediate_flush(uint32_t until_seq, uint32_t until_ts) {
   if (!s_buffered_control.mutex || !s.publish_mutex) return;
 
   /* Immediate FLUSHBUFFERED:
@@ -4707,7 +4707,7 @@ void audio_receiver_set_immediate_flush(uint32_t until_seq, uint32_t until_ts) {
   audio_status_notify();
 }
 
-void audio_receiver_pause(void) {
+void sound_engine_pause(void) {
   taskENTER_CRITICAL(&s.state_mux);
   s.playing = false;
   taskEXIT_CRITICAL(&s.state_mux);
@@ -4717,16 +4717,16 @@ void audio_receiver_pause(void) {
   audio_status_notify();
 }
 
-void audio_receiver_set_playout_latency_samples(uint32_t v) {
+void sound_engine_set_playout_latency_samples(uint32_t v) {
   taskENTER_CRITICAL(&s.state_mux);
   s.playout_latency_samples = v;
   taskEXIT_CRITICAL(&s.state_mux);
 }
-int32_t audio_receiver_get_output_latency_us(void) {
+int32_t sound_engine_get_output_latency_us(void) {
   return __atomic_load_n(&s_output_latency_us, __ATOMIC_RELAXED);
 }
 
-esp_err_t audio_receiver_set_output_latency_us(int32_t us, bool persist) {
+esp_err_t sound_engine_set_output_latency_us(int32_t us, bool persist) {
   if (us < AP2_OUTPUT_LATENCY_MIN_US || us > AP2_OUTPUT_LATENCY_MAX_US)
     return ESP_ERR_INVALID_ARG;
   const int32_t old = __atomic_exchange_n(&s_output_latency_us, us, __ATOMIC_ACQ_REL);
@@ -4742,7 +4742,7 @@ esp_err_t audio_receiver_set_output_latency_us(int32_t us, bool persist) {
   return persist ? settings_set_output_latency_us(us) : ESP_OK;
 }
 
-void audio_receiver_get_playback_info(audio_receiver_playback_info_t *out) {
+void sound_engine_get_playback_info(sound_engine_playback_info_t *out) {
   if (!out) return;
   memset(out, 0, sizeof(*out));
   timing_snapshot_t snap;
@@ -4758,7 +4758,7 @@ void audio_receiver_get_playback_info(audio_receiver_playback_info_t *out) {
           snap.generation;
   out->sync_us = __atomic_load_n(&s.status_sync_us, __ATOMIC_RELAXED);
   out->servo_ppm = __atomic_load_n(&s.status_servo_ppm, __ATOMIC_RELAXED);
-  if (snap.stream_type == AUDIO_STREAM_BUFFERED && s.transport) {
+  if (snap.stream_type == SOUND_STREAM_BUFFERED && s.transport) {
     ap2_buffered_fifo_usage_t usage = {0};
     ap2_buffered_fifo_get_usage(s.transport, &usage);
     out->fifo_used_kib = (uint32_t)(usage.used_bytes / 1024U);
@@ -4766,7 +4766,7 @@ void audio_receiver_get_playback_info(audio_receiver_playback_info_t *out) {
   }
 }
 
-esp_err_t audio_receiver_set_extra_delay_us(int32_t us) {
+esp_err_t sound_engine_set_extra_delay_us(int32_t us) {
   if (us < 0 || us > AP2_EXTRA_DELAY_MAX_US) return ESP_ERR_INVALID_ARG;
   const int32_t old = __atomic_exchange_n(&s_extra_delay_us, us, __ATOMIC_ACQ_REL);
   const int32_t delta = us > old ? us - old : old - us;
@@ -4781,7 +4781,7 @@ esp_err_t audio_receiver_set_extra_delay_us(int32_t us) {
   return ESP_OK;
 }
 
-esp_err_t audio_receiver_measure_output_latency(latency_cal_result_t *res,
+esp_err_t sound_engine_measure_output_latency(latency_cal_result_t *res,
                                                 bool audible) {
   if (!res) return ESP_ERR_INVALID_ARG;
   memset(res, 0, sizeof(*res));
@@ -4853,7 +4853,7 @@ esp_err_t audio_receiver_measure_output_latency(latency_cal_result_t *res,
 #endif
 }
 
-void audio_receiver_set_playing(bool p) {
+void sound_engine_set_playing(bool p) {
   taskENTER_CRITICAL(&s.state_mux);
   s.playing = p;
   taskEXIT_CRITICAL(&s.state_mux);
@@ -4865,11 +4865,11 @@ void audio_receiver_set_playing(bool p) {
   audio_status_notify();
 }
 
-void audio_receiver_set_client_control(uint32_t ip, uint16_t port) {
+void sound_engine_set_client_control(uint32_t ip, uint16_t port) {
   realtime_receiver_set_client_control(ip, port);
 }
 
-void audio_receiver_set_anchor_time(uint64_t clock_id, uint64_t ptp_ns,
+void sound_engine_set_anchor_time(uint64_t clock_id, uint64_t ptp_ns,
                                     uint32_t rtp) {
   ptp_clock_snapshot_t ps = {0};
   ptp_clock_get_snapshot(&ps);
@@ -4884,7 +4884,7 @@ void audio_receiver_set_anchor_time(uint64_t clock_id, uint64_t ptp_ns,
   uint32_t gen;
   bool committed;
   taskENTER_CRITICAL(&s.state_mux);
-  if (s.stream_type == AUDIO_STREAM_BUFFERED && s.anchor_valid &&
+  if (s.stream_type == SOUND_STREAM_BUFFERED && s.anchor_valid &&
       !s.timeline_reset_pending && s.buffered_sender_anchor_valid &&
       s.buffered_sender_anchor_clock_id == clock_id &&
       s.buffered_sender_anchor_ptp_ns == ptp_ns &&
@@ -4905,7 +4905,7 @@ void audio_receiver_set_anchor_time(uint64_t clock_id, uint64_t ptp_ns,
   s.anchor_local_update_us = local_update_us;
   s.anchor_local_valid = local_valid;
   s.anchor_rtp = rtp;
-  if (s.stream_type == AUDIO_STREAM_BUFFERED) {
+  if (s.stream_type == SOUND_STREAM_BUFFERED) {
     s.buffered_sender_anchor_valid = true;
     s.buffered_sender_anchor_clock_id = clock_id;
     s.buffered_sender_anchor_ptp_ns = ptp_ns;
@@ -4940,11 +4940,11 @@ void audio_receiver_set_anchor_time(uint64_t clock_id, uint64_t ptp_ns,
 }
 
 
-bool audio_receiver_set_realtime_anchor_local(
+bool sound_engine_set_realtime_anchor_local(
     uint64_t clock_id, uint32_t gm_epoch, uint32_t mastership_age_ms,
     uint64_t remote_ptp_ns, uint64_t candidate_local_ns, uint32_t rtp,
-    audio_realtime_anchor_result_t *result) {
-  audio_realtime_anchor_result_t local_result = {0};
+    sound_realtime_anchor_result_t *result) {
+  sound_realtime_anchor_result_t local_result = {0};
   if (!result) result = &local_result;
   memset(result, 0, sizeof(*result));
   if (candidate_local_ns == 0) return false;
@@ -4958,7 +4958,7 @@ bool audio_receiver_set_realtime_anchor_local(
   int64_t rebase_bias_ns = 0;
 
   taskENTER_CRITICAL(&s.state_mux);
-  if (s.stream_type == AUDIO_STREAM_REALTIME) {
+  if (s.stream_type == SOUND_STREAM_REALTIME) {
     const bool have_running_local_map =
         s.anchor_valid && !s.timeline_reset_pending && s.anchor_local_ns != 0U;
     const bool epoch_changed =

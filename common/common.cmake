@@ -2,7 +2,7 @@
 # Surround time fit, sync pulse and calibration chirp. Not a component of its
 # own: the Gateway's main/CMakeLists.txt and the speaker's
 # speaker/main/CMakeLists.txt include this file and compile these sources
-# into their main component, next to their own code. (The audio_receiver.h
+# into their main component, next to their own code. (The sound_engine.h
 # API calls back into code each firmware implements in its own main, so this
 # cannot be a library below main.)
 set(AIRPLAY_COMMON_DIR "${CMAKE_CURRENT_LIST_DIR}")
