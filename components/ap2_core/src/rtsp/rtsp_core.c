@@ -813,11 +813,13 @@ static bool body_loggable(const char *method, const char *uri) {
   return true;
 }
 
+/* One line per request and per reply only with CONFIG_AIRPLAY_LOG_RTSP_REQUESTS
+ * (spec "Log"): /feedback alone comes every 2 s. */
 static void log_request(const rtsp_conn_t *c, const rtsp_msg_t *m) {
+#ifdef CONFIG_AIRPLAY_LOG_RTSP_REQUESTS
   const char *cseq = rtsp_msg_header(m, "CSeq");
   RTSP_LOGI("[%u] %s %s CSeq %s body %zu", c->id, m->start[0], m->start[1],
             cseq != NULL ? cseq : "-", m->body_len);
-#ifdef CONFIG_AIRPLAY_LOG_RTSP_REQUESTS
   if (m->body != NULL && body_loggable(m->start[0], m->start[1])) {
     char text[BODY_LOG_BYTES + 1];
     size_t n = m->body_len < BODY_LOG_BYTES ? m->body_len : BODY_LOG_BYTES;
@@ -829,6 +831,8 @@ static void log_request(const rtsp_conn_t *c, const rtsp_msg_t *m) {
     RTSP_LOGI("[%u] body: %s", c->id, text);
   }
 #else
+  (void)c;
+  (void)m;
   (void)body_loggable;
 #endif
 }
@@ -945,7 +949,9 @@ static int send_reply(rtsp_conn_t *c, const char *cseq, const reply_t *r,
   head_len = rtsp_reply_head(c->head, sizeof(c->head), r->code, cseq, extra,
                              r->content_type, r->body_len);
   if (head_len == 0) return -1;
+#ifdef CONFIG_AIRPLAY_LOG_RTSP_REQUESTS
   RTSP_LOGI("[%u] reply %d body %zu", c->id, r->code, r->body_len);
+#endif
   return send_message(c, (const uint8_t *)c->head, head_len, c->body,
                       r->body_len, send, ctx);
 }

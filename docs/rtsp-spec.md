@@ -522,11 +522,13 @@ is the session's volume.
 
 ## Log
 
-Tag `rtsp`. One line per request (method, path, `CSeq`, body length) and per
-reply (code, body length), one per session and stream change (format,
-ports, latency), and a warning per refused or unknown request. With
-`CONFIG_AIRPLAY_LOG_RTSP_REQUESTS` also the first bytes of each body as text,
-except the bodies of `SETUP`, `/pair-setup`, `/pair-verify` and `/fp-setup`.
+Tag `rtsp`. One line per session and stream change (format, ports,
+latency), and a warning per refused or unknown request. Only with
+`CONFIG_AIRPLAY_LOG_RTSP_REQUESTS` (off by default, not compiled when off):
+one line per request (method, path, `CSeq`, body length) and per reply
+(code, body length), and the first bytes of each body as text, except the
+bodies of `SETUP`, `/pair-setup`, `/pair-verify` and `/fp-setup` (decided:
+`/feedback` alone comes every 2 s).
 Never keys, `shk` or pairing secrets.
 
 ## Memory and tasks

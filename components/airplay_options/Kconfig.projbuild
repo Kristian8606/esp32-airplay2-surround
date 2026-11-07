@@ -356,15 +356,15 @@ menu "AirPlay Logs and Diagnostics"
             logged, never used by playback. Not compiled when off.
 
     config AIRPLAY_LOG_RTSP_REQUESTS
-        bool "Log the start of each RTSP request body"
+        bool "Log every RTSP request and reply"
         default n
         help
-            The RTSP server always logs one line per request (method, path,
-            CSeq, body length) and per reply (code, body length). With this
-            option it also prints the first bytes of each request body as
-            text, except the bodies of SETUP, /pair-setup, /pair-verify and
-            /fp-setup. Used to see what the sender sends, for example around
-            an AutoMix transition or a pause. Turn off when not needed.
+            One line per request (method, path, CSeq, body length) and per
+            reply (code, body length), and the first bytes of each request
+            body as text, except the bodies of SETUP, /pair-setup,
+            /pair-verify and /fp-setup. A sender posts /feedback every 2 s.
+            Used to see what the sender sends, for example around an AutoMix
+            transition or a pause. Not compiled when off.
 
     config AIRPLAY_DIAG_PLAYOUT
         bool "Playout diagnostics (DMA underruns, holes, silence, re-primes)"
