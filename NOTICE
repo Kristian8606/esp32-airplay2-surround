@@ -2,9 +2,7 @@ esp32-airplay2-surround
 Copyright 2026 Kristian Dimitrov
 
 This repository is licensed under the Apache License, Version 2.0 (see
-LICENSE), from version v4.5.64 on. Commits and tags up to and including
-v4.5.63 contain code under another license; see README.md, "Licenses and
-credits".
+LICENSE). Earlier versions are under the license files they contain.
 
 Not covered by the Apache License:
 - components/ap2_core/src/fairplay/fairplay_tables.c: fixed interop data;

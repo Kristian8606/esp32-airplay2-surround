@@ -1001,18 +1001,18 @@ afterwards).
 
 ## Licenses and credits
 
-- **This repository**, from version v4.5.64 on, is under the **Apache
-  License 2.0**, Copyright 2026 Kristian Dimitrov: [`LICENSE`](LICENSE),
-  [`NOTICE`](NOTICE). The components in `components/` carry their own copy
-  of it and a `NOTICE`. The exceptions are below.
-- **Older versions.** The project started from
-  [rbouteiller/airplay-esp32](https://github.com/rbouteiller/airplay-esp32).
-  Commits and tags up to and including **v4.5.63** contain code from it and
-  stay under its **Non-Commercial License**, Copyright (c) 2026 Remi
-  Bouteiller (the `LICENSE` in those versions). The parts that came from it
-  were written again from behaviour specifications, and the whole
-  repository was compared line by line with that project's history before
-  this change.
+- **The code.** All of the code in this repository was written by Kristian
+  Dimitrov with Claude Code (Anthropic). The AirPlay 2 core
+  (`components/ap2_core`: pairing, plists, audio decryption, FairPlay
+  set-up, RTSP server, mDNS) and the shared modules (`wifi`, `ota`,
+  `log_stream`, `helpers`, `led`, `settings`, `web_server`) were written
+  from scratch, most of them from behaviour specifications
+  ([`docs/`](docs)); the Gateway, the speaker's audio engine and the web
+  pages are the project's own.
+- **This repository** is under the **Apache License 2.0**, Copyright 2026
+  Kristian Dimitrov: [`LICENSE`](LICENSE), [`NOTICE`](NOTICE). The
+  components in `components/` carry their own copy of it and a `NOTICE`.
+  The exceptions are below.
 - **FairPlay setup replies** (`components/ap2_core/src/fairplay/fairplay_tables.c`)
   are fixed interop data from reverse engineering, not under the Apache
   License; see [`components/ap2_core/NOTICE`](components/ap2_core/NOTICE).
@@ -1028,10 +1028,10 @@ afterwards).
   led_strip) come through the ESP-IDF component manager under their own
   licenses.
 
-Grows out of the `standalone` branch of
+Related projects by the same author: the `standalone` branch of
 [esp32-airplay2-surround](https://github.com/Kristian8606/esp32-airplay2-surround),
 where every board is its own AirPlay receiver playing one channel, and
-[airplay-esp32](https://github.com/Kristian8606/airplay-esp32), the stereo
+[airplay-esp32](https://github.com/Kristian8606/airplay-esp32), a stereo
 AirPlay 2 receiver for the ESP32-S3. AAC decoding through
 [fdk-aac](https://github.com/mstorsjo/fdk-aac).
 
