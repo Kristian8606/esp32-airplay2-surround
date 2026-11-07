@@ -1,0 +1,5 @@
+description: WS2812 RGB status and level LED
+license: Apache-2.0
+dependencies:
+  idf: ">=6.0"
+  espressif/led_strip: "^3.0.3"

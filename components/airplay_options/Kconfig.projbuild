@@ -476,9 +476,9 @@ menu "RGB Audio/VU LED"
         bool "Enable WS2812 RGB audio/VU LED"
         default y
         help
-            Enable a single WS2812 RGB LED driven from final PCM blocks that
-            are successfully submitted to I2S. Disable this option to remove
-            RGB/VU processing from the audio path.
+            One WS2812 RGB LED shows the AirPlay state and, while playing, a
+            level meter of the audio sent to I2S (components/led). Disable it
+            to remove the LED and its work from the audio path.
 
     config RGB_AUDIO_LED_GPIO
         int "WS2812 data GPIO"
@@ -501,8 +501,8 @@ menu "RGB Audio/VU LED"
         range 5 60
         depends on ENABLE_RGB_AUDIO_LED
         help
-            Limits RMS/bass calculation and WS2812 refresh frequency.
-            About 30 Hz gives a smooth VU display.
+            How often the level meter is computed and the LED written while
+            playing. About 30 Hz gives a smooth meter.
 
     choice RGB_AUDIO_LED_PLAYING_MODE
         prompt "LED mode while playing"

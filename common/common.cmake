@@ -11,7 +11,6 @@ set(AIRPLAY_COMMON_SRCS
     "${AIRPLAY_COMMON_DIR}/amp_control.c"
     "${AIRPLAY_COMMON_DIR}/firmware_id.c"
     "${AIRPLAY_COMMON_DIR}/settings.c"
-    "${AIRPLAY_COMMON_DIR}/led.c"
     "${AIRPLAY_COMMON_DIR}/network/web_server.c"
     "${AIRPLAY_COMMON_DIR}/surround/tsf_fit.c"
     "${AIRPLAY_COMMON_DIR}/surround/sync_pulse.c"
@@ -46,6 +45,7 @@ set(AIRPLAY_COMMON_PRIV_REQUIRES
     ota
     wifi
     helpers
+    led
 )
 
 # Embed web pages (data/www/<page>.html) into the OTA application image.
