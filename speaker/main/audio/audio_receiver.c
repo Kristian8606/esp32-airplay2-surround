@@ -64,8 +64,8 @@
 #define AP2_BUFFERED_PROCESSOR_CORE 0 /* AAC decrypt/decode/EQ */
 #define AP2_RX_PRIORITY            4  /* raw TCP reader (Core1, below playout and ALAC staging) */
 #define AP2_DECODE_PRIORITY        4  /* AAC processor; RTSP control (prio 17, same core) preempts it */
-#define AP2_NO_TIMING_WAIT_MS      20U /* Shairport: wait ~20 ms without valid timing */
-#define AP2_MAX_DEFERRED_FLUSH      10U /* Shairport MAX_DEFERRED_FLUSH_REQUESTS */
+#define AP2_NO_TIMING_WAIT_MS      20U /* wait ~20 ms without valid timing */
+#define AP2_MAX_DEFERRED_FLUSH      10U /* deferred FLUSHBUFFERED requests kept */
 
 #define AP2_PLAYOUT_PRIORITY       8
 #define AP2_RT_STAGE_PRIORITY      7
@@ -78,17 +78,15 @@
 #define AP2_STATUS_CORE              0
 #endif
 #define AP2_STATUS_PERIOD_MS      2000U
-/* Shairport development get_ptp_anchor_local_time_info accepts a timing
- * record after 400 ms of mastership. There is no extra local lock or 1 s
- * initial-anchor gate. Reference rtp.c:1355-1356 at
- * 8c146e25183a354ae96f91fa069c2e7173f75a71. */
+/* A timing record is accepted after 400 ms of mastership. There is no extra
+ * local lock or 1 s initial-anchor gate. */
 #define AP2_PTP_MASTERSHIP_MIN_MS 400U
 /* A PTP estimate without a sample for this long must not create or refresh a
  * local mapping; playback keeps the cached one (holdover) until PTP returns. */
 #define AP2_PTP_SAMPLE_STALE_MS   2000U
-/* Resync, Shairport "resync_threshold" semantics (default 0.050 s): if the
+/* Resync threshold (0.050 s): if the
  * output stays out of sync by more than this for AP2_RESYNC_HOLD_US (about
- * Shairport's 40-sample sync history), late audio is dropped (the cursor
+ * a 40-sample sync history), late audio is dropped (the cursor
  * skips forward by the error) and early audio re-primes at the presentation
  * point. Smaller errors are left to the I2S clock servo (no stuffing). */
 #define AP2_RESYNC_THRESHOLD_US      50000
@@ -143,8 +141,8 @@
 #define AP2_FF_MAX_PHASE_PPM            120.0
 #define AP2_FF_HOLD_PPM                   0.75
 #define AP2_FF_LOG_US                10000000LL
-/* Shairport Sync 5.5.2: audio_decoded_buffer_desired_length defaults to
- * 0.75 s; buffered blocks are decoded only inside target + 0.1 s. */
+/* Decoded buffer target 0.75 s; buffered blocks are decoded only inside
+ * target + 0.1 s. */
 #define AP2_PCM_TARGET_MS            750U
 #define AP2_REALTIME_PRIME_MS        100U
 #define AP2_RT_GM_REBASE_SETTLE_MS  1000U
@@ -290,9 +288,9 @@ static ap2_state_t s = {
     .realtime_stage_idle = true,
 };
 
-/* Shairport Sync keeps FLUSHBUFFERED state alongside the connection and lets
- * the single buffered-audio processor apply it to the sequential packet
- * stream. Keep the same ownership here: the raw TCP FIFO contains bytes only
+/* FLUSHBUFFERED state is kept alongside the connection, and the single
+ * buffered-audio processor applies it to the sequential packet stream: the
+ * raw TCP FIFO contains bytes only
  * and knows nothing about RTP, FLUSH ranges or media cursors. */
 typedef struct {
   uint32_t seq;
@@ -458,7 +456,7 @@ static void buffered_control_classify_current_head(void *context) {
 
   decision->revision = s_buffered_control.revision;
 
-  /* Shairport 5.5.2: immediate FLUSH consumes every sequential block before
+  /* Immediate FLUSH consumes every sequential block before
    * flushUntilSeq. The endpoint block itself survives; overshoot also ends the
    * request and keeps the overshooting block. Completion cancels all deferred
    * requests. There is deliberately no RTP rescue, plausibility window or
@@ -478,7 +476,7 @@ static void buffered_control_classify_current_head(void *context) {
   }
 
   /* Deferred [fromSeq, untilSeq) requests are evaluated against the same
-   * sequential packet stream (Shairport). Endpoint and overshoot packets
+   * sequential packet stream. Endpoint and overshoot packets
    * survive. */
   for (uint32_t i = 0; i < AP2_MAX_DEFERRED_FLUSH; ++i) {
     buffered_deferred_flush_t *r = &s_buffered_control.deferred[i];
@@ -495,7 +493,7 @@ static void buffered_control_classify_current_head(void *context) {
       r->active = false;
       r->in_use = false;
     } else if (r->active || from_delta == 0) {
-      /* Shairport: a deferred request activates only on the packet whose
+      /* A deferred request activates only on the packet whose
        * sequence number is exactly flushFromSeq. A request that arrives after
        * that packet stays inactive and simply ends at/after flushUntilSeq. */
       if (!r->active) {
@@ -661,7 +659,7 @@ static void refresh_timing_snapshot(timing_snapshot_t *out) {
           buffered_ptp_qualified(&ps, out->anchor_clock_id);
 
       if (same_master && qualified_master) {
-        /* Shairport Sync semantics: while the advertised master is the same
+        /* While the advertised master is the same
          * clock that owns the RTSP anchor, continuously refresh the local
          * representation and remember exactly when that mapping was last
          * known-good. A transient GM may not move this cached local point. */
@@ -691,8 +689,8 @@ static void refresh_timing_snapshot(timing_snapshot_t *out) {
       } else if (!same_master && ps.grandmaster_clock_id != 0 &&
                  out->anchor_local_valid && out->anchor_local_ns != 0 &&
                  out->anchor_local_update_us != 0) {
-        /* Shairport does not time handover from first mismatch observation.
-         * It measures from the last successful local-anchor update by the old
+        /* Handover is not timed from the first mismatch observation. It is
+         * measured from the last successful local-anchor update by the old
          * master. That timestamp stops moving as soon as the GM differs. */
         const uint64_t stale_age_us =
             now_us >= out->anchor_local_update_us
@@ -729,7 +727,7 @@ static void refresh_timing_snapshot(timing_snapshot_t *out) {
               s.anchor_ptp_ns = new_remote_anchor;
               /* Deliberately preserve anchor_local_ns and its old update time.
                * On the next qualified snapshot the now-current GM refreshes
-               * them, matching Shairport's two-step handover behaviour. */
+               * them: a two-step handover. */
               committed = true;
             }
             taskEXIT_CRITICAL(&s.state_mux);
@@ -875,7 +873,7 @@ static inline int32_t rtp_delta(uint32_t a, uint32_t b) {
 /* Presentation-clock boundary. Both codecs schedule against ESP monotonic
  * time. Buffered AAC continuously converts its remote anchor to local time
  * while its anchor GM is current, then freezes that local anchor across GM
- * acquisition exactly like Shairport Sync. */
+ * acquisition. */
 static bool timing_clock_ready(const timing_snapshot_t *snap) {
   if (!snap || !snap->anchor_valid || snap->timeline_reset_pending) return false;
   if (snap->stream_type == AUDIO_STREAM_BUFFERED)
@@ -892,9 +890,8 @@ static uint64_t presentation_now_ns(const timing_snapshot_t *snap) {
  * Positive = the chain delays the sound, so the ESP must output that much
  * EARLIER. Applied here, the single point every presentation-time calculation
  * (start, cursor, sync measurement, realtime deadlines) goes through; the PTP
- * map (anchor_local_ns) itself is untouched. Like Shairport's
- * audio_backend_latency_offset_in_seconds, with the opposite sign convention
- * (ours is "how late the hardware is"). */
+ * map (anchor_local_ns) itself is untouched. Positive means the hardware
+ * is late. */
 #define AP2_OUTPUT_LATENCY_MIN_US  (-100000)
 #define AP2_OUTPUT_LATENCY_MAX_US  150000
 static volatile int32_t s_output_latency_us = 0;
@@ -1616,10 +1613,10 @@ static void wait_until_presentation_ns(const timing_snapshot_t *snap,
   (void)esp_timer_stop(s.playout_timer);
 }
 
-/* The buffered AAC side now follows Shairport Sync's topology: the TCP task
+/* The buffered AAC side: the TCP task
  * owns only a raw byte FIFO, while this single consumer owns packet framing,
  * FLUSH decisions, timing, decrypt/decode and publication into the PCM FIFO
- * (appended in play order, like Shairport's player queue). There is no
+ * (appended in play order). There is no
  * compressed-media search or rebind. */
 typedef enum {
   PCM_STORE_DROPPED = 0,
@@ -1647,8 +1644,8 @@ static pcm_store_result_t pcm_store_with_backpressure(
     }
     /* The processor decodes a block only when its lead is inside the PCM
      * window (lead < AP2_BUFFERED_LEAD_MS), so there is room for it now:
-     * publish it at its RTP address at once, like Shairport's
-     * player_put_packet() right after decoding. Never park decoded samples
+     * publish it at its RTP address at once, right after decoding. Never
+     * park decoded samples
      * here waiting for play/anchor/PTP state: a pause or anchor update that
      * arrives while the block is being decoded must not hold it (and then
      * drop it on resume, which left a one-block hole in the music). The
@@ -1697,8 +1694,7 @@ static pcm_store_result_t pcm_store_with_backpressure(
  * going back by up to ~0.4 s) while the earlier version still waits in the
  * PCM FIFO. Like the former RTP-addressed ring, the newer packets win: drop
  * the published PCM from rtp on and let the processor append the new audio
- * there. Shairport keeps the old blocks instead (its replacement path,
- * get_revised_seqno + clear_buffers_from, is commented out). Returns false
+ * there. Returns false
  * when rtp is too close to the playhead (or there is none): skip the packet
  * as before. */
 static bool pcm_rewind_for_resend(uint32_t rtp, uint32_t pcm_generation,
@@ -1827,7 +1823,7 @@ static void ap2_buffered_processor_task(void *arg) {
   ap2_buffered_fifo_head_t authenticated_head = {0};
   int authenticated_len = 0;
 
-  /* Shairport's packets_played_in_this_sequence / expected_timestamp. A play
+  /* Packets played in this sequence and the expected timestamp. A play
    * stop starts a new sequence; deferred FLUSH does not reset it, so the first
    * surviving packet is recognised by its RTP timestamp discontinuity. */
   uint32_t packets_played_in_sequence = 0;
@@ -1969,9 +1965,9 @@ static void ap2_buffered_processor_task(void *arg) {
       continue;
     }
 
-    /* Shairport never gives an unrecognised SSRC to the timing/decoder path;
-     * such a block is simply consumed. ESP32 additionally skips recognised
-     * encodings for which this build has no decoder. */
+    /* An unrecognised SSRC never reaches the timing/decoder path; such a
+     * block is simply consumed. Recognised encodings for which this build
+     * has no decoder are skipped too. */
     const airplay_audio_format_t *payload_format =
         airplay_audio_format_by_ssrc(packet.ssrc);
     if (!payload_format) {
@@ -2091,7 +2087,7 @@ static void ap2_buffered_processor_task(void *arg) {
     }
 #endif
 
-    /* Shairport only decrypts a buffered packet if its presentation start is
+    /* A buffered packet is decrypted only if its presentation start is
      * not already late. Consume late compressed packets without decoding; the
      * next surviving packet's RTP gap will cause the AAC block to be muted. */
     if (lead < 0) {
@@ -2131,7 +2127,7 @@ static void ap2_buffered_processor_task(void *arg) {
       early_hold_since_us = 0;
     }
 
-    /* Exact Shairport sequence semantics: mute the first AAC packet in a play
+    /* Mute the first AAC packet in a play
      * sequence, and also mute the first packet after an RTP timestamp gap.
      * A sequence-number gap alone is diagnostic; it does not rebuild or reset
      * the AAC decoder. */
@@ -2295,7 +2291,7 @@ static void ap2_buffered_processor_task(void *arg) {
 #endif
 
     /* Muting is after AAC decode (so MDCT/codec history advances) but before
-     * EQ, matching Shairport's intent: the decoder sees the real first block,
+     * EQ: the decoder sees the real first block,
      * while the downstream audio chain receives silence for its duration. */
     if (mute) {
       {
@@ -3313,8 +3309,8 @@ static void ap2_playout_task(void *arg) {
       continue;
     }
 
-    /* A new buffered anchor (pause/resume, AutoMix) only changes timing, as
-     * in Shairport: playback continues and the resync rules below decide.
+    /* A new buffered anchor (pause/resume, AutoMix) only changes timing:
+     * playback continues and the resync rules below decide.
      * Only a jump far outside the PCM window (a new RTP base) cannot be
      * followed by the playout cursor and needs a fresh PRIME. */
     if (state == PLAYOUT_RUNNING) {
@@ -3326,7 +3322,7 @@ static void ap2_playout_task(void *arg) {
       }
     }
 
-    /* Resync (Shairport resync_threshold semantics). SYNC < 0: late, drop
+    /* Resync. SYNC < 0: late, drop
      * the late audio by skipping the cursor forward by the error (I2S keeps
      * running). SYNC > 0: early, re-prime and wait for the presentation
      * point. */
@@ -4649,7 +4645,7 @@ esp_err_t audio_receiver_set_deferred_flush_range(
       ? buffered_control_add_deferred_locked(from_seq, from_ts, until_seq,
                                               until_ts, timestamps_valid)
       : ESP_ERR_INVALID_STATE;
-  /* As in Shairport Sync, a deferred FLUSH acts only on the compressed
+  /* A deferred FLUSH acts only on the compressed
    * packets as the decoder reaches flushFromSeq; PCM already decoded (at
    * most the 0.85 s decode window) is not touched. */
   xSemaphoreGive(s.publish_mutex);
@@ -4661,7 +4657,7 @@ esp_err_t audio_receiver_set_deferred_flush_range(
 void audio_receiver_set_immediate_flush(uint32_t until_seq, uint32_t until_ts) {
   if (!s_buffered_control.mutex || !s.publish_mutex) return;
 
-  /* Shairport 5.5.2 handle_flushbuffered() immediate path:
+  /* Immediate FLUSHBUFFERED:
    *   1. arm the sequential flush endpoint;
    *   2. disable playout;
    *   3. invalidate the presentation anchor;
@@ -4669,10 +4665,9 @@ void audio_receiver_set_immediate_flush(uint32_t until_seq, uint32_t until_ts) {
    *      overshot. The endpoint packet itself is retained.
    * untilTS is stored with the request for protocol parity but does not drive
    * the sequential discard decision. */
-  /* Shairport updates the immediate request, play flag and anchor while its
-   * flush_mutex excludes the packet classifier. Keep that same atomic control
-   * boundary so the processor cannot observe an armed FLUSH with the old play
-   * state/anchor still published. */
+  /* The immediate request, play flag and anchor are updated while the packet
+   * classifier is excluded, so the processor cannot observe an armed FLUSH
+   * with the old play state/anchor still published. */
   xSemaphoreTake(s_buffered_control.mutex, portMAX_DELAY);
   xSemaphoreTake(s.publish_mutex, portMAX_DELAY);
   const uint32_t masked_until_seq = until_seq & 0x007fffffU;
@@ -4681,10 +4676,9 @@ void audio_receiver_set_immediate_flush(uint32_t until_seq, uint32_t until_ts) {
   s_buffered_control.immediate_until_rtp = until_ts;
 
   if (masked_until_seq == 0U) {
-    /* Shairport development: "A flush to Block 0 looks like a bug in HomePod
-     * OS 27." The flush is finished at once: no packet is discarded, and, as
-     * when any immediate flush finishes, all deferred requests are cancelled.
-     * Play stop, anchor reset and PCM reset below still apply. */
+    /* A flush to block 0 is finished at once: no packet is discarded, and,
+     * as when any immediate flush finishes, all deferred requests are
+     * cancelled. Play stop, anchor reset and PCM reset below still apply. */
     s_buffered_control.immediate_active = false;
     memset(s_buffered_control.deferred, 0, sizeof(s_buffered_control.deferred));
   } else {
@@ -4717,7 +4711,7 @@ void audio_receiver_pause(void) {
   taskENTER_CRITICAL(&s.state_mux);
   s.playing = false;
   taskEXIT_CRITICAL(&s.state_mux);
-  /* Shairport handle_setrateanchori(rate 0): reset anchor, play disabled */
+  /* SETRATEANCHORTIME with rate 0: reset anchor, play disabled */
   status_invalidate_sync();
   pause_presentation_timing();
   audio_status_notify();
@@ -4930,7 +4924,7 @@ void audio_receiver_set_anchor_time(uint64_t clock_id, uint64_t ptp_ns,
     s_anchor_commit_us = esp_timer_get_time();
     s_anchor_commit_gen = gen;
   }
-  /* Shairport-style separation: SETRATEANCHORTIME updates presentation timing
+  /* SETRATEANCHORTIME updates presentation timing
    * only. The compressed FIFO itself has no RTP cursor to search or rebind. */
   if (s.transport) ap2_buffered_fifo_notify(s.transport);
   playout_wake();

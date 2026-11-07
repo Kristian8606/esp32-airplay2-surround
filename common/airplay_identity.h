@@ -25,12 +25,10 @@
  *   Bit 46: SupportsHKPairingAndAccessControl
  *   Bit 48: SupportsTransientPairing */
 #define AIRPLAY_FEATURES_HI 0x1C340
-#define AIRPLAY_FEATURES_LO 0x401C4A00 /* bit 22 off, as Shairport Sync */
+#define AIRPLAY_FEATURES_LO 0x401C4A00 /* bit 22 off */
 
-/* GET /info "supportedFormats": bit N = AirPlay audio format N, as in
- * Shairport Sync generateInfoPlist(). The sender echoes its pick back as
- * "audioFormat" in the SETUP stream dict.
- */
+/* GET /info "supportedFormats": bit N = AirPlay audio format N. The sender
+ * echoes its pick back as "audioFormat" in the SETUP stream dict. */
 #define AIRPLAY_FMT_ALAC_44100_S16_2 (1ULL << 18) /* 0x40000 */
 #define AIRPLAY_FMT_ALAC_48000_S24_2 (1ULL << 21)
 #define AIRPLAY_FMT_AAC_LC_44100_2   (1ULL << 22)

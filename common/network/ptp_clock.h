@@ -85,7 +85,7 @@ bool ptp_clock_remote_to_local(uint64_t remote_ns, int64_t offset_ns,
 bool ptp_clock_local_to_remote(uint64_t local_ns, int64_t offset_ns,
                                       uint64_t *remote_ns);
 
-/* Shairport-style buffered handover qualification. A transient GM must never
+/* Buffered handover qualification. A transient GM must never
  * move the media anchor; only a qualified, different master may take it over. */
 bool ptp_clock_handover_ready(bool have_local_anchor, bool clock_locked,
                                      uint64_t anchor_clock_id,

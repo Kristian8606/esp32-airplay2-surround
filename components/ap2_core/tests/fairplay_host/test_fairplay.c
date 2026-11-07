@@ -27,7 +27,7 @@ static uint32_t crc32(const uint8_t *p, size_t n) {
 }
 
 /* CRC-32 of the four 142-byte replies and of the 12-byte header, computed
- * from the tables as published in playfair and shairport-sync. */
+ * from the published tables (see NOTICE). */
 static const uint32_t reply_crc[4] = {0x38491132u, 0xe9a6feedu, 0xeda8c9b2u,
                                       0x5f0e36f6u};
 static const uint32_t header_crc = 0x2ff18364u;

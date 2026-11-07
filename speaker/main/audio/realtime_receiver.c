@@ -51,7 +51,7 @@
 #define RT_RETRANSMIT_PT          86U
 #define RT_RESEND_REQUEST_PT      85U
 #define RT_MAX_NACK_COUNT         32U
-/* Shairport Sync defaults: wait 100 ms before the first request, retry at
+/* Wait 100 ms before the first request, retry at
  * 250 ms intervals. NEW requests stop 50 ms (a request's round trip through
  * the Gateway) before the frame is needed, here the staging commit boundary:
  * it is taken for the I2S queue before it is heard. Do not declare final

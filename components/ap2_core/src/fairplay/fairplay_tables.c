@@ -2,8 +2,8 @@
  * FairPlay setup replies. This data is NOT covered by the Apache License of
  * ap2_core; see NOTICE.
  *
- * Fixed interop data, byte for byte the same in the open AirPlay receivers
- * (shairport-sync, shairplay, UxPlay and others). It was first published in
+ * Fixed interop data, byte for byte the same in the open AirPlay
+ * receivers. It was first published in
  * playfair (https://github.com/EstebanKubata/playfair, 2015), a
  * reverse-engineered implementation of Apple's FairPlay setup, as the
  * replies it precomputed for the four modes of the first fp-setup message

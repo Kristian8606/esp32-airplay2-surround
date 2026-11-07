@@ -199,7 +199,7 @@ menu "Multichannel Experiment"
             the same setting works for 5.1 and 7.1. For 7.1, Apple TV sends
             AAC channel configuration 7: C, pair, pair, pair, LFE. The names
             below follow the 7.1 order C L R Ls Rs Lrs Rrs LFE (Apple's
-            AAC_7_1_B; FFmpeg and Shairport Sync read configuration 7 the
+            AAC_7_1_B; FFmpeg and other receivers read configuration 7 the
             same way); the ISO reading of configuration 7 would instead call
             the first pair "front centre" and the second pair L/R. Check
             with a 7.1 speaker test; if Front L/R and Side L/R come out

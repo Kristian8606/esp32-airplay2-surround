@@ -9,10 +9,8 @@ of the firmware. Sources, marked where a rule rests on one of them:
 - **[probe]** a test sender run against a running Gateway (2026-11-06):
   transient pairing, the encrypted channel, the requests below, a second
   sender;
-- **[shairport-sync]** the AirPlay 2 receiver shairport-sync (MIT), read for
-  its behaviour only;
-- **[pyatv]** the AirPlay 2 notes of pyatv
-  (https://pyatv.dev/documentation/protocols/);
+- **[other receiver]** what another open AirPlay 2 receiver does;
+- **[public notes]** public notes on the AirPlay 2 protocol;
 - **[ESP-IDF]** the ESP-IDF v6 sources and documentation.
 
 Rules marked "decided" were chosen for this Gateway where no source shows
@@ -100,7 +98,8 @@ The server uses:
   FLUSHBUFFERED, TEARDOWN, OPTIONS, POST, GET, SET_PARAMETER, GET_PARAMETER,
   SETPEERS, SETPEERSX, SETRATEANCHORTIME, LOUDNESSNORMALIZATION`.
 - An unknown method, or `GET`/`POST` to a path not listed below: `501 Not
-  Implemented`, `Content-Type: text/plain`, body `Not Implemented` (shairport-sync answers 501 to an unknown path too).
+  Implemented`, `Content-Type: text/plain`, body `Not Implemented` (the other
+  receiver answers 501 to an unknown path too).
 - Requests on one connection are answered in order. The largest body seen
   is 7639 bytes (`/command`); no artwork (`image/*`) was seen. Bodies up to
   64 KiB are accepted; a larger one is read and dropped and answered `413
@@ -115,7 +114,7 @@ The server uses:
 | 400 Bad Request + `Connection: close`, then the connection closes | A head that cannot be read: a bad request line (also one without a version), a header line without `:`, folded header lines, a bad or repeated `Content-Length`, a head over 4 KiB or over 32 headers, control bytes. The rest of the stream cannot be trusted (decided). |
 | 413 Request Entity Too Large | A body over 64 KiB (above). |
 | 455 Method Not Valid in This State | A `SETUP` with a stream on a connection that has not sent the session `SETUP`; nothing changes. |
-| 470 Connection Authorization Required | A pairing step the AirPlay 2 core fails (below) [shairport-sync]; a `SETUP` on a connection that is not encrypted (decided); nothing changes. |
+| 470 Connection Authorization Required | A pairing step the AirPlay 2 core fails (below) [other receiver]; a `SETUP` on a connection that is not encrypted (decided); nothing changes. |
 | 500 Internal Server Error | The Gateway itself fails: no memory, the event port cannot be reserved or opened, no free UDP port pair, the engine does not start reception, no audio key, the reply cannot be built, the engine refuses a deferred flush. |
 | 501 Not Implemented | Above. |
 
@@ -131,7 +130,7 @@ The server uses:
   secret (for transient pairing, the SRP session key) by HKDF-SHA512 with
   salt `Control-Salt`: info `Control-Write-Encryption-Key` for sender to
   Gateway, `Control-Read-Encryption-Key` for Gateway to sender [probe]. A
-  frame that does not open closes the connection. [pyatv]
+  frame that does not open closes the connection. [public notes]
 - Every message the Gateway sends, on either channel, goes out as one
   frame when it is 1024 bytes or less, and otherwise in frames of 1024
   bytes with the rest in the last; never the head and the body in frames
@@ -198,11 +197,12 @@ When that connection closes, the session ends as with `TEARDOWN`.
 `/feedback` answers 200 without a body; `GET_PARAMETER volume` answers the
 current volume. Only the holder drives the engine.
 
-**A second sender** [probe, shairport-sync, log]: its `SETUP` without
+**A second sender** [probe, other receiver, log]: its `SETUP` without
 streams is answered as usual and its own event port listens at once, as
 for the holder; the first sender keeps the session. A real iPhone connects
 to that event port right after the reply while an Apple TV holds the
-session, and gives up when the port does not accept [log]; shairport-sync also opens it before the reply. Its `RECORD` and `TEARDOWN`
+session, and gives up when the port does not accept [log]; the other
+receiver also opens it before the reply. Its `RECORD` and `TEARDOWN`
 change nothing (200). Its first `SETUP` with a
 stream takes the session: the first sender's stream stops and its
 connection is closed, then the second sender's session starts (clock, event
@@ -234,7 +234,7 @@ does not change the reply). Reply: binary plist
 | `name` | the device name from the settings |
 | `audioFormats` | one dict: `type` 96, `audioInputFormats` and `audioOutputFormats` 16777216 (0x1000000) |
 | `audioLatencies` | two dicts, `type` 96 and 103, each `audioType` 100, `inputLatencyMicros` 0, `outputLatencyMicros` 0 |
-| `initialVolume` | the saved volume in AirPlay units (e.g. -15.0); -24.0 when it cannot be read (shairport-sync's default) |
+| `initialVolume` | the saved volume in AirPlay units (e.g. -15.0); -24.0 when it cannot be read (the other receiver's default) |
 | `supportedFormats` | `audioStream` 262144 (0x40000), `bufferStream` 1649282383872 (0x18000E40000) |
 
 ### `POST /pair-setup`, `POST /pair-verify`
@@ -245,10 +245,10 @@ the step (pair-setup 1, 3, 5; pair-verify 1, 3). Its replies go back as
 
 - A client the core refuses with a well-formed message (a wrong proof or
   signature): the core returns `ESP_OK` with its `{State, Error}` reply,
-  sent with 200 like any other reply [shairport-sync: the same].
+  sent with 200 like any other reply [other receiver: the same].
 - Any error the core returns, and a body without a known `State` (empty
   too): `470 Connection Authorization Required`, no body; the connection
-  stays [shairport-sync].
+  stays [other receiver].
 - No memory for the pairing session: 500.
 
 After the last pair-verify step the connection is encrypted (above). A
@@ -282,7 +282,7 @@ depends on what the plist holds, so a damaged one does no harm.
   (-24.0 when it cannot be read).
 - Session connected for the amplifier; a session event.
 - Reply: binary plist `{eventPort: <port>, timingPort: 0}` (76 bytes) [log,
-  probe]. (shairport-sync also returns `timingPeerInfo`; this Gateway does
+  probe]. (another open receiver also returns `timingPeerInfo`; this Gateway does
   not.)
 - A sender sending it again on the same connection, holder or not: the
   same `eventPort`, which keeps listening; nothing new opens or starts
@@ -419,9 +419,9 @@ current anchor timing stays. Without that header: 400, nothing changes.
 
 200. While a stream is set up (playing or paused), the body is the binary
 plist `{streams: [{type: 103, sr: 48000.0}]}` (85 bytes), the stream's type
-and sample rate; without a stream, no body [probe]. shairport-sync answers
+and sample rate; without a stream, no body [probe]. another open receiver answers
 the same plist, only while playing. The sender sends it every 2 s; it keeps
-the session alive [pyatv].
+the session alive [public notes].
 
 ### `TEARDOWN`
 
@@ -432,7 +432,7 @@ the session alive [pyatv].
   sender's clock, close the event port, clear the engine's stream type and
   key, session disconnected for the amplifier, a session event, save the
   volume. The reply carries `Connection: close` and the Gateway closes the
-  connection after it [probe, shairport-sync].
+  connection after it [probe, other receiver].
 - From a connection that does not hold the session: 200, nothing changes
   [probe]; without streams it is also answered with `Connection: close` and
   that connection closes [probe]; with streams it stays open (decided).
@@ -447,7 +447,7 @@ Decided:
 
 - Every session `SETUP` (holder or not) opens its own event port, which
   listens before the reply and as long as that RTSP connection lives
-  [shairport-sync, log]. A new connection to it replaces the old one (a
+  [other receiver, log]. A new connection to it replaces the old one (a
   command still going on the old one ends `disconnected`).
 - Remote commands go only on the event connection of the sender that
   holds the session; `rtsp_remote_enqueue()` and

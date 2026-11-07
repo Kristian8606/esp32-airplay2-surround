@@ -6,9 +6,9 @@ an ESP-IDF component under the **Apache License 2.0** ([`LICENSE`](LICENSE),
 [`NOTICE`](NOTICE)).
 
 It takes over the protocol parts of the firmware one at a time: pairing
-(HAP), plist, audio decryption, the FairPlay setup and the RTSP server.
-The RTSP server's behaviour is described in the repository's
-`docs/rtsp-spec.md`. Where its code comes from is recorded in
+(HAP), plist, audio decryption, the FairPlay setup, the RTSP server and
+the mDNS announcement. The behaviour of the last two is described in the
+repository's `docs/rtsp-spec.md` and `docs/mdns-airplay-spec.md`. Where its code comes from is recorded in
 [`PROVENANCE.md`](PROVENANCE.md).
 
 The rest of the repository is under a different license; see the
@@ -43,7 +43,7 @@ The four replies and the header are fixed interop data, the same in the
 open AirPlay receivers: first published in
 [playfair](https://github.com/EstebanKubata/playfair) (2015), a
 reverse-engineered FairPlay setup that precomputed them with fixed key
-material; later in shairplay (2018) and shairport-sync (2021). They are in
+material. They are in
 `src/fairplay/fairplay_tables.c`, outside the Apache License (see
 [`NOTICE`](NOTICE)). The host test (`tests/fairplay_host`) checks them
 against CRC-32 values of the published tables.

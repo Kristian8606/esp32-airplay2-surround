@@ -22,7 +22,7 @@
  *    packet plays as silence, exactly as an unfilled RTP slot did before).
  *  - Frames once written are never changed: a write that overlaps
  *    [head, tail) keeps the frames already there and appends only the rest
- *    (as Shairport Sync's player buffer keeps blocks in arrival order).
+ *    (blocks are kept in arrival order).
  *    A timeline the sender re-sends (AutoMix) replaces them explicitly:
  *    pcm_fifo_truncate() at its first RTP, then ordinary appends.
  *  - Reads do not consume. The oldest frames are dropped only when a writer

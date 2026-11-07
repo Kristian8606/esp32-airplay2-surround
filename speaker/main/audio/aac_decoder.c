@@ -263,7 +263,7 @@ static int mc_count(const CStreamInfo *si, AUDIO_CHANNEL_TYPE type) {
  * 7.1, Apple TV sends configuration 7, which FDK (following ISO) reports as
  * five fronts + two backs: front #0 = C, #1/#2 and #3/#4 = two pairs. ISO
  * calls #1/#2 "left/right centre" and #3/#4 L/R; in practice (Apple's
- * kAudioChannelLayoutTag_AAC_7_1_B, Nero, FFmpeg and so Shairport Sync)
+ * kAudioChannelLayoutTag_AAC_7_1_B, Nero, FFmpeg and other receivers)
  * #1/#2 are L/R, #3/#4 the side pair and the backs the rear pair. We follow
  * that: in the first test the #1/#2 pair carried the most energy of an
  * upmixed stereo song, as main L/R should. Configuration 12 (7.1 with rear

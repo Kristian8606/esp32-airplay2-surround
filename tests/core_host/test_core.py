@@ -29,7 +29,7 @@ def test_mdns(d):
     ok(calls[3][:5] == ['svc', 'AABBCC010203@Living Room', '_raop', '_tcp', 7000], '_raop service')
     ok(calls[3][5] == [['am', 'AudioAccessory6,1'], ['cn', '0,1,2,3'], ['da', 'true'], ['et', '0,3,5'], ['ft', '0x401C4A00,0x1C340'], ['md', '0,2'], ['pk', KEY_HEX],
                        ['sf', '0x4'], ['tp', 'UDP'], ['vn', '65537'], ['vs', '377.40.00'], ['vv', '2']], '_raop records')
-    long = d('mdns ' + 'n' * 80)['calls']; ok(long[2][1] == 'n' * 64 and long[3][1] == 'AABBCC010203@' + 'n' * 64, 'long name')
+    long = d('mdns ' + 'n' * 80)['calls']; ok(long[2][1] == 'n' * 63 and long[3][1] == 'AABBCC010203@' + 'n' * 50, 'long name')
 
 def test_sockets(d):
     r = d('udp 0 0 0'); ok(r['fd'] == 1 and r['port_ok'] and r['any'] and r['type'] == 2 and not r['reuse'] and r['timeo'] == 0, 'udp')

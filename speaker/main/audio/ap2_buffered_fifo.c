@@ -22,7 +22,7 @@
 #include "socket_utils.h"
 #include "airplay_log.h"
 
-/* Match Shairport Sync 5.x buffered_read.c: recv at most 4096 bytes, and once
+/* Receive at most 4096 bytes at a time, and once
  * more than 16 KiB is queued, sleep 10 ms after each recv. This intentionally
  * lets AutoMix bursts accumulate in the large compressed FIFO without making
  * the TCP reader monopolise the CPU. */

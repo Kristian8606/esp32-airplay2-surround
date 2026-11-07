@@ -17,7 +17,7 @@ typedef bool (*realtime_pcm_sink_t)(uint32_t rtp, int16_t *pcm,
 typedef bool (*realtime_deadline_cb_t)(uint32_t rtp,
                                        int64_t *time_to_play_us, void *ctx);
 
-/* Shairport-style recovery ends only when ordered staging must commit the
+/* Recovery ends only when ordered staging must commit the
  * frame. Keep the final loss decision and the staging silence deadline on the
  * same boundary so an in-flight RTX remains useful after the last NACK.
  * The boundary is where playout takes the PCM, not where it is heard: the

@@ -8,7 +8,6 @@ set(GATEWAY_SRCS
     "main.c"
     "web_gateway.c"
     "airplay_identity.c"
-    "mdns_airplay.c"
     "gw_proxy.c"
     "gw_relay.c"
     "gw_fw.c"
