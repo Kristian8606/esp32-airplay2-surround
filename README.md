@@ -1001,6 +1001,21 @@ afterwards).
 
 ## Licenses and credits
 
+- **This repository**, from version v4.5.64 on, is under the **Apache
+  License 2.0**, Copyright 2026 Kristian Dimitrov: [`LICENSE`](LICENSE),
+  [`NOTICE`](NOTICE). The components in `components/` carry their own copy
+  of it and a `NOTICE`. The exceptions are below.
+- **Older versions.** The project started from
+  [rbouteiller/airplay-esp32](https://github.com/rbouteiller/airplay-esp32).
+  Commits and tags up to and including **v4.5.63** contain code from it and
+  stay under its **Non-Commercial License**, Copyright (c) 2026 Remi
+  Bouteiller (the `LICENSE` in those versions). The parts that came from it
+  were written again from behaviour specifications, and the whole
+  repository was compared line by line with that project's history before
+  this change.
+- **FairPlay setup replies** (`components/ap2_core/src/fairplay/fairplay_tables.c`)
+  are fixed interop data from reverse engineering, not under the Apache
+  License; see [`components/ap2_core/NOTICE`](components/ap2_core/NOTICE).
 - **Fraunhofer FDK AAC** (`speaker/components/fdk_aac/fdk-aac`) is under the
   Fraunhofer FDK license, [`NOTICE`](speaker/components/fdk_aac/fdk-aac/NOTICE). The
   copy here is a **Third-Party Modified Version of the Fraunhofer FDK AAC
@@ -1009,25 +1024,6 @@ afterwards).
   allows redistribution in source and binary form without copyright fees but
   **grants no patent rights**: AAC patent licenses are available through Via
   Licensing or the patent owners.
-- **`ap2_core`** (`components/ap2_core`), the new AirPlay 2 protocol core, is
-  under the **Apache License 2.0**, Copyright 2026 Kristian Dimitrov:
-  [`LICENSE`](components/ap2_core/LICENSE), [`NOTICE`](components/ap2_core/NOTICE).
-  The FairPlay setup replies in it (`src/fairplay/fairplay_tables.c`) are
-  fixed interop data from reverse engineering, not under that license; see
-  its `NOTICE`.
-- **`log_stream`**, **`ota`**, **`wifi`**, **`helpers`**, **`led`**,
-  **`settings`** and **`web_server`** (`components/log_stream`,
-  `components/ota`, `components/wifi`, `components/helpers`,
-  `components/led`, `components/settings`, `components/web_server`) are
-  under the **Apache License 2.0**,
-  Copyright 2026 Kristian Dimitrov:
-  each folder has its `LICENSE` and `NOTICE`.
-- The **rest of this repository** is based on
-  [rbouteiller/airplay-esp32](https://github.com/rbouteiller/airplay-esp32)
-  and is under its **Non-Commercial License**, Copyright (c) 2026 Remi
-  Bouteiller, in [`LICENSE`](LICENSE): use, copying, changes and
-  distribution for non-commercial purposes only; commercial use needs
-  written permission from the copyright holder.
 - Other components (ESP-IDF, `esp_audio_codec`, libsodium, mDNS, cJSON,
   led_strip) come through the ESP-IDF component manager under their own
   licenses.

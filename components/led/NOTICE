@@ -1,7 +1,7 @@
-wifi
+led
 Copyright 2026 Kristian Dimitrov
 
 This component is part of esp32-airplay2-surround
 (https://github.com/Kristian8606/esp32-airplay2-surround) and is licensed
-under the Apache License, Version 2.0 (see LICENSE in this folder). The rest
-of that repository is under its own license.
+under the Apache License, Version 2.0 (see LICENSE in this folder), like the
+rest of that repository; see its README for the parts that are not.

@@ -11,8 +11,7 @@ the mDNS announcement. The behaviour of the last two is described in the
 repository's `docs/rtsp-spec.md` and `docs/mdns-airplay-spec.md`. Where its code comes from is recorded in
 [`PROVENANCE.md`](PROVENANCE.md).
 
-The rest of the repository is under a different license; see the
-repository's README.
+The repository's README lists the licenses of all its parts.
 
 ## Layout
 
