@@ -17,7 +17,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
-#include "network/socket_utils.h"
+#include "socket_utils.h"
 #include "network/ptp_clock.h"
 #include "airplay_log.h"
 

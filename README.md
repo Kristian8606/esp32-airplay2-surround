@@ -884,7 +884,8 @@ are listed in
 |---|---|---|
 | AirPlay receiver | `main/mdns_airplay.c` | mDNS; Gateway only (a speaker is not an AirPlay receiver) |
 | AirPlay 2 core | `components/ap2_core` | pairing, plists, audio decryption, the FairPlay setup replies and the RTSP server (`rtsp` in the log, Gateway only), under Apache-2.0 (the FairPlay tables excepted); both firmwares |
-| Shared services | `common/network` | web server core and captive DNS |
+| Shared services | `common/network` | web server core |
+| Helpers | `components/helpers` | session events, bound sockets, captive DNS (`dns_server` in the log), under Apache-2.0; both firmwares |
 | Wi-Fi | `components/wifi` | station on a saved network, setup access point, host name (`wifi` in the log), under Apache-2.0; both firmwares |
 | Live log, firmware update | `components/log_stream`, `components/ota` | the log on `/logs`; update from a `.bin` upload (`ota` in the log), under Apache-2.0; both firmwares |
 | Web pages | `main/web_gateway.c`, `speaker/main/web_speaker.c` | each firmware's own pages and APIs on top of the shared web server |
@@ -1013,8 +1014,9 @@ afterwards).
   The FairPlay setup replies in it (`src/fairplay/fairplay_tables.c`) are
   fixed interop data from reverse engineering, not under that license; see
   its `NOTICE`.
-- **`log_stream`**, **`ota`** and **`wifi`** (`components/log_stream`,
-  `components/ota`, `components/wifi`) are under the **Apache License 2.0**,
+- **`log_stream`**, **`ota`**, **`wifi`** and **`helpers`**
+  (`components/log_stream`, `components/ota`, `components/wifi`,
+  `components/helpers`) are under the **Apache License 2.0**,
   Copyright 2026 Kristian Dimitrov:
   each folder has its `LICENSE` and `NOTICE`.
 - The **rest of this repository** is based on

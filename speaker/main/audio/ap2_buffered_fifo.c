@@ -19,7 +19,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
-#include "network/socket_utils.h"
+#include "socket_utils.h"
 #include "airplay_log.h"
 
 /* Match Shairport Sync 5.x buffered_read.c: recv at most 4096 bytes, and once

@@ -12,10 +12,7 @@ set(AIRPLAY_COMMON_SRCS
     "${AIRPLAY_COMMON_DIR}/firmware_id.c"
     "${AIRPLAY_COMMON_DIR}/settings.c"
     "${AIRPLAY_COMMON_DIR}/led.c"
-    "${AIRPLAY_COMMON_DIR}/rtsp_events.c"
-    "${AIRPLAY_COMMON_DIR}/network/socket_utils.c"
     "${AIRPLAY_COMMON_DIR}/network/web_server.c"
-    "${AIRPLAY_COMMON_DIR}/network/dns_server.c"
     "${AIRPLAY_COMMON_DIR}/surround/tsf_fit.c"
     "${AIRPLAY_COMMON_DIR}/surround/sync_pulse.c"
     "${AIRPLAY_COMMON_DIR}/surround/cal_chirp.c"
@@ -48,6 +45,7 @@ set(AIRPLAY_COMMON_PRIV_REQUIRES
     log_stream
     ota
     wifi
+    helpers
 )
 
 # Embed web pages (data/www/<page>.html) into the OTA application image.
@@ -61,8 +59,8 @@ function(airplay_embed_web_pages)
     endforeach()
 endfunction()
 
-# The wifi component calls settings.c and dns_server.c, which are compiled
-# into this main component: give it their headers and link it with main.
+# The wifi component calls settings.c, which is compiled into this main
+# component: give it its header and link it with main.
 # Call after idf_component_register().
 function(airplay_link_wifi)
     idf_component_get_property(wifi_lib wifi COMPONENT_LIB)
@@ -72,7 +70,7 @@ function(airplay_link_wifi)
 endfunction()
 
 # The RTSP server in ap2_core calls the audio engine, settings, clock,
-# amplifier, events and identity, which are compiled into this main
+# amplifier and identity, which are compiled into this main
 # component: give it their headers and link it with main.
 # Call after idf_component_register().
 function(airplay_link_ap2_core)

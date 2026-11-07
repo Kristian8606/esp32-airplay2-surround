@@ -35,7 +35,7 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "network/ptp_clock.h"
-#include "network/socket_utils.h"
+#include "socket_utils.h"
 #include "latency_cal.h"
 #include "cal_playback.h"
 #include "cal_chirp.h"
