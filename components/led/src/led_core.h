@@ -6,8 +6,7 @@
 #pragma once
 
 /* The rules of the LED that need no ESP-IDF: the state, the colours and the
- * level meter. led.c wires them to FreeRTOS, esp_timer and led_strip; the
- * host tests wire them to fakes. */
+ * level meter. led.c wires them to FreeRTOS, esp_timer and led_strip. */
 
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -121,7 +120,7 @@ void led_core_feed(led_core_t *core, const int32_t *pcm, size_t stereo_frames);
  * is due, or LED_CORE_WAIT_FOREVER. */
 int64_t led_core_step(led_core_t *core, led_color_t *out, bool *changed);
 
-/* Pure helpers, also used by the tests. */
+/* Pure helpers. */
 led_color_t led_core_steady(uint8_t base_r, uint8_t base_g, uint8_t base_b,
                             uint8_t brightness);
 led_color_t led_core_state_color(const led_core_config_t *cfg,

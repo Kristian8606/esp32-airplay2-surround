@@ -110,7 +110,7 @@ static void button_worker(void *arg) {
       else
         AP_LOGW(TAG, "%s GPIO=%d not queued: %s", b->name, b->gpio,
                  err == ESP_ERR_NOT_FOUND ? "no AirPlay event connection" :
-                 err == ESP_ERR_INVALID_STATE ? "command already pending" : esp_err_to_name(err));
+                 err == ESP_ERR_INVALID_STATE ? "too many commands waiting" : esp_err_to_name(err));
     }
   }
 }

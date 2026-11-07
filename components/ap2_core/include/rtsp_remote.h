@@ -27,7 +27,7 @@ typedef struct {
 } rtsp_remote_status_t;
 
 /* Queues one command. ESP_ERR_NOT_FOUND: no encrypted event connection;
- * ESP_ERR_INVALID_STATE: the previous command has no result yet;
+ * ESP_ERR_INVALID_STATE: the previous command is not sent yet;
  * ESP_ERR_INVALID_ARG: number over 7. *id gets the command's id. */
 esp_err_t rtsp_remote_enqueue(uint8_t command, uint32_t *id);
 void rtsp_remote_get_status(rtsp_remote_status_t *status);

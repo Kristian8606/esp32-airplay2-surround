@@ -3,22 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/* Bound IPv4 sockets. Uses only the BSD socket calls that lwIP provides, so
- * the same file builds on a computer for the host tests. */
+/* Bound IPv4 sockets, with the BSD socket calls of lwIP. */
 
 #include "socket_utils.h"
 
 #include <string.h>
 
-#if defined(ESP_PLATFORM)
 #include "lwip/sockets.h"
-#else
-#include <fcntl.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <sys/time.h>
-#include <unistd.h>
-#endif
 
 /* Binds sock to INADDR_ANY:port and reads back the port bound. */
 static int bind_any(int sock, uint16_t port, uint16_t *actual) {

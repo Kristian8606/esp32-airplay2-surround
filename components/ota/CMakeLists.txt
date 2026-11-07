@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ota: firmware update from the web page. Host tests: make -C tests
+# ota: firmware update from the web page.
 idf_component_register(SRCS "src/ota.c" "src/ota_image.c"
                        INCLUDE_DIRS "include"
                        PRIV_INCLUDE_DIRS "src"

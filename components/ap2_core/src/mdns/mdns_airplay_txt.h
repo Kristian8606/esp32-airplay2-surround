@@ -2,7 +2,7 @@
 #pragma once
 
 /* The part of mdns_airplay that needs no ESP-IDF: instance names and TXT
- * values. Host tests run it on a computer. */
+ * values. */
 
 #include <stddef.h>
 #include <stdint.h>

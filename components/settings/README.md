@@ -12,6 +12,5 @@ so an update keeps what a board has saved, and a rollback still reads it.
 - `src/settings_core.c`: the network list layout, the default name and the
   volume rounding, without ESP-IDF
 - `src/settings.c`: NVS, the MAC and the lock
-- `tests/`: host tests against a fake NVS (`make -C tests`)
 
 Behaviour: [`docs/settings-spec.md`](../../docs/settings-spec.md).

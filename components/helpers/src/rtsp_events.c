@@ -3,8 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/* Listener list for session events. The only platform part is the lock, so
- * the same file builds on ESP-IDF and on a computer for the host tests. */
+/* Listener list for session events. */
 
 #include "rtsp_events.h"
 
@@ -12,20 +11,12 @@
 
 #define RTSP_EVENTS_MAX_LISTENERS 8
 
-#if defined(ESP_PLATFORM)
 #include "freertos/FreeRTOS.h"
 
 /* A spinlock works across both cores and is held only to copy the list. */
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 #define LIST_LOCK() taskENTER_CRITICAL(&s_lock)
 #define LIST_UNLOCK() taskEXIT_CRITICAL(&s_lock)
-#else
-#include <pthread.h>
-
-static pthread_mutex_t s_lock = PTHREAD_MUTEX_INITIALIZER;
-#define LIST_LOCK() pthread_mutex_lock(&s_lock)
-#define LIST_UNLOCK() pthread_mutex_unlock(&s_lock)
-#endif
 
 typedef struct {
   rtsp_event_callback_t callback;

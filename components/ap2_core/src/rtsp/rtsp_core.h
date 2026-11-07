@@ -57,5 +57,3 @@ void rtsp_evconn_free(rtsp_evconn_t *ev);
 /* The remote command timeout. */
 #define RTSP_REMOTE_TIMEOUT_MS 3000U
 
-/* Tests only: forget all state, also the command ids. */
-void rtsp_core_test_reset(void);

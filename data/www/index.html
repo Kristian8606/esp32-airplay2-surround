@@ -7,7 +7,7 @@
 <div class='header'><h1 id='page-title'>AirPlay Surround</h1><p>Configuration & Diagnostics</p></div>
 <div id='net-banner' class='net-banner'>Loading...</div>
 <div class='card' id='gw-card' style='display:none'><h2>Surround Speakers</h2><p style='color:#888;font-size:13px;margin-bottom:12px'>Role, level and delay of each speaker that follows this Gateway.</p><a href='/speakers' class='btn btn-primary'>Open Speakers</a></div>
-<div class='card gateway-only' style='display:none'><h2>Playback</h2><div style='display:flex;gap:8px;flex-wrap:wrap'><button class='btn btn-secondary remote-btn' onclick="sendRemote('previous')">Previous</button><button class='btn btn-primary remote-btn' onclick="sendRemote('toggle')">Play/Pause</button><button class='btn btn-secondary remote-btn' onclick="sendRemote('next')">Next</button><button class='btn btn-secondary remote-btn' onclick="sendRemote('volume_down')">Volume −</button><button class='btn btn-secondary remote-btn' onclick="sendRemote('volume_up')">Volume +</button></div><p id='remote-status' style='color:#999;font-size:13px;margin-top:12px'>Start AirPlay from your phone.</p></div>
+<div class='card gateway-only' style='display:none'><h2>Playback</h2><div style='display:flex;gap:8px;flex-wrap:wrap'><button class='btn btn-secondary remote-btn' onclick="sendRemote('previous')">Previous</button><button class='btn btn-primary remote-btn' onclick="sendRemote('toggle')">Play/Pause</button><button class='btn btn-secondary remote-btn' onclick="sendRemote('next')">Next</button><button class='btn btn-secondary remote-btn' onclick="sendRemote('volume_down')">Volume −</button><button class='btn btn-secondary remote-btn' onclick="sendRemote('volume_up')">Volume +</button></div><p id='remote-status' style='color:#999;font-size:13px;margin-top:12px'>Start AirPlay to use these buttons.</p></div>
 <div class='card'><h2>WiFi Network</h2><button class='btn btn-secondary' onclick='scanWiFi()'>Scan Networks</button><div id='wifi-list' class='wifi-list'></div><div class='form-group'><label>Network Name (SSID)</label><input type='text' id='wifi-ssid' placeholder='Enter or select network'></div><div class='form-group'><label>Password</label><input type='password' id='wifi-pass' placeholder='Enter password'></div><button class='btn btn-primary btn-block' onclick='saveWiFi()'>Connect to WiFi</button><div id='wifi-msg'></div></div>
 <div class='card'><h2>Device Settings</h2><div class='form-group'><label id='name-label'>Name</label><input type='text' id='dev-name' placeholder='ESP32 AirPlay'></div><button class='btn btn-primary' onclick='saveName()'>Save Name</button><div id='name-msg'></div></div>
 <div class='card' id='sur-card' style='display:none'><h2>Surround Speaker</h2><p style='color:#888;font-size:13px'>This speaker follows the Surround Gateway; it is not an AirPlay receiver of its own. Its role, level and delay are set on the Gateway's Speakers page, its EQ here.</p></div>
@@ -19,33 +19,15 @@
 <div class='card'><h2>WiFi Speedtest</h2><p style='color:#888;font-size:13px;margin-bottom:12px'>Measure latency and throughput to this device</p><a href='/speedtest' class='btn btn-primary'>Open Speedtest</a></div>
 </div><script>
 function msg(id,txt,type){const box=document.getElementById(id);if(!box)return;const note=document.createElement('div');note.className='msg '+type;note.innerHTML=txt;box.replaceChildren(note);setTimeout(()=>{if(note.parentNode===box)box.replaceChildren();},4000);}
-let remoteSending=false;
 function remoteText(text){document.getElementById('remote-status').textContent=text;}
-function remoteButtons(disabled){document.querySelectorAll('.remote-btn').forEach(b=>b.disabled=disabled);}
 async function sendRemote(command){
- if(remoteSending)return;
- remoteSending=true;remoteButtons(true);remoteText('Sending...');
- const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),7000);
+ /* The Gateway queues commands and the sender does not reply: send and go on. */
+ remoteText('Sending...');
  try{
-  const response=await fetch('/api/audio/remote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:command}),signal:controller.signal});
+  const response=await fetch('/api/audio/remote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:command})});
   if(!response.ok)throw new Error(await response.text());
-  const queued=await response.json();remoteText('Waiting for the phone...');
-  const deadline=Date.now()+5000;
-  while(Date.now()<deadline){
-   await new Promise(resolve=>setTimeout(resolve,250));
-   const reply=await fetch('/api/audio/remote',{cache:'no-store',signal:controller.signal});
-   if(!reply.ok)throw new Error('Cannot read command status');
-   const state=await reply.json();
-   if(state.id!==queued.id)throw new Error('Another command replaced this status. Check the log.');
-   if(state.result==='queued'||state.result==='sent')continue;
-   if(state.result==='acknowledged'){remoteText('Phone acknowledged the command.');return;}
-   if(state.result==='rejected')throw new Error('Phone rejected the command (RTSP '+state.rtsp_status+').');
-   if(state.result==='timeout')throw new Error('No reply from the phone.');
-   throw new Error('Command '+state.result+'. Check the log.');
-  }
-  throw new Error('No confirmation. Check the log before trying again.');
- }catch(error){remoteText(error.name==='AbortError'?'No confirmation. Check the log before trying again.':error.message);}
- finally{clearTimeout(timeout);remoteSending=false;remoteButtons(false);}
+  remoteText('Command sent.');
+ }catch(error){remoteText(error.message);}
 }
 async function scanWiFi(){var l=document.getElementById('wifi-list');l.innerHTML='<div class="msg info">Scanning...</div>';try{var r=await fetch('/api/wifi/scan');var d=await r.json();if(d.success&&d.networks.length){l.innerHTML='';d.networks.forEach(function(n){var i=document.createElement('div');i.className='wifi-item';i.innerHTML='<span class="ssid">'+n.ssid+'</span><span class="rssi">'+n.rssi+' dBm</span>';i.onclick=function(){document.querySelectorAll('.wifi-item').forEach(x=>x.classList.remove('sel'));i.classList.add('sel');document.getElementById('wifi-ssid').value=n.ssid;};l.appendChild(i);});}else l.innerHTML='<div class="msg info">No networks found</div>';}catch(e){l.innerHTML='<div class="msg err">Scan failed</div>';}}
 async function saveWiFi(){var s=document.getElementById('wifi-ssid').value.trim(),p=document.getElementById('wifi-pass').value;if(!s){msg('wifi-msg','Enter network name','err');return;}try{var r=await fetch('/api/wifi/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid:s,password:p})});var d=await r.json();if(d.success)msg('wifi-msg','Saved! Restarting...','ok');else msg('wifi-msg',d.error,'err');}catch(e){msg('wifi-msg','Error','err');}}

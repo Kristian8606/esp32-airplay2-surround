@@ -1,5 +1,0 @@
-test_core
-test_core_asan
-test_esp
-test_esp_asan
-*.dSYM

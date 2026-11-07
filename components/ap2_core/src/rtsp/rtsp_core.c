@@ -1062,7 +1062,3 @@ void rtsp_conn_end(rtsp_conn_t *c) {
   rtsp_port_free(c);
 }
 
-void rtsp_core_test_reset(void) {
-  memset(&s, 0, sizeof(s));
-  rtsp_remote_test_reset();
-}

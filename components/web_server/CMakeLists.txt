@@ -2,7 +2,7 @@
 # web_server: the shared web server of both firmwares. It calls web_role_*(),
 # firmware_id(), the audio engine and the embedded pages of the firmware's
 # main component, linked with airplay_link_web_server() in
-# common/common.cmake. Host tests: cmake -S tests -B build-tests
+# common/common.cmake.
 idf_component_register(SRCS "src/web_server.c" "src/web_helpers.c"
                             "src/web_rules.c"
                        INCLUDE_DIRS "include"

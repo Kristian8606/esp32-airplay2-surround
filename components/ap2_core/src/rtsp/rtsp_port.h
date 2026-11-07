@@ -7,9 +7,8 @@
 
 #include "esp_err.h"
 
-/* What the request rules (rtsp_core.c) need from the platform. On the
- * Gateway rtsp_server.c implements these with FreeRTOS and lwIP; the host
- * tests give fakes. */
+/* What the request rules (rtsp_core.c) need from the platform:
+ * rtsp_server.c implements these with FreeRTOS and lwIP. */
 
 typedef struct rtsp_conn rtsp_conn_t;
 

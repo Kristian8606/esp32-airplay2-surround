@@ -4,7 +4,7 @@
 
 /* The rules of the web server that need no ESP-IDF: the JSON answers, the
  * Basic auth check, the download sizes, the reset reason and PHY names.
- * Host tests run them directly. See spec/spec.md. */
+ * See spec/spec.md. */
 
 #include <stdbool.h>
 #include <stddef.h>

@@ -4,7 +4,7 @@
 
 /* The rules of the settings that need no ESP-IDF: the layout of the network
  * list blob and its changes, the default device name, UTF-8 cutting and the
- * volume rounding. Host tests run them directly. */
+ * volume rounding. */
 
 #include <stdbool.h>
 #include <stddef.h>

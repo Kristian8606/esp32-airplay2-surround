@@ -9,7 +9,6 @@ the audio it sends to I2S. An ESP-IDF component under the **Apache License
   the audio output
 - `src/led_core.c`: states, colours and the level meter, without ESP-IDF
 - `src/led.c`: the task, the events and the `led_strip` driver
-- `tests/`: host tests (`cmake -S tests -B build-tests && cmake --build build-tests && ctest --test-dir build-tests`)
 
 The options are in menuconfig, "RGB Audio/VU LED" (`airplay_options`).
 Behaviour: [`docs/led-spec.md`](../../docs/led-spec.md).

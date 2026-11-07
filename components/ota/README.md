@@ -8,7 +8,6 @@ the `.bin` as the raw request body). An ESP-IDF component under the
 - `src/ota_image.c`: checks of the image start and the progress steps,
   without ESP-IDF
 - `src/ota.c`: reading the body, writing and validating the image
-- `tests/`: host tests (`make -C tests`)
 
 ## The caller
 
@@ -56,14 +55,13 @@ or the reason, `ESP_LOGE`). At most 4 KiB internal RAM, no task of its own.
 
 ## Examples
 
-`tests/examples/` has the first 512 bytes of the v4.5.49 images
-(`gateway_head.bin`, whole image 1328736 bytes; `speaker_head.bin`, 1796816
-bytes) and a text file (`not_firmware.bin`).
+With the v4.5.49 images (Gateway, 1328736 bytes; speaker, 1796816 bytes)
+and a text file:
 
 1. Gateway, Gateway image: accepted.
 2. Gateway, speaker image: `ESP_ERR_NOT_SUPPORTED`, flash untouched.
 3. Speaker, Gateway image: `ESP_ERR_NOT_SUPPORTED`.
-4. `not_firmware.bin`: `ESP_ERR_IMAGE_INVALID`.
+4. The text file: `ESP_ERR_IMAGE_INVALID`.
 5. Chip id changed to 0 (ESP32): `ESP_ERR_IMAGE_INVALID`.
 6. Length 0x300001: `ESP_ERR_INVALID_SIZE`, before reading the body.
 7. Length 100: `ESP_ERR_INVALID_SIZE`.
@@ -75,19 +73,3 @@ bytes) and a text file (`not_firmware.bin`).
     goes on.
 13. An earlier update set the other partition to boot next, then a new upload
     breaks off half way: the board boots the running firmware.
-
-## Host tests
-
-```bash
-make -C tests
-```
-
-`make -C tests guard` runs them again under macOS Guard Malloc. Where
-AddressSanitizer works: `make -C tests SAN='-fsanitize=address,undefined'`.
-
-- `test_ota_image.c`: `src/ota_image.c` alone; the examples, every byte of
-  the first 288 bytes of both images changed to every other value, every
-  short length.
-- `test_ota_http.c`: `src/ota.c` against `tests/fake_idf/`, host stand-ins
-  for the ESP-IDF calls: examples 1–13, closed connections, read errors,
-  timeouts, failing flash and OTA calls, memory and log limits.

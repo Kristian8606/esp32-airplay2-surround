@@ -4,11 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
-#if defined(ESP_PLATFORM)
 #include "lwip/sockets.h"
-#endif
 #include "sdkconfig.h"
-#if defined(ESP_PLATFORM) && defined(CONFIG_AIRPLAY_DIAG_AUTOMIX) && CONFIG_AIRPLAY_DIAG_AUTOMIX
+#if defined(CONFIG_AIRPLAY_DIAG_AUTOMIX) && CONFIG_AIRPLAY_DIAG_AUTOMIX
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #endif
@@ -100,7 +98,7 @@ static void fifo_discard_all(ap2_buffered_fifo_t *fifo) {
   signal_all(fifo);
 }
 
-#if defined(ESP_PLATFORM) && defined(CONFIG_AIRPLAY_DIAG_AUTOMIX) && CONFIG_AIRPLAY_DIAG_AUTOMIX
+#if defined(CONFIG_AIRPLAY_DIAG_AUTOMIX) && CONFIG_AIRPLAY_DIAG_AUTOMIX
 /* True when another TCP connection is waiting on the listener (the sender
  * opened a new data connection while this one is still attached). */
 static bool listener_has_pending(int listen_sock) {
@@ -163,7 +161,7 @@ static void tcp_reader_task(void *arg) {
     AP_LOGI(TAG, "buffered TCP connected fifo=%uKiB",
              (unsigned)(fifo->capacity / 1024U));
     signal_all(fifo);
-#if defined(ESP_PLATFORM) && defined(CONFIG_AIRPLAY_DIAG_AUTOMIX) && CONFIG_AIRPLAY_DIAG_AUTOMIX
+#if defined(CONFIG_AIRPLAY_DIAG_AUTOMIX) && CONFIG_AIRPLAY_DIAG_AUTOMIX
     /* recv wakes at least once a second so a stalled sender is noticed. */
     const struct timeval rx_tv = {.tv_sec = 1, .tv_usec = 0};
     (void)setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, &rx_tv, sizeof(rx_tv));
@@ -194,7 +192,7 @@ static void tcp_reader_task(void *arg) {
       const ssize_t n = recv(c, fifo->buffer + write_pos, request, 0);
       if (n <= 0) {
         if (n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) {
-#if defined(ESP_PLATFORM) && defined(CONFIG_AIRPLAY_DIAG_AUTOMIX) && CONFIG_AIRPLAY_DIAG_AUTOMIX
+#if defined(CONFIG_AIRPLAY_DIAG_AUTOMIX) && CONFIG_AIRPLAY_DIAG_AUTOMIX
           const int64_t silent_ms = (esp_timer_get_time() - last_rx_us) / 1000LL;
           if (!stall_logged && silent_ms >= (int64_t)FIFO_STALL_LOG_MS) {
             stall_logged = true;
@@ -211,7 +209,7 @@ static void tcp_reader_task(void *arg) {
                    n == 0 ? "orderly close" : "receive error", n == 0 ? 0 : errno);
         break;
       }
-#if defined(ESP_PLATFORM) && defined(CONFIG_AIRPLAY_DIAG_AUTOMIX) && CONFIG_AIRPLAY_DIAG_AUTOMIX
+#if defined(CONFIG_AIRPLAY_DIAG_AUTOMIX) && CONFIG_AIRPLAY_DIAG_AUTOMIX
       {
         const int64_t now_us = esp_timer_get_time();
         if (stall_logged) {

@@ -18,11 +18,7 @@
 
 #include "audio_out_sample.h"
 
-#if defined(ESP_PLATFORM)
 #include "esp_attr.h" /* IRAM_ATTR: the ring tracker runs in the TX ISR */
-#elif !defined(IRAM_ATTR)
-#define IRAM_ATTR /* host test */
-#endif
 
 static inline float audio_fade_smoothstep(float t) {
   return t * t * (3.0f - 2.0f * t);

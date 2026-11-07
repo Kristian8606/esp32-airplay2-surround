@@ -18,5 +18,3 @@ void rtsp_remote_detach(void);
 /* The connection's event port closed: an event connection that came in on
  * it is done (its next poll returns -1). */
 void rtsp_remote_conn_gone(const rtsp_conn_t *conn);
-/* Tests only. */
-void rtsp_remote_test_reset(void);

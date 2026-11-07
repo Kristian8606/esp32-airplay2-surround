@@ -6,7 +6,7 @@
 #pragma once
 
 /* The captive DNS message rules, without any ESP-IDF part. Private to the
- * component; the host tests include it directly. See spec/spec.md,
+ * component. See spec/spec.md,
  * "Which queries get a reply" and "The reply". */
 
 #include <stddef.h>

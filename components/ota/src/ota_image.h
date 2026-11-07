@@ -1,8 +1,7 @@
 /*
  * SPDX-License-Identifier: Apache-2.0
  *
- * Checks of the start of an uploaded firmware image. No ESP-IDF headers:
- * this part builds and runs on a computer (see tests/).
+ * Checks of the start of an uploaded firmware image. No ESP-IDF headers.
  */
 #pragma once
 

@@ -4,7 +4,7 @@
 #pragma once
 
 /* The saved networks, read once at start (README.md: "Stack of the event loop
- * task"). Only ESP-IDF's log and settings.h: the host tests run it. */
+ * task"). Only ESP-IDF's log and settings.h. */
 
 #include <stddef.h>
 

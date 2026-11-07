@@ -5,7 +5,7 @@
 
 /* The parts of the Wi-Fi module that do not need ESP-IDF: host names, text
  * forms, choosing a network, the retry times and the scan list of the setup
- * page. They build and run on a computer (tests/). */
+ * page. */
 
 #include <stdbool.h>
 #include <stddef.h>

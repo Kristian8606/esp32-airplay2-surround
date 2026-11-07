@@ -452,29 +452,3 @@ esp_err_t log_stream_register(httpd_handle_t server)
     ESP_LOGI(TAG, "Log streaming on %s", LS_URI);
     return ESP_OK;
 }
-
-#ifdef LS_HOST_TEST
-/* For tests on a computer with a fake web server (tests/esp_fake.c). */
-void log_stream_host_step(void)
-{
-    sender_step();
-}
-
-void log_stream_host_reset(void)
-{
-    heap_caps_free(s_ring.buf);
-    heap_caps_free(s_slots);
-    heap_caps_free(s_raw);
-    memset(&s_ring, 0, sizeof(s_ring));
-    memset(s_clients, 0, sizeof(s_clients));
-    s_slots = NULL;
-    s_slot_busy = 0;
-    s_prev = NULL;
-    s_capturing = false;
-    s_server = NULL;
-    s_task = NULL;
-    s_send_task = NULL;
-    s_rr = 0;
-    s_raw = s_frame = s_drain = NULL;
-}
-#endif

@@ -19,6 +19,8 @@
 #define EVENT_BODY_MAX 4096
 #define COMMAND_BODY_MAX 256
 #define COMMAND_HEAD_MAX 192
+/* Commands queued and not sent yet (spec "Event channel"). */
+#define QUEUE_MAX 8
 
 struct rtsp_evconn {
   const rtsp_conn_t *conn;    /* whose event port; NULL once done */
@@ -34,9 +36,13 @@ struct rtsp_evconn {
 static struct {
   rtsp_evconn_t *live; /* every event connection not yet freed */
   uint32_t last_id;
-  rtsp_remote_status_t status;
+  struct {
+    uint32_t id;
+    uint8_t command;
+  } queue[QUEUE_MAX];  /* oldest first from head */
+  unsigned head, count;
+  rtsp_remote_status_t status; /* the last command queued */
   uint32_t sent_ms;
-  double fraction; /* the volume a volume command sent */
 } r;
 
 /* Commands go only to the session holder's event connection (spec "Event
@@ -55,7 +61,9 @@ static bool pending(void) {
          r.status.result == RTSP_REMOTE_SENT;
 }
 
+/* Unsent commands are dropped with the event connection or the session. */
 static void end_pending_disconnected(void) {
+  r.count = 0;
   if (pending()) {
     r.status.result = RTSP_REMOTE_DISCONNECTED;
     RTSP_LOGW("remote command %" PRIu32 ": disconnected", r.status.id);
@@ -69,12 +77,16 @@ esp_err_t rtsp_remote_enqueue(uint8_t command, uint32_t *id) {
     rtsp_port_unlock();
     return ESP_ERR_NOT_FOUND;
   }
-  if (pending()) {
+  /* Senders do not reply, so only a full queue holds a command back. */
+  if (r.count == QUEUE_MAX) {
     rtsp_port_unlock();
     return ESP_ERR_INVALID_STATE;
   }
   r.last_id++;
   if (r.last_id == 0) r.last_id = 1;
+  r.queue[(r.head + r.count) % QUEUE_MAX].id = r.last_id;
+  r.queue[(r.head + r.count) % QUEUE_MAX].command = command;
+  r.count++;
   r.status.id = r.last_id;
   r.status.command = command;
   r.status.result = RTSP_REMOTE_QUEUED;
@@ -117,7 +129,6 @@ void rtsp_remote_conn_gone(const rtsp_conn_t *conn) {
   }
 }
 
-void rtsp_remote_test_reset(void) { memset(&r, 0, sizeof(r)); }
 
 rtsp_evconn_t *rtsp_evconn_new(const rtsp_conn_t *conn,
                                const uint8_t write_key[32],
@@ -201,51 +212,66 @@ int rtsp_evconn_poll(rtsp_evconn_t *ev, uint32_t now_ms, rtsp_send_fn send,
     /* The event connection stays open for the next command; a late reply
      * no longer matches (spec "Event channel"). */
     r.status.result = RTSP_REMOTE_TIMEOUT;
-    RTSP_LOGW("remote command %" PRIu32 ": no reply, timeout", r.status.id);
-    rtsp_port_unlock();
-    return 0;
+    RTSP_LOGI("remote command %" PRIu32 ": no reply, timeout", r.status.id);
   }
-  if (r.status.result != RTSP_REMOTE_QUEUED) {
-    rtsp_port_unlock();
-    return 0;
-  }
-
-  id = r.status.id;
-  if (r.status.command >= RTSP_REMOTE_VOLUME_DOWN) {
-    r.fraction = rtsp_volume_step(rtsp_core_current_volume(),
-                                  r.status.command == RTSP_REMOTE_VOLUME_UP);
-    body_len = ap2_event_volume(ev->body, sizeof(ev->body), r.fraction);
-  } else {
-    body_len = ap2_event_command(ev->body, sizeof(ev->body), r.status.command);
-  }
-  w = snprintf(ev->head, sizeof(ev->head),
-               "POST /command RTSP/1.0\r\nCSeq: %" PRIu32
-               "\r\nContent-Type: application/x-apple-binary-plist\r\n"
-               "Content-Length: %zu\r\n\r\n",
-               id, body_len);
-  if (body_len == 0 || w < 0 || (size_t)w >= sizeof(ev->head)) {
-    r.status.result = RTSP_REMOTE_FAILED;
-    RTSP_LOGW("remote command %" PRIu32 ": body not written", id);
-    rtsp_port_unlock();
-    return 0;
-  }
-  head_len = (size_t)w;
-  r.status.result = RTSP_REMOTE_SENT;
-  r.sent_ms = now_ms;
   rtsp_port_unlock();
 
-  if (send_sealed(ev, (const uint8_t *)ev->head, head_len, ev->body, body_len,
-                  send, ctx) != 0) {
+  /* Every queued command in order, each its own message. */
+  for (;;) {
+    uint8_t command;
     rtsp_port_lock();
-    if (r.status.id == id && r.status.result == RTSP_REMOTE_SENT) {
-      r.status.result = RTSP_REMOTE_FAILED;
+    if (r.count == 0 || ev != target()) {
+      rtsp_port_unlock();
+      return 0;
+    }
+    id = r.queue[r.head].id;
+    command = r.queue[r.head].command;
+    r.head = (r.head + 1) % QUEUE_MAX;
+    r.count--;
+    double fraction = 0.0;
+    if (command >= RTSP_REMOTE_VOLUME_DOWN) {
+      fraction = rtsp_volume_step(rtsp_core_current_volume(),
+                                  command == RTSP_REMOTE_VOLUME_UP);
+      body_len = ap2_event_volume(ev->body, sizeof(ev->body), fraction);
+    } else {
+      body_len = ap2_event_command(ev->body, sizeof(ev->body), command);
+    }
+    w = snprintf(ev->head, sizeof(ev->head),
+                 "POST /command RTSP/1.0\r\nCSeq: %" PRIu32
+                 "\r\nContent-Type: application/x-apple-binary-plist\r\n"
+                 "Content-Length: %zu\r\n\r\n",
+                 id, body_len);
+    if (body_len == 0 || w < 0 || (size_t)w >= sizeof(ev->head)) {
+      if (r.status.id == id) r.status.result = RTSP_REMOTE_FAILED;
+      RTSP_LOGW("remote command %" PRIu32 ": body not written", id);
+      rtsp_port_unlock();
+      continue;
+    }
+    head_len = (size_t)w;
+    if (r.status.id == id) {
+      r.status.result = RTSP_REMOTE_SENT;
+      r.sent_ms = now_ms;
     }
     rtsp_port_unlock();
-    RTSP_LOGW("remote command %" PRIu32 ": send failed", id);
-    return -1;
+
+    if (send_sealed(ev, (const uint8_t *)ev->head, head_len, ev->body, body_len,
+                    send, ctx) != 0) {
+      rtsp_port_lock();
+      if (pending()) r.status.result = RTSP_REMOTE_FAILED;
+      r.count = 0;
+      rtsp_port_unlock();
+      RTSP_LOGW("remote command %" PRIu32 ": send failed", id);
+      return -1;
+    }
+    RTSP_LOGI("remote command %" PRIu32 " sent", id);
+    if (command >= RTSP_REMOTE_VOLUME_DOWN) {
+      /* The sender shows the new volume but sends no SET_PARAMETER for it:
+       * the Gateway sets it itself (spec "Event channel"). */
+      rtsp_port_lock();
+      rtsp_core_remote_volume(rtsp_fraction_to_volume(fraction));
+      rtsp_port_unlock();
+    }
   }
-  RTSP_LOGI("remote command %" PRIu32 " sent", id);
-  return 0;
 }
 
 /* "RTSP/1.0 200 OK" with a CSeq: the result of the command. Requests from
@@ -278,9 +304,6 @@ static void take_message(rtsp_evconn_t *ev, const rtsp_msg_t *m) {
     r.status.response_code = code;
     if (code == 200) {
       r.status.result = RTSP_REMOTE_ACKNOWLEDGED;
-      if (r.status.command >= RTSP_REMOTE_VOLUME_DOWN) {
-        rtsp_core_remote_volume(rtsp_fraction_to_volume(r.fraction));
-      }
     } else {
       r.status.result = RTSP_REMOTE_REJECTED;
     }

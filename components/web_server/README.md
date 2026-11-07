@@ -13,6 +13,5 @@ point. Each firmware adds its own pages and APIs through
 - `src/web_rules.c`: JSON answers, the Basic auth check, download sizes,
   reset reason and PHY names, without ESP-IDF
 - `src/web_server.c`, `src/web_helpers.c`: the handlers and the helpers
-- `tests/`: host tests (`cmake -S tests -B build-tests && cmake --build build-tests && ctest --test-dir build-tests`)
 
 Behaviour: [`docs/web-server-spec.md`](../../docs/web-server-spec.md).

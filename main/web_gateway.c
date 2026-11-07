@@ -194,7 +194,7 @@ static esp_err_t remote_post_handler(httpd_req_t *req) {
     httpd_resp_set_status(req, err == ESP_ERR_INVALID_STATE ? "409 Conflict" : "503 Service Unavailable");
     httpd_resp_set_type(req, "text/plain");
     return httpd_resp_sendstr(req, err == ESP_ERR_INVALID_STATE ?
-        "A command is already pending" : "No AirPlay event connection. Start AirPlay from your phone.");
+        "Too many commands waiting" : "No AirPlay session. Start AirPlay first.");
   }
   cJSON_AddNumberToObject(root, "id", id);
   cJSON_AddStringToObject(root, "result", "queued");

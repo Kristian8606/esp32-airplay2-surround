@@ -4,40 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Property lists in AirPlay 2: an XML writer for the HTTP /info reply, a
- * reader for the binary plists a sender sends, and the binary plists this
- * accessory sends. */
-
-/* ---- XML writer ---- */
-
-/* Writes into a caller's buffer. The fields are private. */
-typedef struct {
-  char *buffer;
-  size_t size;
-  size_t capacity;
-} ap2_xml_t;
-
-void ap2_xml_init(ap2_xml_t *xml, char *buffer, size_t capacity);
-/* The XML header and the opening <plist>. */
-void ap2_xml_begin(ap2_xml_t *xml);
-void ap2_xml_dict_begin(ap2_xml_t *xml);
-/* Keys and values of the open dictionary. */
-void ap2_xml_string(ap2_xml_t *xml, const char *key, const char *value);
-void ap2_xml_int(ap2_xml_t *xml, const char *key, int64_t value);
-void ap2_xml_uint(ap2_xml_t *xml, const char *key, uint64_t value);
-void ap2_xml_data(ap2_xml_t *xml, const char *key, const uint8_t *data,
-                  size_t len);
-void ap2_xml_dict_end(ap2_xml_t *xml);
-/* An array under a key of the open dictionary; close with
- * ap2_xml_array_end. */
-void ap2_xml_array_begin(ap2_xml_t *xml, const char *key);
-void ap2_xml_array_end(ap2_xml_t *xml);
-/* A dictionary under a key of the open dictionary; close with
- * ap2_xml_dict_end. */
-void ap2_xml_child_dict_begin(ap2_xml_t *xml, const char *key);
-/* Closes the document and returns its length. The text always ends with a
- * NUL; what did not fit is left out. */
-size_t ap2_xml_end(ap2_xml_t *xml);
+/* Property lists in AirPlay 2: a reader for the binary plists a sender
+ * sends, and the binary plists this accessory sends. */
 
 /* ---- Binary plist reader ----
  *

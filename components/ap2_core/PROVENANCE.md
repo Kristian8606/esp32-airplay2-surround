@@ -33,14 +33,12 @@ the TXT keys with their identity macros).
 
 ## Tests
 
-The host tests in `tests/` run the pairing and plist code on a computer
+During development the code was run on a computer: pairing and plists
 against independent Python clients and parsers, with malformed input under
-the sanitizers; `tests/fairplay_host` checks the FairPlay replies against
-the published tables; `tests/core_host` in the repository does the same for audio
-decryption. `tests/rtsp_host` runs the RTSP server's request rules, framing
-and remote commands against fakes of the firmware (4534 checks).
-`tests/mdns_host` checks the mDNS calls, names and TXT records against
-fakes, with cut and invalid names (198 checks).
+the sanitizers; the FairPlay replies against the published tables; the RTSP
+server's request rules, framing and remote commands against fakes of the
+firmware; the mDNS calls, names and TXT records against fakes. These host
+tests are not part of the repository.
 
 On the boards (2026-11-04), with an Apple TV and an iPhone: pairing, 7.1 and
 stereo, pause, skip and volume, every RTSP reply 200 OK.

@@ -11,7 +11,6 @@ ESP-IDF component under the **Apache License 2.0** ([`LICENSE`](LICENSE),
 - `src/wifi_ctl.c`: the station and access point rules as a state machine;
   without ESP-IDF
 - `src/wifi.c`: netifs, events, timers, scans
-- `tests/`: host tests of the first two (`make -C tests`)
 
 The saved networks and the device name come from `components/settings`,
 the captive DNS (`dns_server.h`) from `components/helpers`.
@@ -82,9 +81,7 @@ records are in PSRAM). The deepest chain, on the Xtensa build of v4.5.52
 with `-fstack-usage`: `on_event` 128 B, `wl_ctl_on_scan_done` 64,
 `wl_choose` 64, `attempt` 48, `fail` 48, `ap_check` 48, `ap_on` 32,
 `op_connect` 112: about 544 B of module frames, without ESP-IDF's (logging,
-Wi-Fi calls). `make -C tests stack` checks the same on the host compiler:
-no recursion, chains under 1 KiB, frames under 256 B, no `settings_*` or
-`nvs_*` calls from that code.
+Wi-Fi calls).
 
 ## Examples
 
@@ -106,12 +103,3 @@ no recursion, chains under 1 KiB, frames under 256 B, no `settings_*` or
 11. Associated, no DHCP address: disconnect after 20 s, one failure.
 12. A phone on the access point while the network is away: full choices
     every 60 s.
-
-## Host tests
-
-```bash
-make -C tests
-```
-
-`make -C tests guard` runs them again under macOS Guard Malloc. Where
-AddressSanitizer works: `make -C tests SAN=address,undefined`.

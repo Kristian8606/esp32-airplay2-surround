@@ -51,7 +51,7 @@ The server offers:
 | `esp_err_t rtsp_server_start(void)` | Listens on TCP 7000 and serves senders until stopped. Called at start-up and again after a stop. A second start while running returns `ESP_OK` and does nothing; a start while a stop is still under way returns `ESP_ERR_INVALID_STATE`. The firmware calls `ap2_hap_identity_init()` before the first start; the server does not. That call also starts libsodium (`sodium_init()`), so the server does not call `sodium_init()` either; the host tests call it once in their own start-up. |
 | `void rtsp_server_stop(void)` | Closes the listener and every connection, ends a running session as a TEARDOWN would, and waits until `rtsp_server_is_idle()` is true, at most 2 s (seen: about 0.1 s) [log]. The web page's firmware update checks `rtsp_server_is_idle()` right after the call, without waiting, and refuses the update when it is false; the room calibration polls. Never called from the server's own tasks. |
 | `bool rtsp_server_is_idle(void)` | True only when nothing of the server runs any more (no task, no socket, no session). Callers poll it after a stop before they take the audio engine or the radio for something else (firmware update, room calibration). |
-| `esp_err_t rtsp_remote_enqueue(uint8_t command, uint32_t *id)` | Queues one remote command for the sender (below). Checked in this order: `ESP_ERR_INVALID_ARG` for a number over 7, `ESP_ERR_NOT_FOUND` without an encrypted event connection of the session holder, `ESP_ERR_INVALID_STATE` while the previous command is still going. `*id` numbers the command (after 2³²−1 it starts again at 1). It only queues; the sending happens on the event connection's own task. |
+| `esp_err_t rtsp_remote_enqueue(uint8_t command, uint32_t *id)` | Queues one remote command for the sender (below). Checked in this order: `ESP_ERR_INVALID_ARG` for a number over 7, `ESP_ERR_NOT_FOUND` without an encrypted event connection of the session holder, `ESP_ERR_INVALID_STATE` while 8 commands are queued and not sent yet. `*id` numbers the command (after 2³²−1 it starts again at 1). It only queues; the sending happens on the event connection's own task. |
 | `void rtsp_remote_get_status(rtsp_remote_status_t *status)` | Whether the session holder has an event connection, the last command's id, number and result, and the sender's response code. |
 | `const char *rtsp_remote_result_name(rtsp_remote_result_t result)` | A fixed lower-case name per result. |
 
@@ -478,24 +478,39 @@ not printed, and follows the same numbering.
 
 `f` is the new volume as a fraction, `(v + 30) / 30` of the AirPlay volume
 `v`, one step of 1/16 down or up from the current one, kept within 0 to 1
-(from -15.0, i.e. 0.5: up gives 0.5625, down 0.5) [probe].
+(from -15.0, i.e. 0.5: up gives 0.5625, down 0.5) [probe]. The current one
+is the session's volume.
+
+- As soon as a volume command is sent, the Gateway sets that volume on the
+  engine itself (−13.125 → Q15 10368) and keeps it as a `SET_PARAMETER`
+  volume is kept: `settings_set_volume()`, written to flash when the
+  session ends, answered by `GET_PARAMETER volume`. So the next step goes
+  on from it: up, up from -15.0 sends 0.5625, then 0.625 [board,
+  2026-11-07: an Apple TV shows the new volume on each command but never
+  replies and sends no `SET_PARAMETER`; the sound did not change until the
+  phone's own volume button made it send one] (decided). A later
+  `SET_PARAMETER` volume from the sender wins as usual.
 
 - The command's id counts up from 1 since start-up, across sessions; it is
   also the `CSeq` [probe].
 - A reply `RTSP/1.0 200 …` with that `CSeq` makes the result acknowledged;
-  another code, rejected. After an acknowledged volume command the Gateway
-  sets the new volume on the engine itself (−13.125 → Q15 10368) [probe],
-  and keeps it as a `SET_PARAMETER` volume is kept: `settings_set_volume()`,
-  written to flash when the session ends, answered by `GET_PARAMETER
-  volume` (decided).
-- No reply within 3 s: timeout. The event connection stays open, and the
-  next command can be sent; a late reply to the timed-out command is
-  ignored (its `CSeq` is not the current one). An Apple TV closed its RTSP
+  another code, rejected. Neither changes the volume again.
+- No reply within 3 s: timeout, logged at info level (senders do not
+  reply [board]). The event connection stays open; a late reply to an
+  earlier command is ignored (its `CSeq` is not the current one). An Apple TV closed its RTSP
   connection, and with it the session, 40 ms after the Gateway closed the
   event connection on a timeout [log] (decided). A send error: failed. The
   event connection or the session ending first: disconnected.
-- One command at a time; `rtsp_remote_enqueue()` only queues it, the event
-  connection's task sends it. The web page answers 202 with the id.
+- The Gateway does not wait for a reply. Commands are queued in order, up
+  to 8 not yet sent; each new one becomes the current command (the status
+  shows it). The event connection's task sends every queued command in
+  order, each as its own message with its own `CSeq`; each volume step is
+  set before the next is built, so the steps go on from one to the next. A ninth unsent command: `ESP_ERR_INVALID_STATE`.
+  When the event connection or the session ends, the unsent commands are
+  dropped [board: waiting 3 s for a reply that never comes refused every
+  second press of a button] (decided). `rtsp_remote_enqueue()` only queues.
+  The web page answers 202 with the id; the page does not wait for the
+  result.
 
 ## Timeouts
 

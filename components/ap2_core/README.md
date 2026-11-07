@@ -17,7 +17,6 @@ The repository's README lists the licenses of all its parts.
 
 - `include/`: the public API
 - `src/`: the implementation
-- `tests/`: tests that run on a computer
 
 ## FairPlay setup
 
@@ -44,5 +43,4 @@ open AirPlay receivers: first published in
 reverse-engineered FairPlay setup that precomputed them with fixed key
 material. They are in
 `src/fairplay/fairplay_tables.c`, outside the Apache License (see
-[`NOTICE`](NOTICE)). The host test (`tests/fairplay_host`) checks them
-against CRC-32 values of the published tables.
+[`NOTICE`](NOTICE)).

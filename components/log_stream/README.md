@@ -10,4 +10,3 @@ the **Apache License 2.0** ([`LICENSE`](LICENSE), [`NOTICE`](NOTICE)).
 - `src/ls_core.c`: history, browser positions and UTF-8 cleaning, without
   ESP-IDF
 - `src/log_stream.c`: the logging hook and the WebSocket sending
-- `tests/`: host tests of `ls_core.c` (`make -C tests`)

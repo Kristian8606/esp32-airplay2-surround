@@ -6,7 +6,7 @@
 /* The station and access point rules of README.md as a state machine
  * without ESP-IDF. wifi.c feeds it the Wi-Fi events from the default event
  * loop task (one task, so no locks here) and carries out what it asks for
- * through wl_ctl_ops_t. The host tests drive it with a simulated clock. */
+ * through wl_ctl_ops_t. */
 
 #include <stdbool.h>
 #include <stddef.h>
