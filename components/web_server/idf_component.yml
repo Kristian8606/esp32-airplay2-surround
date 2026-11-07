@@ -1,0 +1,6 @@
+version: "1.0.0"
+description: "Shared web server of the AirPlay firmwares (pages, APIs, helpers)"
+license: "Apache-2.0"
+dependencies:
+  idf: ">=6.0"
+  espressif/cjson: "^1.7.18"

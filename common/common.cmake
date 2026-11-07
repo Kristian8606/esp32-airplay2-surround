@@ -1,16 +1,15 @@
-# Code shared by the two firmwares: web server core,
-# logs, the clock state and the Surround sync protocol. Not a component of
-# its own: the Gateway's main/CMakeLists.txt and the speaker's
+# Code shared by the two firmwares: the amplifier, the firmware id, the
+# Surround time fit, sync pulse and calibration chirp. Not a component of its
+# own: the Gateway's main/CMakeLists.txt and the speaker's
 # speaker/main/CMakeLists.txt include this file and compile these sources
-# into their main component, next to their own code. (The web server and the
-# audio_receiver.h API call back into code each firmware implements in its
-# own main, so this cannot be a library below main.)
+# into their main component, next to their own code. (The audio_receiver.h
+# API calls back into code each firmware implements in its own main, so this
+# cannot be a library below main.)
 set(AIRPLAY_COMMON_DIR "${CMAKE_CURRENT_LIST_DIR}")
 
 set(AIRPLAY_COMMON_SRCS
     "${AIRPLAY_COMMON_DIR}/amp_control.c"
     "${AIRPLAY_COMMON_DIR}/firmware_id.c"
-    "${AIRPLAY_COMMON_DIR}/network/web_server.c"
     "${AIRPLAY_COMMON_DIR}/surround/tsf_fit.c"
     "${AIRPLAY_COMMON_DIR}/surround/sync_pulse.c"
     "${AIRPLAY_COMMON_DIR}/surround/cal_chirp.c"
@@ -46,6 +45,7 @@ set(AIRPLAY_COMMON_PRIV_REQUIRES
     helpers
     led
     settings
+    web_server
 )
 
 # Embed web pages (data/www/<page>.html) into the OTA application image.
@@ -57,6 +57,17 @@ function(airplay_embed_web_pages)
             "${AIRPLAY_COMMON_DIR}/../data/www/${page}.html" BINARY
             RENAME_TO "web_${page}_html")
     endforeach()
+endfunction()
+
+# The web_server component calls the role pages (web_role_*), firmware_id(),
+# the audio engine and the embedded pages, which are compiled into this main
+# component: give it their headers and link it with main.
+# Call after idf_component_register().
+function(airplay_link_web_server)
+    idf_component_get_property(web_server_lib web_server COMPONENT_LIB)
+    target_include_directories(${web_server_lib} PRIVATE
+        "${AIRPLAY_COMMON_DIR}" "${AIRPLAY_COMMON_DIR}/audio")
+    target_link_libraries(${web_server_lib} PRIVATE ${COMPONENT_LIB})
 endfunction()
 
 # The RTSP server in ap2_core calls the audio engine, clock,

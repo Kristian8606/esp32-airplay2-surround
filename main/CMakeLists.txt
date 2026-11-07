@@ -32,3 +32,4 @@ idf_component_register(
 
 airplay_embed_web_pages(index logs speedtest speakers)
 airplay_link_ap2_core()
+airplay_link_web_server()

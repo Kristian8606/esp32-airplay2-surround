@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
 #pragma once
 
 /* Between the shared web server (web_server.c) and each firmware's own pages
