@@ -66,6 +66,20 @@ int ap2_hap_verify_state(const ap2_hap_session_t *session);
 
 /* Pairing ended with keys: transient pair-setup or pair-verify. */
 bool ap2_hap_established(const ap2_hap_session_t *session);
+/* The last pair-setup was transient. */
+bool ap2_hap_setup_transient(const ap2_hap_session_t *session);
+
+/* ---- HomeKit controller of the session ----
+ *
+ * Set by a full pair-setup, by pair-verify of a stored controller or with
+ * ap2_hap_set_controller(). False (and nothing written) when the session has
+ * no verified controller. id is not NUL-terminated. */
+bool ap2_hap_controller(const ap2_hap_session_t *session, const char **id,
+                        size_t *id_len, uint8_t *perm);
+/* A formerly verified controller has been removed or its stored key changed. */
+bool ap2_hap_controller_revoked(const ap2_hap_session_t *session);
+void ap2_hap_set_controller(ap2_hap_session_t *session, const uint8_t *id,
+                            size_t id_len, uint8_t perm);
 
 /* ---- Keys of an established session ---- */
 

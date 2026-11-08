@@ -10,6 +10,9 @@
 /* Starts serving senders; ESP_OK also when it already runs. */
 esp_err_t rtsp_server_start(void);
 
+/* Prevents listener restarts until reboot. Call before stopping for a reset. */
+void rtsp_server_begin_reset(void);
+
 /* Ends the session, closes every connection and the listener, and waits
  * until rtsp_server_is_idle() is true, at most 2 s. Never from the server's
  * own tasks. */

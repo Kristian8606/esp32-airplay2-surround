@@ -11,6 +11,7 @@
  * ESP-IDF. */
 
 /* The start line and headers together. */
+#define RTSP_ARTWORK_MAX (2 * 1024 * 1024)
 #define RTSP_HEAD_MAX 4096
 #define RTSP_MAX_HEADERS 32
 /* At least 16 KiB must be accepted (spec); bodies go to rtsp_port_malloc. */
@@ -71,13 +72,15 @@ const char *rtsp_msg_header(const rtsp_msg_t *msg, const char *name);
 /* Case-insensitive compare of NUL-terminated strings. */
 bool rtsp_str_ieq(const char *a, const char *b);
 
-/* The reply head: "RTSP/1.0 <code> <text>", CSeq (when cseq is not NULL),
+/* The reply head: HTTP/1.1 when http is true, otherwise RTSP/1.0;
+ * CSeq (when cseq is not NULL),
  * Server, the extra header lines (each ending in CRLF, may be NULL), then
- * Content-Type and Content-Length when body_len > 0, and the empty line.
+ * Content-Type when body_len > 0, Content-Length for HTTP or a nonempty
+ * body, and the empty line.
  * Returns its length, 0 if it does not fit. */
 size_t rtsp_reply_head(char *out, size_t capacity, int code, const char *cseq,
                        const char *extra, const char *content_type,
-                       size_t body_len);
+                       size_t body_len, bool http);
 
 /* The text of a status code. */
 const char *rtsp_reason(int code);

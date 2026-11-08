@@ -38,7 +38,25 @@ struct ap2_hap_session {
   bool session_established;
 
   struct ap2_srp *srp;
+
+  /* HomeKit controller of this connection: set by a full pair-setup (M5),
+   * by pair-verify of a stored controller or by the first /pair-add. Empty
+   * for transient pairing and for controllers this accessory does not
+   * know. */
+  char controller_id[64];
+  uint8_t controller_id_len;
+  uint8_t controller_perm;
+  uint8_t controller_ltpk[32];
+  bool controller_verified;
+
+  /* Identifier used by M2; HomeKit always uses the paired "pi" identity. */
+  bool pv_id_is_pi;
 };
+
+/* The identifier this accessory presents in pair-setup M6 and in
+ * pair-verify M2: with HomeKit the advertised "pi", which a home learns over
+ * /configure, else the MAC. */
+const char *ap2_hap_presented_id(bool pi);
 
 /* Same as ap2_hkdf_sha512, for the text salts and infos of the protocol. */
 esp_err_t ap2_hap_kdf(const char *salt, const char *info, const uint8_t *ikm,

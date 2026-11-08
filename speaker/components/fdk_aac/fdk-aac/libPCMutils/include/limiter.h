@@ -262,4 +262,9 @@ TDLIMITER_ERROR pcmLimiter_Apply(TDLimiterPtr limiter, PCM_LIM* samplesIn,
                                  INT_PCM* samplesOut, FIXP_DBL* pGainPerSample,
                                  const INT scaling, const UINT nSamples);
 
+/* MODIFIED 2026-11-08 for airplay-esp32: no S16 quantisation in this API. */
+TDLIMITER_ERROR pcmLimiter_Apply32(TDLimiterPtr limiter, PCM_LIM* samplesIn,
+                                   LONG* samplesOut, FIXP_DBL* gain,
+                                   const INT scaling, const UINT frames);
+
 #endif /* #ifndef LIMITER_H */

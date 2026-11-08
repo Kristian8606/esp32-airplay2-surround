@@ -10,7 +10,7 @@ typedef struct ap2_buffered_fifo ap2_buffered_fifo_t;
 
 /* Transport token for one complete frame at the sole consumer's cursor.
  * header contains the first 12 body bytes verbatim; media interpretation stays
- * in sound_engine. wire_len includes the two length bytes. */
+ * in audio_receiver. wire_len includes the two length bytes. */
 typedef struct {
   uint16_t wire_len;
   uint8_t header[12];
@@ -41,6 +41,11 @@ esp_err_t ap2_buffered_fifo_start(ap2_buffered_fifo_t *fifo,
                                   uint16_t requested_port,
                                   uint16_t *bound_port);
 void ap2_buffered_fifo_stop(ap2_buffered_fifo_t *fifo);
+/* With the limiter test enabled, orderly FIN preserves complete input.
+ * After peek reports no complete packet, drain PCM and acknowledge EOF. */
+bool ap2_buffered_fifo_eof_pending(ap2_buffered_fifo_t *fifo);
+void ap2_buffered_fifo_ack_eof(ap2_buffered_fifo_t *fifo);
+
 bool ap2_buffered_fifo_is_idle(ap2_buffered_fifo_t *fifo);
 
 /* Hard session-boundary reset. Call only while the buffered transport is

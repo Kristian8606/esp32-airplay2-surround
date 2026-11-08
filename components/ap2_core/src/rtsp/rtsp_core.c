@@ -10,6 +10,8 @@
 #include "amp_control.h"
 #include "ap2_fairplay.h"
 #include "ap2_hap.h"
+#include "ap2_pairings.h"
+#include "mdns_airplay.h"
 #include "ap2_plist.h"
 #include "ap2_tlv8.h"
 #include "apple_clock.h"
@@ -46,10 +48,12 @@ static const char PUBLIC_METHODS[] =
     "SETRATEANCHORTIME, LOUDNESSNORMALIZATION\r\n";
 
 struct rtsp_conn {
+  struct rtsp_conn *next;
   uint32_t peer_ip;
   void *port_ctx;
   unsigned id;
   bool closing;
+  bool reply_http;
 
   ap2_hap_session_t *hap;
   bool encrypted;
@@ -62,6 +66,9 @@ struct rtsp_conn {
   uint8_t event_write[32];      /* Gateway to sender */
   uint8_t event_read[32];       /* sender to Gateway */
 
+  bool remote_only;
+  char group_id[48];
+  bool group_contains_leader;
   bool event_open;     /* its event port listens (from its session SETUP) */
   uint16_t event_port;
 
@@ -77,15 +84,18 @@ typedef struct {
   size_t body_len;
   const char *extra;
   bool close;
+  bool homekit_reset;
 } reply_t;
 
 static struct {
+  rtsp_conn_t *connections;
   rtsp_conn_t *holder; /* the connection that holds the session */
   bool stream;
   int64_t stream_type;
   int sample_rate;
   double volume;
   bool volume_known;
+  bool homekit_reset_pending;
   unsigned next_conn_id;
 } s;
 
@@ -193,6 +203,11 @@ static esp_err_t session_start(rtsp_conn_t *c) {
   s.volume_known = false;
   set_volume(rtsp_core_current_volume());
 
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+  airplay_set_session_active(true);
+  mdns_airplay_update_flags();
+  mdns_airplay_set_group(c->group_id, c->group_contains_leader);
+#endif
   amp_control_session_connected();
   rtsp_events_emit(RTSP_EVENT_CLIENT_CONNECTED);
   ip_text(c->peer_ip, ip);
@@ -223,6 +238,11 @@ static void session_end(void) {
   memset(&none, 0, sizeof(none));
   none.type = SOUND_CIPHER_NONE;
   sound_engine_set_encryption(&none);
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+  airplay_set_session_active(false);
+  mdns_airplay_update_flags();
+  mdns_airplay_set_group(NULL, false);
+#endif
   amp_control_session_disconnected();
   rtsp_events_emit(RTSP_EVENT_DISCONNECTED);
   if (rtsp_port_settings_persist_volume() != ESP_OK) {
@@ -267,6 +287,30 @@ static bool holds(const rtsp_conn_t *c) { return s.holder == c; }
 
 rtsp_conn_t *rtsp_core_holder(void) { return s.holder; }
 
+/* Reserve the new control resources before stopping the previous sender.
+ * Called under the server lock; only an audio session may use this path. */
+static esp_err_t claim_session(rtsp_conn_t *c) {
+  if (c->closing) return ESP_ERR_INVALID_STATE;
+  if (holds(c)) return event_port_open(c);
+
+  uint8_t key[32];
+  esp_err_t err = ap2_hap_audio_key(c->hap, key, sizeof(key));
+  wipe(key, sizeof(key));
+  if (err != ESP_OK) return err;
+  err = event_port_open(c);
+  if (err != ESP_OK) return err;
+
+  rtsp_conn_t *old = s.holder;
+  if (old != NULL) {
+    RTSP_LOGI("connection %u takes the session from connection %u", c->id, old->id);
+    session_end();
+    old->closing = true;
+    rtsp_port_conn_close(old);
+  }
+  return session_start(c);
+}
+
+
 /* ---- Requests ---- */
 
 static void do_info(rtsp_conn_t *c, reply_t *r) {
@@ -296,7 +340,7 @@ static void do_info(rtsp_conn_t *c, reply_t *r) {
   info.source_version = AIRPLAY_SOURCE_VERSION;
   info.protocol_versions = AIRPLAY_PROTOVERS;
   info.protocol_version = AIRPLAY_PROTOCOL_VERSION;
-  info.status_flags = AIRPLAY_STATUS_FLAGS;
+  info.status_flags = airplay_status_flags();
   info.features = ((uint64_t)AIRPLAY_FEATURES_HI << 32) | AIRPLAY_FEATURES_LO;
   info.public_key = ap2_hap_identity_public_key();
   info.public_key_len = 32;
@@ -305,6 +349,14 @@ static void do_info(rtsp_conn_t *c, reply_t *r) {
   info.audio_stream_formats = AIRPLAY_SUPPORTED_AUDIO_STREAM;
   info.buffer_stream_formats = AIRPLAY_SUPPORTED_BUFFER_STREAM;
 
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+  char serial[AIRPLAY_SERIAL_LEN], firmware[32];
+  airplay_get_serial_number(serial, sizeof(serial));
+  airplay_get_firmware_revision(firmware, sizeof(firmware));
+  info.manufacturer = CONFIG_AIRPLAY_HOMEKIT_MANUFACTURER;
+  info.serial_number = serial;
+  info.firmware_revision = firmware;
+#endif
   n = ap2_reply_info(c->body, sizeof(c->body), &info);
   if (n == 0) {
     refuse(r, CODE_INTERNAL, "/info reply does not fit");
@@ -369,7 +421,13 @@ static void do_pair(rtsp_conn_t *c, const rtsp_msg_t *m, reply_t *r,
     if (step == 3) { fn = ap2_hap_setup_m3; last = true; }
     if (step == 5) { fn = ap2_hap_setup_m5; last = true; }
   } else {
-    if (step == 1) fn = ap2_hap_verify_m1;
+    if (step == 1) {
+      const char *hkp = rtsp_msg_header(m, "X-Apple-HKP");
+      const char *derive = rtsp_msg_header(m, "X-Apple-Pair-Derive");
+      RTSP_LOGI("[%u] pair-verify M1: protocol=%.8s HKP=%.8s derive=%.8s", c->id,
+                m->start[2], hkp ? hkp : "-", derive ? derive : "-");
+      fn = ap2_hap_verify_m1;
+    }
     if (step == 3) { fn = ap2_hap_verify_m3; last = true; }
   }
   if (fn != NULL) {
@@ -398,6 +456,148 @@ static void do_pair(rtsp_conn_t *c, const rtsp_msg_t *m, reply_t *r,
   }
 }
 
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+static void revoke_homekit_connections(rtsp_conn_t *requester, reply_t *reply) {
+  /* Called with the core lock held. Keep the current encrypted channel long
+   * enough to send M2/configure; shut down its socket only after that reply. */
+  for (rtsp_conn_t *peer = s.connections; peer; peer = peer->next) {
+    if (peer->closing || !ap2_hap_controller_revoked(peer->hap)) continue;
+    peer->closing = true;
+    if (s.holder == peer) session_end();
+    event_port_close(peer);
+    if (peer == requester) reply->close = true;
+    else rtsp_port_conn_close(peer);
+  }
+}
+
+static void homekit_reset_after_reply(rtsp_conn_t *c, reply_t *r) {
+  s.homekit_reset_pending = true;
+  c->closing = true;
+  r->close = true;
+  r->homekit_reset = true;
+  RTSP_LOGW("HomeKit removal accepted: reset after reply");
+}
+
+static void do_configure(rtsp_conn_t *c, const rtsp_msg_t *m, reply_t *r) {
+  if (!c->encrypted || !c->paired) {
+    refuse(r, CODE_AUTH_REQUIRED, "configure needs an encrypted paired connection");
+    return;
+  }
+  ap2_configure_request_t config = {0};
+  if (m->body_len && (!is_bplist(m) ||
+      !ap2_bplist_configure_request(m->body, m->body_len, &config))) {
+    refuse(r, CODE_BAD_REQUEST, "invalid ConfigurationDictionary");
+    return;
+  }
+  uint8_t permission = 0;
+  const bool admin = ap2_hap_controller(c->hap, NULL, NULL, &permission) &&
+                     (permission & AP2_PERM_ADMIN);
+  const bool initial = ap2_hap_setup_transient(c->hap) && ap2_pairings_count() == 0;
+  if ((config.has_name || config.has_hk_access_control) && !admin && !initial) {
+    refuse(r, CODE_AUTH_REQUIRED, "configure changes need a verified administrator");
+    return;
+  }
+  if (config.has_hk_access_control && config.hk_access_control &&
+      !ap2_pairings_has_admin()) {
+    refuse(r, CODE_WRONG_STATE, "add a HomeKit administrator before enabling access control");
+    return;
+  }
+  const bool reset = admin && config.has_hk_access_control &&
+                     !config.hk_access_control;
+  if (!reset && config.has_name && rtsp_port_settings_set_name(config.name) != ESP_OK) {
+    refuse(r, CODE_INTERNAL, "speaker name was not saved or announced");
+    return;
+  }
+  char name[DEVICE_NAME_MAX], pi[AIRPLAY_PAIRING_ID_LEN];
+  const esp_err_t name_err = reset
+      ? rtsp_port_homekit_reset_name(name, sizeof(name))
+      : rtsp_port_settings_get_name(name, sizeof(name));
+  if (name_err != ESP_OK) {
+    refuse(r, CODE_INTERNAL, "cannot read speaker name");
+    return;
+  }
+  airplay_get_pairing_id(pi, sizeof(pi));
+  r->body_len = ap2_reply_configure(c->body, sizeof(c->body), pi,
+      ap2_hap_identity_public_key(), name, !reset && ap2_pairings_has_admin());
+  r->content_type = CT_BPLIST;
+  if (!r->body_len) {
+    refuse(r, CODE_INTERNAL, "configure reply does not fit");
+    return;
+  }
+  if (!reset && config.has_name) RTSP_LOGI("HomeKit configure: speaker name saved and announced");
+  if (reset) homekit_reset_after_reply(c, r);
+  else revoke_homekit_connections(c, r);
+}
+
+static void do_pairings(rtsp_conn_t *c, const rtsp_msg_t *m, reply_t *r) {
+  enum { ADD = 3, REMOVE = 4, LIST = 5, PERMISSIONS = 0x0B };
+  uint8_t method = 0, perm = 0, id[AP2_PAIRING_ID_MAX], pk[32];
+  size_t len = 0, id_len = 0, pk_len = 0, perm_len = 0;
+  if (!ap2_tlv8_get(m->body, m->body_len, AP2_TLV_METHOD, &method, 1, &len)) {
+    if (path_is(m->start[1], "/pair-add")) method = ADD;
+    else if (path_is(m->start[1], "/pair-remove")) method = REMOVE;
+    else if (path_is(m->start[1], "/pair-list")) method = LIST;
+  }
+  uint8_t current_perm = 0, error = AP2_TLV_ERROR_UNKNOWN;
+  const bool admin = c->encrypted && c->paired &&
+      ap2_hap_controller(c->hap, NULL, NULL, &current_perm) &&
+      (current_perm & AP2_PERM_ADMIN);
+  const bool first = !admin && method == ADD && c->encrypted && c->paired &&
+      ap2_hap_setup_transient(c->hap) && ap2_pairings_count() == 0;
+  r->content_type = CT_OCTET;
+  const bool id_ok = ap2_tlv8_get(m->body, m->body_len, AP2_TLV_IDENTIFIER,
+                                  id, sizeof(id), &id_len) && id_len > 0;
+  const bool pk_ok = ap2_tlv8_get(m->body, m->body_len, AP2_TLV_PUBLIC_KEY,
+                                  pk, sizeof(pk), &pk_len) && pk_len == sizeof(pk);
+  size_t raw_perm_len = 0;
+  const bool has_perm = ap2_tlv8_find(m->body, m->body_len, PERMISSIONS,
+                                     &raw_perm_len) != NULL;
+  const bool perm_ok = !has_perm ||
+      (ap2_tlv8_get(m->body, m->body_len, PERMISSIONS, &perm, 1, &perm_len) &&
+       perm_len == 1 && perm <= AP2_PERM_ADMIN);
+  uint8_t stored_pk[32], stored_perm;
+  /* A lost enrollment reply may be retried without proving the owner's
+   * private key. Acknowledge an identical existing admin only; grant no
+   * authenticated session and no access to listing or other mutations. */
+  const bool retry = !admin && !first && method == ADD && c->encrypted &&
+      c->paired && id_ok && pk_ok && perm_ok && (!has_perm || perm == AP2_PERM_ADMIN) &&
+      ap2_pairings_find(id, id_len, stored_pk, &stored_perm) &&
+      stored_perm == AP2_PERM_ADMIN && !memcmp(stored_pk, pk, sizeof(pk));
+  if (retry) {
+    error = 0;
+  } else if (!admin && !first) {
+    error = AP2_TLV_ERROR_AUTHENTICATION;
+  } else if (method == LIST) {
+    r->body_len = ap2_pairings_list_tlv(c->body, sizeof(c->body));
+    if (r->body_len) return;
+  } else if (method == ADD || method == REMOVE) {
+    esp_err_t err = ESP_ERR_INVALID_ARG;
+    if (method == ADD && id_ok && pk_ok && perm_ok) {
+      if (first) perm = AP2_PERM_ADMIN;
+      err = ap2_pairings_add(id, id_len, pk, perm);
+      if (err == ESP_OK && first) ap2_hap_set_controller(c->hap, id, id_len, perm);
+    } else if (method == REMOVE && id_ok) {
+      if (ap2_pairings_is_last_admin(id, id_len)) {
+        homekit_reset_after_reply(c, r);
+        err = ESP_OK;
+      } else {
+        err = ap2_pairings_remove(id, id_len);
+        if (err == ESP_ERR_NOT_FOUND) err = ESP_OK;
+      }
+    }
+    if (err == ESP_OK) {
+      error = 0;
+      revoke_homekit_connections(c, r);
+    } else if (err == ESP_ERR_NO_MEM) error = AP2_TLV_ERROR_MAX_PEERS;
+  }
+  ap2_tlv8_writer_t w;
+  ap2_tlv8_writer_init(&w, c->body, sizeof(c->body));
+  ap2_tlv8_put_byte(&w, AP2_TLV_STATE, 2);
+  if (error) ap2_tlv8_put_byte(&w, AP2_TLV_ERROR, error);
+  r->body_len = ap2_tlv8_writer_size(&w);
+}
+#endif
+
 static void do_fp_setup(rtsp_conn_t *c, const rtsp_msg_t *m, reply_t *r) {
   int n = ap2_fairplay_setup(m->body, m->body_len, c->body, sizeof(c->body));
   r->content_type = CT_OCTET;
@@ -424,6 +624,42 @@ static void do_setup_session(rtsp_conn_t *c, const rtsp_msg_t *m, reply_t *r) {
   } else {
     RTSP_LOGW("no timingProtocol, taken as PTP");
   }
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+  int64_t remote = 0, leader = 0;
+  (void)ap2_bplist_int_deep(m->body, m->body_len, "isRemoteControlOnly", &remote);
+  c->remote_only = remote != 0;
+  if (c->remote_only) {
+    if (holds(c)) {
+      refuse(r, CODE_WRONG_STATE, "audio holder cannot become remote-only");
+      c->remote_only = false;
+      return;
+    }
+    if (event_port_open(c) != ESP_OK) {
+      refuse(r, CODE_INTERNAL, "no remote event port");
+      return;
+    }
+    n = ap2_reply_setup_session(c->body, sizeof(c->body), c->event_port);
+    if (!n) { refuse(r, CODE_INTERNAL, "remote SETUP reply does not fit"); return; }
+    r->content_type = CT_BPLIST;
+    r->body_len = n;
+    return;
+  }
+  char group[sizeof(c->group_id)] = {0};
+  if (ap2_bplist_string_deep(m->body, m->body_len, "groupUUID", group, sizeof(group)) &&
+      group[0]) {
+    memcpy(c->group_id, group, sizeof(group));
+    (void)ap2_bplist_int_deep(m->body, m->body_len, "groupContainsGroupLeader", &leader);
+    c->group_contains_leader = leader != 0;
+  }
+#endif
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+  /* Selecting this speaker transfers ownership now. Buffered playback is
+   * still gated by SETRATEANCHORTIME, not by pairing or session SETUP. */
+  if (claim_session(c) != ESP_OK) {
+    refuse(r, CODE_INTERNAL, "session takeover could not be prepared");
+    return;
+  }
+#else
   if (s.holder == NULL) {
     if (session_start(c) != ESP_OK) {
       refuse(r, CODE_INTERNAL, "session does not start");
@@ -436,6 +672,10 @@ static void do_setup_session(rtsp_conn_t *c, const rtsp_msg_t *m, reply_t *r) {
     RTSP_LOGI("connection %u: session held by connection %u, event port %u "
               "listens", c->id, s.holder->id, c->event_port);
   }
+#endif
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+  if (holds(c)) mdns_airplay_set_group(c->group_id, c->group_contains_leader);
+#endif
   n = ap2_reply_setup_session(c->body, sizeof(c->body), c->event_port);
   if (n == 0) {
     refuse(r, CODE_INTERNAL, "SETUP reply does not fit");
@@ -518,21 +758,10 @@ static void do_setup_stream(rtsp_conn_t *c, const rtsp_msg_t *m, reply_t *r,
     return;
   }
 
-  /* The sender takes the session if it does not hold it. */
-  if (s.holder != c) {
-    rtsp_conn_t *old = s.holder;
-    if (old != NULL) {
-      RTSP_LOGI("connection %u takes the session from connection %u", c->id,
-                old->id);
-      session_end();
-      old->closing = true;
-      rtsp_port_conn_close(old);
-    }
-    if (session_start(c) != ESP_OK) {
-      wipe(shk, sizeof(shk));
-      refuse(r, CODE_INTERNAL, "session does not start");
-      return;
-    }
+  if (claim_session(c) != ESP_OK) {
+    wipe(shk, sizeof(shk));
+    refuse(r, CODE_INTERNAL, "session does not start");
+    return;
   }
   if (s.stream) {
     RTSP_LOGI("stream replaced");
@@ -605,6 +834,10 @@ static void do_setup(rtsp_conn_t *c, const rtsp_msg_t *m, reply_t *r) {
     return;
   }
   if (ap2_bplist_stream_count(m->body, m->body_len, &count)) {
+    if (c->remote_only) {
+      refuse(r, CODE_WRONG_STATE, "stream on remote-only connection");
+      return;
+    }
     do_setup_stream(c, m, r, count);
   } else {
     do_setup_session(c, m, r);
@@ -807,7 +1040,8 @@ static bool body_loggable(const char *method, const char *uri) {
   if (strcmp(method, "SETUP") == 0) return false; /* shk */
   if (strcmp(method, "POST") == 0 &&
       (path_is(uri, "/pair-setup") || path_is(uri, "/pair-verify") ||
-       path_is(uri, "/fp-setup"))) {
+       path_is(uri, "/fp-setup") || path_is(uri, "/configure") ||
+       path_is(uri, "/pair-add") || path_is(uri, "/pairings"))) {
     return false;
   }
   return true;
@@ -842,6 +1076,16 @@ static void handle(rtsp_conn_t *c, const rtsp_msg_t *m, reply_t *r) {
   const char *uri = m->start[1];
 
   log_request(c, m);
+  if (s.homekit_reset_pending) {
+    r->close = true;
+    refuse(r, 503, "HomeKit reset in progress");
+    return;
+  }
+  if (c->closing) {
+    r->close = true;
+    refuse(r, CODE_AUTH_REQUIRED, "connection is closing");
+    return;
+  }
   if (m->body_state == RTSP_BODY_TOO_LARGE) {
     refuse(r, CODE_TOO_LARGE, "body over the limit");
     return;
@@ -866,6 +1110,13 @@ static void handle(rtsp_conn_t *c, const rtsp_msg_t *m, reply_t *r) {
       do_pair(c, m, r, false);
     } else if (path_is(uri, "/fp-setup")) {
       do_fp_setup(c, m, r);
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+    } else if (path_is(uri, "/configure")) {
+      do_configure(c, m, r);
+    } else if (path_is(uri, "/pair-add") || path_is(uri, "/pair-remove") ||
+               path_is(uri, "/pair-list") || path_is(uri, "/pairings")) {
+      do_pairings(c, m, r);
+#endif
     } else if (path_is(uri, "/feedback")) {
       do_feedback(c, r);
     } else if (path_is(uri, "/command")) {
@@ -912,6 +1163,8 @@ rtsp_conn_t *rtsp_conn_new(uint32_t peer_ip, void *port_ctx) {
   rtsp_reader_init(&c->reader, RTSP_BODY_MAX);
   rtsp_port_lock();
   c->id = ++s.next_conn_id;
+  c->next = s.connections;
+  s.connections = c;
   rtsp_port_unlock();
   return c;
 }
@@ -947,7 +1200,7 @@ static int send_reply(rtsp_conn_t *c, const char *cseq, const reply_t *r,
   snprintf(extra, sizeof(extra), "%s%s", r->extra != NULL ? r->extra : "",
            r->close ? "Connection: close\r\n" : "");
   head_len = rtsp_reply_head(c->head, sizeof(c->head), r->code, cseq, extra,
-                             r->content_type, r->body_len);
+                             r->content_type, r->body_len, c->reply_http);
   if (head_len == 0) return -1;
 #ifdef CONFIG_AIRPLAY_LOG_RTSP_REQUESTS
   RTSP_LOGI("[%u] reply %d body %zu", c->id, r->code, r->body_len);
@@ -998,10 +1251,44 @@ static int process_plain(rtsp_conn_t *c, const uint8_t *data, size_t len,
         *used_out = used;
         return -1;
       }
+      c->reply_http = rtsp_str_ieq(c->reader.msg.start[2], "HTTP/1.1") ||
+                      rtsp_str_ieq(c->reader.msg.start[2], "HTTP/1.0");
+      const bool verify_trace = path_is(c->reader.msg.start[1], "/pair-verify");
+      rtsp_pairing_memory_t mem_before = {0}, mem_after;
+      uint32_t arrived = 0, locked = 0, handled = 0;
+      if (verify_trace) {
+        rtsp_port_pairing_memory(&mem_before);
+        arrived = rtsp_port_now_ms();
+      }
       rtsp_port_lock();
+      if (verify_trace) locked = rtsp_port_now_ms();
       handle(c, &c->reader.msg, &r);
       rtsp_port_unlock();
+      if (verify_trace) handled = rtsp_port_now_ms();
       rc = send_reply(c, cseq, &r, send, ctx);
+      if (verify_trace) {
+        const uint32_t sent = rtsp_port_now_ms();
+        rtsp_port_pairing_memory(&mem_after);
+        const uint8_t *pk = ap2_hap_identity_public_key();
+        /* Log only after sending: do not add console latency to M2. Key
+         * bytes below are a public identity tag, never session/private keys. */
+        RTSP_LOGI("[%u] pair-verify reply=%d body=%zu send=%d wait=%" PRIu32
+                  "ms work=%" PRIu32 "ms tx=%" PRIu32 "ms pk=%02x%02x%02x%02x",
+                  c->id, r.code, r.body_len, rc, locked - arrived,
+                  handled - locked, sent - handled, pk[0], pk[1], pk[2], pk[3]);
+        RTSP_LOGI("[%u] pair-verify RAM bytes before/after: internal=%" PRIu32
+                  "/%" PRIu32 " largest=%" PRIu32 "/%" PRIu32
+                  " PSRAM=%" PRIu32 "/%" PRIu32 " largest=%" PRIu32 "/%" PRIu32,
+                  c->id, mem_before.internal_free, mem_after.internal_free,
+                  mem_before.internal_largest, mem_after.internal_largest,
+                  mem_before.psram_free, mem_after.psram_free,
+                  mem_before.psram_largest, mem_after.psram_largest);
+      }
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+      /* The removal was authenticated before this point. Complete it even
+       * if the peer disconnects while its final response is being sent. */
+      if (r.homekit_reset) rtsp_port_homekit_reset();
+#endif
       rtsp_reader_next(&c->reader);
       if (rc != 0 || r.close) {
         *used_out = used;
@@ -1061,6 +1348,9 @@ void rtsp_conn_end(rtsp_conn_t *c) {
     session_end();
   }
   event_port_close(c);
+  rtsp_conn_t **link = &s.connections;
+  while (*link && *link != c) link = &(*link)->next;
+  if (*link) *link = c->next;
   rtsp_port_unlock();
   rtsp_reader_next(&c->reader);
   ap2_hap_session_delete(c->hap);

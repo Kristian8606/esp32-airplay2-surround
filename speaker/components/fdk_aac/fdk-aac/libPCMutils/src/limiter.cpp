@@ -103,6 +103,9 @@ amm-info@iis.fraunhofer.de
 #include "limiter.h"
 #include "FDK_core.h"
 
+/* MODIFIED 2026-11-08 for airplay-esp32: shared S16/S32 limiter output.
+ * See components/fdk_aac/MODIFICATIONS.md. */
+
 /* library version */
 #include "version.h"
 /* library title */
@@ -163,10 +166,12 @@ TDLimiterPtr pcmLimiter_Create(unsigned int maxAttackMs, unsigned int releaseMs,
   return limiter;
 }
 
-/* apply limiter */
-TDLIMITER_ERROR pcmLimiter_Apply(TDLimiterPtr limiter, PCM_LIM* samplesIn,
-                                 INT_PCM* samplesOut, FIXP_DBL* pGainPerSample,
-                                 const INT scaling, const UINT nSamples) {
+/* airplay-esp32 patch (2026-11-08): share the stock lookahead/gain
+ * algorithm; select only the final output width. S32 adds no S16 rounding. */
+template <typename Output>
+static TDLIMITER_ERROR applyLimiter(TDLimiterPtr limiter, PCM_LIM* samplesIn,
+                                    Output* samplesOut, FIXP_DBL* pGainPerSample,
+                                    const INT scaling, const UINT nSamples) {
   unsigned int i, j;
   FIXP_DBL tmp2;
   FIXP_DBL tmp, old, gain, additionalGain = 0;
@@ -297,14 +302,18 @@ TDLIMITER_ERROR pcmLimiter_Apply(TDLimiterPtr limiter, PCM_LIM* samplesIn,
 
           /* Apply gain to delayed signal */
           tmp = fMultDiv2(tmp, gain);
+          if (sizeof(Output) == sizeof(FIXP_DBL)) {
+            samplesOut[j] = (Output)SATURATE_LEFT_SHIFT(tmp, scaling + 1, DFRACT_BITS);
+          } else {
 #if (SAMPLE_BITS == DFRACT_BITS)
-          samplesOut[j] = (INT_PCM)FX_DBL2FX_PCM(
+          samplesOut[j] = (Output)FX_DBL2FX_PCM(
               (FIXP_DBL)SATURATE_LEFT_SHIFT(tmp, scaling + 1, DFRACT_BITS));
 #else
           samplesOut[j] = (INT_PCM)FX_DBL2FX_PCM((FIXP_DBL)SATURATE_LEFT_SHIFT(
               tmp + ((FIXP_DBL)0x8000 >> (scaling + 1)), scaling + 1,
               DFRACT_BITS));
 #endif
+          }
         }
         gain >>= 1;
       } else {
@@ -317,14 +326,18 @@ TDLIMITER_ERROR pcmLimiter_Apply(TDLimiterPtr limiter, PCM_LIM* samplesIn,
             p_delayBuf[j] = PCM_LIM2FIXP_DBL(samplesIn[j]);
           }
 
+          if (sizeof(Output) == sizeof(FIXP_DBL)) {
+            samplesOut[j] = (Output)SATURATE_LEFT_SHIFT(tmp, scaling, DFRACT_BITS);
+          } else {
 #if (SAMPLE_BITS == DFRACT_BITS)
-          samplesOut[j] = (INT_PCM)FX_DBL2FX_PCM(
+          samplesOut[j] = (Output)FX_DBL2FX_PCM(
               (FIXP_DBL)SATURATE_LEFT_SHIFT(tmp, scaling, DFRACT_BITS));
 #else
           samplesOut[j] = (INT_PCM)FX_DBL2FX_PCM((FIXP_DBL)SATURATE_LEFT_SHIFT(
               (tmp >> 1) + ((FIXP_DBL)0x8000 >> (scaling + 1)), scaling + 1,
               DFRACT_BITS));
 #endif
+          }
         }
       }
 
@@ -354,6 +367,19 @@ TDLIMITER_ERROR pcmLimiter_Apply(TDLimiterPtr limiter, PCM_LIM* samplesIn,
 
     return TDLIMIT_OK;
   }
+}
+
+TDLIMITER_ERROR pcmLimiter_Apply(TDLimiterPtr limiter, PCM_LIM* in,
+                                 INT_PCM* out, FIXP_DBL* gain,
+                                 const INT scaling, const UINT frames) {
+  return applyLimiter(limiter, in, out, gain, scaling, frames);
+}
+
+/* airplay-esp32 patch: wide output retains the full fixed-point result. */
+TDLIMITER_ERROR pcmLimiter_Apply32(TDLimiterPtr limiter, PCM_LIM* in,
+                                   LONG* out, FIXP_DBL* gain,
+                                   const INT scaling, const UINT frames) {
+  return applyLimiter(limiter, in, out, gain, scaling, frames);
 }
 
 /* set limiter threshold */

@@ -2,6 +2,8 @@
 
 #include <stdio.h>
 
+#include "ap2_pairings.h"
+#include "esp_app_desc.h"
 #include "esp_mac.h"
 #include "sodium.h"
 
@@ -31,4 +33,36 @@ void airplay_get_pairing_id(char *out, size_t len) {
            "%02x%02x%02x%02x%02x%02x",
            u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7], u[8], u[9], u[10],
            u[11], u[12], u[13], u[14], u[15]);
+}
+
+void airplay_get_serial_number(char *out, size_t len) {
+  if (!out || len == 0) return;
+  uint8_t m[6] = {0};
+  esp_read_mac(m, ESP_MAC_WIFI_STA);
+  snprintf(out, len, "%02X%02X%02X%02X%02X%02X", m[0], m[1], m[2], m[3], m[4],
+           m[5]);
+}
+
+void airplay_get_firmware_revision(char *out, size_t len) {
+  if (!out || len == 0) return;
+  const char *v = esp_app_get_description()->version;
+  if (v[0] == 'v' || v[0] == 'V') v++;
+  snprintf(out, len, "%s", v);
+}
+
+static volatile bool s_session_active;
+
+bool airplay_set_session_active(bool active) {
+  if (s_session_active == active) return false;
+  s_session_active = active;
+  return true;
+}
+
+uint32_t airplay_status_flags(void) {
+  uint32_t f = AIRPLAY_STATUS_FLAGS;
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+  if (s_session_active) f |= AIRPLAY_STATUS_RELAY;
+  if (ap2_pairings_has_admin()) f |= AIRPLAY_STATUS_HOMEKIT;
+#endif
+  return f;
 }

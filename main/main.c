@@ -1,5 +1,7 @@
 /* Surround Gateway firmware: the AirPlay receiver the Apple TV plays to. */
 #include "sound_engine.h"
+#include "homekit_reset.h"
+#include "ap2_pairings.h"
 #include "audio_diag.h"
 #include "amp_control.h"
 #include "gw_fw.h"
@@ -23,6 +25,12 @@
 #include "freertos/task.h"
 
 static const char *TAG = "main";
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+static void homekit_changed(bool paired) {
+  ESP_LOGI(TAG, "HomeKit: %s a home", paired ? "added to" : "removed from");
+  mdns_airplay_update_flags();
+}
+#endif
 
 static void log_memory_state(const char *where) {
   ESP_LOGI(TAG,
@@ -80,7 +88,13 @@ void app_main(void) {
    * when diagnostics are disabled or no category is selected. */
   (void)AUDIO_DIAG_INIT();
   ESP_ERROR_CHECK(apple_clock_start());
-  ESP_ERROR_CHECK(ap2_hap_identity_init());
+  e = ap2_hap_identity_init();
+  if (e != ESP_OK) {
+    ESP_LOGE(TAG, "AirPlay identity/pairings unavailable (%s); web HomeKit reset remains available",
+             esp_err_to_name(e));
+    homekit_reset_mark_ready();
+    return;
+  }
   led_init();
 
   if (provisioning_only) {
@@ -99,6 +113,9 @@ void app_main(void) {
       ESP_LOGW(TAG, "Sync test pulse unavailable: %s", esp_err_to_name(pulse_err));
     }
     mdns_airplay_init();
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+    ap2_pairings_set_changed_cb(homekit_changed);
+#endif
     ESP_ERROR_CHECK(rtsp_server_start());
     /* Speaker firmware to hand out; without it speakers update by hand. */
     (void)gw_fw_init();
@@ -123,6 +140,8 @@ void app_main(void) {
     ESP_LOGI(TAG, "Surround Gateway %s ready; setup UI: http://192.168.4.1/",
              fw_version);
   }
+
+  homekit_reset_mark_ready();
 
   /* All services own their workers. Return so IDF frees the main stack. */
 }

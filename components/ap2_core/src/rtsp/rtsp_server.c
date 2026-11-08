@@ -5,6 +5,7 @@
 #include "rtsp_server.h"
 
 #include <errno.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "esp_heap_caps.h"
@@ -19,6 +20,11 @@
 #include "rtsp_log.h"
 #include "rtsp_port.h"
 #include "settings.h"
+#include "mdns_airplay.h"
+#include "wifi.h"
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+#include "homekit_reset.h"
+#endif
 
 #define RTSP_TCP_PORT 7000
 #define MAX_CONTROL 8
@@ -58,6 +64,10 @@ static SemaphoreHandle_t s_lock;
 static slot_t s_slots[MAX_SLOTS];
 static volatile bool s_running;  /* the listener task is alive */
 static volatile bool s_stopping;
+static bool s_reset_in_progress;
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+static char s_reset_name[128];
+#endif
 
 static void wipe(void *p, size_t n) {
   volatile uint8_t *v = p;
@@ -86,6 +96,25 @@ void *rtsp_port_malloc(size_t size) {
 
 void rtsp_port_free(void *ptr) { heap_caps_free(ptr); }
 
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+void rtsp_port_homekit_reset(void) { homekit_reset_schedule(); }
+esp_err_t rtsp_port_homekit_reset_name(char *name, size_t len) {
+  if (!name || !len) return ESP_ERR_INVALID_ARG;
+  rtsp_port_lock();
+  snprintf(name, len, "%s", s_reset_name);
+  rtsp_port_unlock();
+  return ESP_OK;
+}
+#endif
+
+void rtsp_port_pairing_memory(rtsp_pairing_memory_t *out) {
+  const uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+  out->internal_free = heap_caps_get_free_size(caps);
+  out->internal_largest = heap_caps_get_largest_free_block(caps);
+  out->psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+  out->psram_largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+}
+
 uint32_t rtsp_port_now_ms(void) {
   return (uint32_t)(esp_timer_get_time() / 1000);
 }
@@ -101,7 +130,8 @@ typedef enum {
   SET_GET_VOLUME,
   SET_SET_VOLUME,
   SET_PERSIST_VOLUME,
-  SET_GET_NAME
+  SET_GET_NAME,
+  SET_SET_NAME
 } settings_op_t;
 
 typedef struct {
@@ -128,17 +158,27 @@ static void settings_task(void *arg) {
       job->err = settings_get_device_name(job->name, sizeof(job->name));
       job->name[sizeof(job->name) - 1] = '\0';
       break;
+    case SET_SET_NAME:
+      job->err = settings_set_device_name(job->name);
+      if (job->err == ESP_OK)
+        job->err = settings_get_device_name(job->name, sizeof(job->name));
+      if (job->err == ESP_OK) {
+        wifi_set_hostname(job->name);
+        job->err = mdns_airplay_update_name(job->name);
+      }
+      break;
   }
   xTaskNotifyGive(job->waiter);
   vTaskDelete(NULL);
 }
 
-static settings_job_t *run_settings(settings_op_t op, float volume) {
+static settings_job_t *run_settings(settings_op_t op, float volume, const char *name) {
   settings_job_t *job =
       heap_caps_calloc(1, sizeof(*job), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   if (job == NULL) return NULL;
   job->op = op;
   job->volume = volume;
+  if (name) snprintf(job->name, sizeof(job->name), "%s", name);
   job->err = ESP_FAIL;
   job->waiter = xTaskGetCurrentTaskHandle();
   if (xTaskCreate(settings_task, "rtsp_set", SETTINGS_STACK, job,
@@ -151,7 +191,7 @@ static settings_job_t *run_settings(settings_op_t op, float volume) {
 }
 
 esp_err_t rtsp_port_settings_get_volume(float *volume) {
-  settings_job_t *job = run_settings(SET_GET_VOLUME, 0.0f);
+  settings_job_t *job = run_settings(SET_GET_VOLUME, 0.0f, NULL);
   esp_err_t err;
   if (job == NULL) return ESP_ERR_NO_MEM;
   err = job->err;
@@ -161,7 +201,7 @@ esp_err_t rtsp_port_settings_get_volume(float *volume) {
 }
 
 static esp_err_t run_settings_err(settings_op_t op, float volume) {
-  settings_job_t *job = run_settings(op, volume);
+  settings_job_t *job = run_settings(op, volume, NULL);
   esp_err_t err;
   if (job == NULL) return ESP_ERR_NO_MEM;
   err = job->err;
@@ -178,14 +218,35 @@ esp_err_t rtsp_port_settings_persist_volume(void) {
 }
 
 esp_err_t rtsp_port_settings_get_name(char *name, size_t len) {
-  settings_job_t *job = run_settings(SET_GET_NAME, 0.0f);
+  settings_job_t *job = run_settings(SET_GET_NAME, 0.0f, NULL);
   esp_err_t err;
   if (job == NULL) return ESP_ERR_NO_MEM;
   err = job->err;
   if (err == ESP_OK && len > 0) {
     strncpy(name, job->name, len - 1);
     name[len - 1] = '\0';
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+    rtsp_port_lock();
+    snprintf(s_reset_name, sizeof(s_reset_name), "%s", job->name);
+    rtsp_port_unlock();
+#endif
   }
+  heap_caps_free(job);
+  return err;
+}
+
+esp_err_t rtsp_port_settings_set_name(const char *name) {
+  if (!name || strnlen(name, 65) > 64) return ESP_ERR_INVALID_ARG;
+  settings_job_t *job = run_settings(SET_SET_NAME, 0.0f, name);
+  if (!job) return ESP_ERR_NO_MEM;
+  const esp_err_t err = job->err;
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+  if (err == ESP_OK) {
+    rtsp_port_lock();
+    snprintf(s_reset_name, sizeof(s_reset_name), "%s", job->name);
+    rtsp_port_unlock();
+  }
+#endif
   heap_caps_free(job);
   return err;
 }
@@ -522,17 +583,33 @@ static void listener_task(void *arg) {
 
 /* ---- rtsp_server.h ---- */
 
+void rtsp_server_begin_reset(void) {
+  rtsp_port_lock();
+  s_reset_in_progress = true;
+  rtsp_port_unlock();
+}
+
 esp_err_t rtsp_server_start(void) {
   struct sockaddr_in addr = {0};
   int one = 1;
   int fd;
 
   rtsp_port_lock();
+  if (s_reset_in_progress) {
+    rtsp_port_unlock();
+    return ESP_ERR_INVALID_STATE;
+  }
   if (s_running) {
     rtsp_port_unlock();
     /* still ending after a stop (spec "Interface to the firmware") */
     return s_stopping ? ESP_ERR_INVALID_STATE : ESP_OK;
   }
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+  /* start() runs on an internal-stack startup/maintenance task, before
+   * streaming. Removal can answer without creating a settings worker. */
+  if (settings_get_device_name(s_reset_name, sizeof(s_reset_name)) != ESP_OK)
+    s_reset_name[0] = '\0';
+#endif
   fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
   if (fd < 0) {
     rtsp_port_unlock();

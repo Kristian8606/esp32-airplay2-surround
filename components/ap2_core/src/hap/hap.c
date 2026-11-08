@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "airplay_identity.h"
+#include "ap2_pairings.h"
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "hap_private.h"
@@ -76,6 +78,14 @@ esp_err_t ap2_hap_identity_init(void) {
     }
   }
   nvs_close(nvs);
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+  if (err == ESP_OK) {
+    err = ap2_pairings_init();
+    if (err != ESP_OK) {
+      ESP_LOGE(TAG, "HomeKit pairing store: %s", esp_err_to_name(err));
+    }
+  }
+#endif
   return err;
 }
 
@@ -89,6 +99,51 @@ const uint8_t *ap2_hap_identity_secret_key(void) {
 
 const char *ap2_hap_identity_id(void) {
   return identity_id;
+}
+
+const char *ap2_hap_presented_id(bool pi) {
+  static char pairing_id[AIRPLAY_PAIRING_ID_LEN];
+  if (!pi) return identity_id;
+  if (pairing_id[0] == '\0') {
+    airplay_get_pairing_id(pairing_id, sizeof(pairing_id));
+    pairing_id[sizeof(pairing_id) - 1] = '\0';
+  }
+  return pairing_id;
+}
+
+bool ap2_hap_setup_transient(const ap2_hap_session_t *session) {
+  return session && session->pair_setup_transient;
+}
+
+bool ap2_hap_controller(const ap2_hap_session_t *session, const char **id,
+                        size_t *id_len, uint8_t *perm) {
+  uint8_t ltpk[32], current_perm;
+  if (!session || !session->controller_verified ||
+      !ap2_pairings_find((const uint8_t *)session->controller_id,
+                         session->controller_id_len, ltpk, &current_perm) ||
+      sodium_memcmp(ltpk, session->controller_ltpk, 32) != 0) return false;
+  if (id) *id = session->controller_id;
+  if (id_len) *id_len = session->controller_id_len;
+  if (perm) *perm = current_perm;
+  return true;
+}
+
+bool ap2_hap_controller_revoked(const ap2_hap_session_t *session) {
+  return session && session->controller_verified &&
+         !ap2_hap_controller(session, NULL, NULL, NULL);
+}
+
+void ap2_hap_set_controller(ap2_hap_session_t *session, const uint8_t *id,
+                            size_t id_len, uint8_t perm) {
+  if (!session || !id || id_len == 0 ||
+      id_len > sizeof(session->controller_id)) {
+    return;
+  }
+  if (!ap2_pairings_find(id, id_len, session->controller_ltpk, NULL)) return;
+  memcpy(session->controller_id, id, id_len);
+  session->controller_id_len = (uint8_t)id_len;
+  session->controller_perm = perm;
+  session->controller_verified = true;
 }
 
 ap2_hap_session_t *ap2_hap_session_new(void) {

@@ -74,6 +74,17 @@ bool ap2_bplist_stream_crypto(const uint8_t *plist, size_t plist_len,
                               size_t *eiv_len, uint8_t *shk,
                               size_t shk_capacity, size_t *shk_len);
 
+/* AirPlay Home configuration: fields of ConfigurationDictionary (or root),
+ * not arbitrary nested keys. Unknown properties are left to the controller. */
+typedef struct {
+  bool has_name;
+  char name[65]; /* settings limit: 64 UTF-8 bytes plus terminator */
+  bool has_hk_access_control;
+  bool hk_access_control;
+} ap2_configure_request_t;
+bool ap2_bplist_configure_request(const uint8_t *plist, size_t plist_len,
+                                  ap2_configure_request_t *out);
+
 /* ---- Binary plists this accessory sends ----
  *
  * Each returns the length written, or 0 if it does not fit or an argument is
@@ -97,6 +108,9 @@ size_t ap2_reply_feedback(uint8_t *out, size_t capacity, int64_t stream_type,
 
 /* What the RTSP /info reply says about the accessory. */
 typedef struct {
+  const char *manufacturer;
+  const char *serial_number;
+  const char *firmware_revision;
   const char *device_id;         /* "deviceid", AA:BB:CC:DD:EE:FF */
   const char *name;              /* "name", UTF-8 */
   const char *model;             /* "model" */
@@ -114,6 +128,14 @@ typedef struct {
 } ap2_info_t;
 
 size_t ap2_reply_info(uint8_t *out, size_t capacity, const ap2_info_t *info);
+
+size_t ap2_reply_configure(uint8_t *out, size_t capacity, const char *identifier,
+                            const uint8_t public_key[32], const char *name,
+                            bool hk_access_control);
+/* Nested configuration keys; bools are also accepted as integers. */
+bool ap2_bplist_int_deep(const uint8_t *p, size_t n, const char *key, int64_t *out);
+bool ap2_bplist_string_deep(const uint8_t *p, size_t n, const char *key,
+                            char *out, size_t capacity);
 
 /* Messages on the event channel. */
 /* A media remote command, 0 to 5. */

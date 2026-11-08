@@ -17,3 +17,6 @@ CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 # next restart. spk_update_confirm() marks it good on the first PING/TIME.
 # Needs the bootloader of this build: flash the speaker once over USB.
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# FDK S32 limiter with RTP-compensated lookahead and clean stream boundaries.
+CONFIG_AIRPLAY_AAC_FDK_LIMITER=y

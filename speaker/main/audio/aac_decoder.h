@@ -33,7 +33,21 @@ typedef enum {
 
 typedef struct {
   int channels;
+  uint32_t limiter_delay_frames;
+  uint32_t output_rtp; /* RTP of output[0], corrected for PCM lookahead. */
 } aac_decode_info_t;
+uint32_t aac_decoder_limiter_delay_frames(const aac_decoder_t *decoder);
+/* Tail is needed within the queued-DMA horizon, even if TCP stays open. */
+bool aac_decoder_tail_due(const aac_decoder_t *decoder,
+                            uint32_t wanted_rtp, uint32_t lead_frames);
+uint32_t aac_decoder_tail_wait_ms(const aac_decoder_t *decoder,
+                                   uint32_t requested_ms, uint32_t maximum_ms);
+/* Publish a valid final tail at EOS/forward gap; not for cancelled audio. */
+int aac_decoder_drain(aac_decoder_t *decoder, float *output,
+                       size_t capacity_frames, aac_decode_info_t *info);
+
+/* Cancelled PCM must never be drained into the next play sequence. */
+void aac_decoder_discard_pending(aac_decoder_t *decoder);
 
 aac_decoder_t *aac_decoder_create(const aac_decoder_config_t *config);
 void aac_decoder_destroy(aac_decoder_t *decoder);
@@ -45,6 +59,7 @@ void aac_decoder_destroy(aac_decoder_t *decoder);
 int aac_decoder_decode(aac_decoder_t *decoder, uint8_t *input,
                        size_t input_len, float *output,
                        size_t output_capacity_frames,
+                       uint32_t input_rtp, bool mute_output,
                        aac_decode_info_t *info);
 
 /* EXPERIMENT (multichannel): log the reset reason and, after a crash, the

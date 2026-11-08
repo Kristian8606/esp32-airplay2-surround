@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 
 #include "airplay_identity.h"
 #include "rtsp_port.h"
@@ -192,7 +193,14 @@ rtsp_read_result_t rtsp_reader_feed(rtsp_reader_t *reader, const uint8_t *data,
       *consumed = used;
       return RTSP_READ_MESSAGE;
     }
-    if (m->body_len > reader->body_max) {
+    const char *type = rtsp_msg_header(m, "Content-Type");
+    const bool artwork = strcmp(m->start[0], "SET_PARAMETER") == 0 &&
+                         type && strncasecmp(type, "image/", 6) == 0;
+    if (artwork && m->body_len <= RTSP_ARTWORK_MAX) {
+      /* Consume every byte to preserve framing, without retaining the image.
+       * This also works across encrypted 1024-byte control frames. */
+      reader->phase = PHASE_DISCARD;
+    } else if (m->body_len > reader->body_max || artwork) {
       m->body_state = RTSP_BODY_TOO_LARGE;
       reader->phase = PHASE_DISCARD;
     } else {
@@ -234,7 +242,7 @@ const char *rtsp_reason(int code) {
 
 size_t rtsp_reply_head(char *out, size_t capacity, int code, const char *cseq,
                        const char *extra, const char *content_type,
-                       size_t body_len) {
+                       size_t body_len, bool http) {
   size_t n = 0;
   int w;
 
@@ -246,7 +254,7 @@ size_t rtsp_reply_head(char *out, size_t capacity, int code, const char *cseq,
   } while (0)
 
   if (capacity == 0) return 0;
-  APPEND("RTSP/1.0 %d %s\r\n", code, rtsp_reason(code));
+  APPEND("%s %d %s\r\n", http ? "HTTP/1.1" : "RTSP/1.0", code, rtsp_reason(code));
   if (cseq != NULL) APPEND("CSeq: %s\r\n", cseq);
   APPEND("Server: %s\r\n", AIRPLAY_SERVER_HEADER);
   if (extra != NULL) APPEND("%s", extra);
@@ -254,8 +262,8 @@ size_t rtsp_reply_head(char *out, size_t capacity, int code, const char *cseq,
     APPEND("Content-Type: %s\r\n", content_type != NULL
                                        ? content_type
                                        : "application/octet-stream");
-    APPEND("Content-Length: %zu\r\n", body_len);
   }
+  if (http || body_len > 0) APPEND("Content-Length: %zu\r\n", body_len);
   APPEND("\r\n");
 #undef APPEND
   return n;

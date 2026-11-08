@@ -10,6 +10,7 @@ idf_component_register(
         "src/hap/hap_crypto.c"
         "src/hap/hap_pair_setup.c"
         "src/hap/hap_pair_verify.c"
+        "src/hap/hap_pairings.c"
         "src/hap/srp.c"
         "src/hap/tlv8.c"
         "src/plist/bplist_parser.c"
@@ -28,5 +29,5 @@ idf_component_register(
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "src/hap" "src/plist" "src/fairplay" "src/rtsp" "src/mdns"
     PRIV_REQUIRES nvs_flash mbedtls esp_hw_support lwip esp_timer helpers
-                  wifi espressif__mdns settings
+                  wifi espressif__mdns settings esp_http_server
 )

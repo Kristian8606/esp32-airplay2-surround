@@ -24,6 +24,13 @@
 #define AAC_MULTICHANNEL 0
 #endif
 
+#define AAC_LIMITER_ATTACK_MS 15U
+#if defined(CONFIG_AIRPLAY_AAC_FDK_LIMITER) && CONFIG_AIRPLAY_AAC_FDK_LIMITER
+#define AAC_LIMITER_ENABLED 1
+#else
+#define AAC_LIMITER_ENABLED 0
+#endif
+
 #define ADTS_HEADER_LEN AAC_DECODER_INPUT_HEADROOM
 #define AAC_INPUT_MAX   8192U
 /* S32 scratch for one AAC-LC access unit (2048
@@ -39,6 +46,10 @@ struct aac_decoder {
   HANDLE_AACDECODER fdk;
   LONG *mc_pcm; /* FDK signed32 before 16-bit quantization; never INT_PCM. */
   uint32_t decode_errors;
+  uint32_t limiter_delay_frames;
+  uint32_t next_input_rtp;
+  bool have_next_rtp;
+  int pcm_channels; /* actual interleaved output; 1 in the surround fast path */
   uint32_t mc_decodes;
 #if AAC_MULTICHANNEL
   bool mc_layout_known;
@@ -165,25 +176,28 @@ static bool open_fdk_decoder(aac_decoder_t *d) {
     ESP_LOGE(TAG, "FDK aacDecoder_Open failed");
     return false;
   }
-  /* Keep every encoded channel (no FDK downmix) in WAV order, and no
-   * limiter: DecodeFrame32 requires it disabled. Preserve FDK's existing
-   * DRC defaults and scaling; no extra gain or source-depth assumption. */
+  /* Keep channel mapping/DRC and S32 precision. The optional limiter uses
+   * actual output delay, compensated in PCM RTP tags below. */
   mc_trace(MC_STAGE_SETPARAM, 0);
   const AAC_DECODER_ERROR e1 =
       aacDecoder_SetParam(d->fdk, AAC_PCM_MAX_OUTPUT_CHANNELS, MC_MAX_CHANNELS);
   const AAC_DECODER_ERROR e2 =
       aacDecoder_SetParam(d->fdk, AAC_PCM_OUTPUT_CHANNEL_MAPPING, 1);
   const AAC_DECODER_ERROR e3 =
-      aacDecoder_SetParam(d->fdk, AAC_PCM_LIMITER_ENABLE, 0);
+      aacDecoder_SetParam(d->fdk, AAC_PCM_LIMITER_ENABLE, AAC_LIMITER_ENABLED);
   /* RTP already timestamps each AU. FDK's default interpolation adds one
    * unaccounted frame (1024 samples); noise substitution has no extra delay. */
   const AAC_DECODER_ERROR e4 =
       aacDecoder_SetParam(d->fdk, AAC_CONCEAL_METHOD, 1);
+  const AAC_DECODER_ERROR e5 = AAC_LIMITER_ENABLED
+      ? aacDecoder_SetParam(d->fdk, AAC_PCM_LIMITER_ATTACK_TIME, AAC_LIMITER_ATTACK_MS)
+      : AAC_DEC_OK;
   /* The first frame synthesizes every channel; once the layout is known the
    * synth mask is narrowed to the selected speaker (mc_apply_speaker). */
-  if (e1 != AAC_DEC_OK || e2 != AAC_DEC_OK || e3 != AAC_DEC_OK || e4 != AAC_DEC_OK) {
-    ESP_LOGE(TAG, "FDK S32 setup failed (params 0x%x/0x%x/0x%x/0x%x)",
-             e1, e2, e3, e4);
+  if (e1 != AAC_DEC_OK || e2 != AAC_DEC_OK || e3 != AAC_DEC_OK ||
+      e4 != AAC_DEC_OK || e5 != AAC_DEC_OK) {
+    ESP_LOGE(TAG, "FDK S32 setup failed (params 0x%x/0x%x/0x%x/0x%x/0x%x)",
+             e1, e2, e3, e4, e5);
     return false;
   }
 #if AAC_MULTICHANNEL
@@ -341,6 +355,7 @@ static void mc_apply_speaker(aac_decoder_t *d) {
   if (!d->mc_layout_known || d->mc_channels <= 2) return;
   const int speaker = __atomic_load_n(&s_mc_speaker, __ATOMIC_RELAXED);
   if (speaker == d->mc_applied_speaker) return;
+  aac_decoder_discard_pending(d);
   const int channel =
       (speaker >= 0 && speaker < AAC_SPEAKER_COUNT) ? d->mc_speaker_channel[speaker] : -1;
   const bool silent = speaker >= 0 && channel < 0;
@@ -462,6 +477,31 @@ static void mc_account_time(aac_decoder_t *d, int64_t us, int frame_size,
 }
 #endif /* AAC_MULTICHANNEL */
 
+static void mc_convert_pcm(aac_decoder_t *d, const CStreamInfo *si,
+                            size_t frames, bool fast, float *output) {
+  const int ch = si->numChannels;
+
+#if AAC_MULTICHANNEL
+  const int pick = d->mc_play_channel;
+  if (ch >= 3 && d->mc_silent) {
+    memset(output, 0, frames * 2U * sizeof(*output));
+  } else if (fast) {
+    /* FDK wrote just the played channel, mono. */
+    mc_pick_channel(d->mc_pcm, 1, 0, frames, output);
+  } else if (ch >= 3 && pick >= 0 && pick < ch) {
+    mc_pick_channel(d->mc_pcm, ch, pick, frames, output);
+  } else if (ch >= 3) {
+    mc_downmix_to_mono(d->mc_pcm, ch, d->mc_lfe_index, frames, output);
+  } else
+#endif
+  if (ch == 2) {
+    for (size_t i = 0; i < frames * 2U; ++i)
+      output[i] = audio_pcm32_to_float(d->mc_pcm[i]);
+  } else {
+    mc_pick_channel(d->mc_pcm, 1, 0, frames, output);
+  }
+}
+
 static int mc_decode(aac_decoder_t *d, const uint8_t *data, size_t len,
                      float *output, size_t output_capacity_frames,
                      aac_decode_info_t *info) {
@@ -486,6 +526,7 @@ static int mc_decode(aac_decoder_t *d, const uint8_t *data, size_t len,
   mc_trace(MC_STAGE_POST, d->mc_decodes);
 
   if (err != AAC_DEC_OK) {
+    aac_decoder_discard_pending(d);
     if ((++d->decode_errors & 63U) == 1U || d->decode_errors <= 8U)
       AP_LOGW(TAG, "FDK decode error 0x%x (in %u B, %u left; %lu total)",
                err, (unsigned)len, (unsigned)valid,
@@ -496,6 +537,7 @@ static int mc_decode(aac_decoder_t *d, const uint8_t *data, size_t len,
   const CStreamInfo *si = aacDecoder_GetStreamInfo(d->fdk);
   if (!si || si->numChannels <= 0 || si->numChannels > MC_MAX_CHANNELS ||
       si->frameSize <= 0 || (size_t)si->frameSize > MC_MAX_FRAMES) {
+    aac_decoder_discard_pending(d);
     return -1;
   }
 #if !AAC_MULTICHANNEL
@@ -523,32 +565,16 @@ static int mc_decode(aac_decoder_t *d, const uint8_t *data, size_t len,
   ++d->mc_decodes;
   mc_trace(MC_STAGE_IDLE, d->mc_decodes);
 
-  const int ch = si->numChannels;
-  size_t frames = (size_t)si->frameSize;
+  const size_t frames = (size_t)si->frameSize;
+  if (frames > output_capacity_frames) { aac_decoder_discard_pending(d); return -1; }
+  d->pcm_channels = si->numChannels;
 #if AAC_MULTICHANNEL
-  if (ch > 2) mc_log_peaks(d, ch, frames, fast != 0);
+  if (fast) d->pcm_channels = 1;
+  if (si->numChannels > 2) mc_log_peaks(d, si->numChannels, frames, fast != 0);
+#else
+  const bool fast = false;
 #endif
-  if (frames > output_capacity_frames) frames = output_capacity_frames;
-
-#if AAC_MULTICHANNEL
-  const int pick = d->mc_play_channel;
-  if (ch >= 3 && d->mc_silent) {
-    memset(output, 0, frames * 2U * sizeof(*output));
-  } else if (fast) {
-    /* FDK wrote just the played channel, mono. */
-    mc_pick_channel(d->mc_pcm, 1, 0, frames, output);
-  } else if (ch >= 3 && pick >= 0 && pick < ch) {
-    mc_pick_channel(d->mc_pcm, ch, pick, frames, output);
-  } else if (ch >= 3) {
-    mc_downmix_to_mono(d->mc_pcm, ch, d->mc_lfe_index, frames, output);
-  } else
-#endif
-  if (ch == 2) {
-    for (size_t i = 0; i < frames * 2U; ++i)
-      output[i] = audio_pcm32_to_float(d->mc_pcm[i]);
-  } else {
-    mc_pick_channel(d->mc_pcm, 1, 0, frames, output);
-  }
+  mc_convert_pcm(d, si, frames, fast != 0, output);
   if (info) info->channels = 2;
   return (int)frames;
 }
@@ -637,6 +663,8 @@ aac_decoder_t *aac_decoder_create(const aac_decoder_config_t *config) {
     return NULL;
   }
   d->config = *config;
+  d->limiter_delay_frames = AAC_LIMITER_ENABLED
+      ? (uint32_t)config->sample_rate * AAC_LIMITER_ATTACK_MS / 1000U : 0;
   /* A full interleaved first frame is needed before surround selection.
    * Reserve the maximum even for stereo so an unexpected layout is safe. */
   const size_t bytes = MC_MAX_FRAMES * MC_MAX_CHANNELS * sizeof(*d->mc_pcm);
@@ -648,7 +676,58 @@ aac_decoder_t *aac_decoder_create(const aac_decoder_config_t *config) {
     aac_decoder_destroy(d);
     return NULL;
   }
+  if (AAC_LIMITER_ENABLED)
+    ESP_LOGI(TAG, "FDK PCM limiter ON: S32, lookahead %lu frames, RTP compensated",
+             (unsigned long)d->limiter_delay_frames);
   return d;
+}
+
+uint32_t aac_decoder_limiter_delay_frames(const aac_decoder_t *d) {
+  return d ? d->limiter_delay_frames : 0;
+}
+
+uint32_t aac_decoder_tail_wait_ms(const aac_decoder_t *d, uint32_t requested,
+                                   uint32_t maximum) {
+  return d && d->have_next_rtp && d->limiter_delay_frames && requested > maximum
+             ? maximum : requested;
+}
+
+bool aac_decoder_tail_due(const aac_decoder_t *d, uint32_t wanted,
+                            uint32_t lead) {
+  if (!d || !d->have_next_rtp || !d->limiter_delay_frames || lead > INT32_MAX)
+    return false;
+  const uint32_t start = d->next_input_rtp - d->limiter_delay_frames;
+  return (int32_t)(start - wanted) <= (int32_t)lead;
+}
+
+void aac_decoder_discard_pending(aac_decoder_t *d) {
+  if (!d) return;
+  if (d->fdk) (void)aacDecoder_ResetLimiter(d->fdk);
+  d->have_next_rtp = false;
+}
+
+int aac_decoder_drain(aac_decoder_t *d, float *out, size_t cap,
+                       aac_decode_info_t *info) {
+  if (info) memset(info, 0, sizeof(*info));
+  if (!d || !out || !info) return -1;
+#if AAC_MULTICHANNEL
+  mc_apply_speaker(d); /* A changed selection cancels the old channel's tail. */
+#endif
+  if (!d->have_next_rtp) return 0;
+  const uint32_t delay = d->limiter_delay_frames;
+  if (delay > cap) return -1;
+  UINT frames = 0;
+  if (aacDecoder_DrainLimiter32(d->fdk, d->mc_pcm,
+          MC_MAX_FRAMES * MC_MAX_CHANNELS, &frames) != AAC_DEC_OK || frames != delay)
+    return -1;
+  const CStreamInfo *si = aacDecoder_GetStreamInfo(d->fdk);
+  if (frames && (!si || si->numChannels < 1 || si->numChannels > MC_MAX_CHANNELS)) return -1;
+  if (frames) mc_convert_pcm(d, si, frames, d->pcm_channels == 1 && si->numChannels > 2, out);
+  info->channels = 2;
+  info->limiter_delay_frames = delay;
+  info->output_rtp = d->next_input_rtp - delay;
+  d->have_next_rtp = false;
+  return (int)frames;
 }
 
 void aac_decoder_destroy(aac_decoder_t *d) {
@@ -668,13 +747,21 @@ void aac_decoder_destroy(aac_decoder_t *d) {
 int aac_decoder_decode(aac_decoder_t *d, uint8_t *input,
                        size_t input_len, float *output,
                        size_t output_capacity_frames,
+                       uint32_t input_rtp, bool mute_output,
                        aac_decode_info_t *info) {
+  if (info) memset(info, 0, sizeof(*info));
   const bool ready = d && d->fdk;
   if (!ready || !input || input_len == 0 || !output ||
       output_capacity_frames == 0) {
     return -1;
   }
 
+#if AAC_MULTICHANNEL
+  mc_apply_speaker(d);
+#endif
+  if (mute_output || !d->have_next_rtp || input_rtp != d->next_input_rtp) {
+    if (aacDecoder_ResetLimiter(d->fdk) != AAC_DEC_OK) return -1;
+  }
   const uint8_t *decode_data = input;
   size_t decode_len = input_len;
   if (!has_adts(input, input_len)) {
@@ -687,6 +774,19 @@ int aac_decoder_decode(aac_decoder_t *d, uint8_t *input,
     decode_len = input_len + ADTS_HEADER_LEN;
   }
 
-  return mc_decode(d, decode_data, decode_len, output,
-                    output_capacity_frames, info);
+  const int frames = mc_decode(d, decode_data, decode_len, output,
+                                output_capacity_frames, info);
+  if (frames <= 0) return frames;
+  d->limiter_delay_frames = aacDecoder_GetLimiterDelay(d->fdk);
+  d->next_input_rtp = input_rtp + (uint32_t)frames;
+  d->have_next_rtp = true;
+  if (mute_output) {
+    memset(output, 0, (size_t)frames * 2U * sizeof(*output));
+    if (aacDecoder_ResetLimiter(d->fdk) != AAC_DEC_OK) return -1;
+  }
+  if (info) {
+    info->limiter_delay_frames = d->limiter_delay_frames;
+    info->output_rtp = input_rtp - d->limiter_delay_frames;
+  }
+  return frames;
 }

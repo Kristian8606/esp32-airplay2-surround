@@ -1,6 +1,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "airplay_identity.h"
+#include "ap2_pairings.h"
 #include "esp_log.h"
 #include "ap2_hap.h"
 #include "hap_private.h"
@@ -11,7 +13,13 @@
 static const char *TAG = "hap_setup";
 
 #define SETUP_USERNAME "Pair-Setup"
+/* Transient pairing always uses the fixed AirPlay code. */
 #define SETUP_PASSWORD "3939"
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+#define SETUP_PASSWORD_FULL CONFIG_AIRPLAY_HOMEKIT_SETUP_CODE
+#else
+#define SETUP_PASSWORD_FULL SETUP_PASSWORD
+#endif
 
 #define SETUP_STATE_IDLE 0
 #define SETUP_STATE_M2   2
@@ -47,6 +55,15 @@ esp_err_t ap2_hap_setup_m1(ap2_hap_session_t *session, const uint8_t *input,
     return ESP_ERR_INVALID_ARG;
   }
 
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+  if (!wants_transient(input, input_len) && ap2_pairings_has_admin()) {
+    ESP_LOGW(TAG, "HomeKit pair-setup unavailable: an administrator is still paired");
+    return ap2_hap_write_error(SETUP_STATE_M2, AP2_TLV_ERROR_UNAVAILABLE,
+                               output, output_capacity, output_len);
+  }
+#endif
+  session->controller_verified = false;
+  session->session_established = false;
   /* A new attempt replaces whatever this connection did before. */
   ap2_srp_delete(session->srp);
   session->srp = ap2_srp_new();
@@ -56,8 +73,12 @@ esp_err_t ap2_hap_setup_m1(ap2_hap_session_t *session, const uint8_t *input,
     return ESP_ERR_NO_MEM;
   }
   session->pair_setup_transient = wants_transient(input, input_len);
+  ESP_LOGI(TAG, "pair-setup M1: %s pairing",
+           session->pair_setup_transient ? "transient" : "full (HomeKit)");
 
-  err = ap2_srp_start(session->srp, SETUP_USERNAME, SETUP_PASSWORD);
+  err = ap2_srp_start(session->srp, SETUP_USERNAME,
+                      session->pair_setup_transient ? SETUP_PASSWORD
+                                                    : SETUP_PASSWORD_FULL);
   if (err != ESP_OK) {
     return err;
   }
@@ -98,7 +119,8 @@ esp_err_t ap2_hap_setup_m3(ap2_hap_session_t *session, const uint8_t *input,
 
   if (ap2_srp_verify_client(session->srp, client_pub, client_pub_len, proof,
                             proof_len) != ESP_OK) {
-    ESP_LOGW(TAG, "client proof refused");
+    ESP_LOGW(TAG, "pair-setup M3: wrong code (%s pairing), client proof refused",
+             session->pair_setup_transient ? "transient" : "full");
     return ap2_hap_write_error(SETUP_STATE_M4, AP2_TLV_ERROR_AUTHENTICATION, output,
                                output_capacity, output_len);
   }
@@ -170,8 +192,24 @@ static esp_err_t exchange_identities(ap2_hap_session_t *session, const uint8_t *
     return ESP_FAIL;
   }
 
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+  /* The controller that adds the speaker to a home is its first admin. */
+  esp_err_t stored = ap2_pairings_add(client_id, id_len, client_pk,
+                                      AP2_PERM_ADMIN);
+  if (stored != ESP_OK) {
+    ESP_LOGE(TAG, "pair-setup M5: storing controller %.*s failed: %s",
+             (int)id_len, (const char *)client_id, esp_err_to_name(stored));
+    return ap2_hap_write_error(SETUP_STATE_M6,
+                               stored == ESP_ERR_NO_MEM ? AP2_TLV_ERROR_MAX_PEERS
+                                                        : AP2_TLV_ERROR_UNKNOWN,
+                               output, output_capacity, output_len);
+  }
+  ap2_hap_set_controller(session, client_id, id_len, AP2_PERM_ADMIN);
+  const char *own_id = ap2_hap_presented_id(true);
+#else
   /* We answer in the same form. */
   const char *own_id = ap2_hap_identity_id();
+#endif
   size_t own_id_len = strlen(own_id);
   if (ap2_hap_kdf("Pair-Setup-Accessory-Sign-Salt", "Pair-Setup-Accessory-Sign-Info",
                   key, key_len, signing_salt, sizeof(signing_salt)) != ESP_OK) {
@@ -206,6 +244,11 @@ static esp_err_t exchange_identities(ap2_hap_session_t *session, const uint8_t *
   }
   *output_len = ap2_tlv8_writer_size(&enc);
   session->pair_setup_state = SETUP_STATE_M6;
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+  ESP_LOGI(TAG, "pair-setup M6: paired with HomeKit controller %.*s (admin)",
+           (int)id_len, (const char *)client_id);
+  ap2_pairings_log("after pair-setup", true);
+#endif
   return ESP_OK;
 }
 
@@ -219,6 +262,18 @@ esp_err_t ap2_hap_setup_m5(ap2_hap_session_t *session, const uint8_t *input,
     return ESP_ERR_INVALID_STATE;
   }
 
+  if (session->pair_setup_transient) {
+    return ap2_hap_write_error(SETUP_STATE_M6, AP2_TLV_ERROR_AUTHENTICATION,
+                               output, output_capacity, output_len);
+  }
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+  /* Requests run under the RTSP server lock: recheck after M1/M3, since
+   * another setup may have completed between those requests. */
+  if (ap2_pairings_count() != 0) {
+    return ap2_hap_write_error(SETUP_STATE_M6, AP2_TLV_ERROR_UNAVAILABLE,
+                               output, output_capacity, output_len);
+  }
+#endif
   size_t key_len = 0, cipher_len = 0;
   const uint8_t *key = ap2_srp_session_key(session->srp, &key_len);
   uint8_t enc_key[AP2_HAP_CHACHA20_KEY_SIZE];

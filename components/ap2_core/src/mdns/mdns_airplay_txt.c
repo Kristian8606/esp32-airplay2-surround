@@ -82,11 +82,15 @@ void mdns_airplay_build_txt(mdns_airplay_txt_records_t *rec,
   snprintf(rec->features, sizeof rec->features, "0x%X,0x%X",
            (unsigned)AIRPLAY_FEATURES_LO, (unsigned)AIRPLAY_FEATURES_HI);
   snprintf(rec->flags, sizeof rec->flags, "0x%X",
-           (unsigned)AIRPLAY_STATUS_FLAGS);
+           (unsigned)airplay_status_flags());
   hex_lower(rec->pk, public_key, MDNS_AIRPLAY_PUBLIC_KEY_LEN);
   copy_cut(rec->pi, sizeof rec->pi, pairing_id);
   snprintf(rec->vv, sizeof rec->vv, "%d", (int)AIRPLAY_PROTOCOL_VERSION);
 
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+  airplay_get_serial_number(rec->serial, sizeof(rec->serial));
+  airplay_get_firmware_revision(rec->firmware, sizeof(rec->firmware));
+#endif
   const mdns_airplay_txt_t airplay[MDNS_AIRPLAY_AIRPLAY_TXT_COUNT] = {
       {"deviceid", rec->deviceid},
       {"features", rec->features},
@@ -97,6 +101,17 @@ void mdns_airplay_build_txt(mdns_airplay_txt_records_t *rec,
       {"srcvers", AIRPLAY_SOURCE_VERSION},
       {"vv", rec->vv},
       {"acl", "0"},
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+      {"gid", rec->pi},
+      {"igl", "0"},
+      {"isGroupLeader", "0"},
+      {"gcgl", "0"},
+      {"rsf", "0x0"},
+      {"manufacturer", CONFIG_AIRPLAY_HOMEKIT_MANUFACTURER},
+      {"serialNumber", rec->serial},
+      {"fv", rec->firmware},
+      {"protovers", AIRPLAY_PROTOVERS},
+#endif
   };
   const mdns_airplay_txt_t raop[MDNS_AIRPLAY_RAOP_TXT_COUNT] = {
       {"am", AIRPLAY_MODEL},
@@ -104,7 +119,11 @@ void mdns_airplay_build_txt(mdns_airplay_txt_records_t *rec,
       {"da", "true"},
       {"et", "0,3,5"},
       {"ft", rec->features},
+#ifdef CONFIG_ENABLE_AIRPLAY_ARTWORK
+      {"md", "0,1,2"},
+#else
       {"md", "0,2"},
+#endif
       {"pk", rec->pk},
       {"sf", rec->flags},
       {"tp", "UDP"},

@@ -105,8 +105,43 @@ menu "AirPlay Receiver"
         int "Setup AP channel"
         default 1
         range 1 13
+    config AIRPLAY_AAC_FDK_LIMITER
+        bool "FDK PCM limiter (S32, lookahead compensated)"
+        depends on AIRPLAY_ROLE_SPEAKER
+        default y
+        help
+            Enable FDK peak limiting before the float DSP chain. Preserve S32
+            output and compensate the 15 ms lookahead in PCM RTP tags.
+            Pending samples are drained only for valid audio and discarded
+            on FLUSH, stream, format or selected-speaker changes.
+            Peaks introduced later by EQ or loudness are not limited here.
+
+    config AIRPLAY_HOMEKIT
+        bool "HomeKit: allow adding the Gateway speaker to Home"
+        depends on AIRPLAY_ROLE_GATEWAY
+        default y
+        help
+            Present the whole surround system as one AirPlay speaker in Apple
+            Home, with pairing, artwork and playback controls. The individual
+            speakers remain connected through the private surround protocol.
+            AAC 5.1/7.1 support and speaker channel assignments are retained.
+
+    config AIRPLAY_HOMEKIT_MANUFACTURER
+        string "HomeKit manufacturer"
+        depends on AIRPLAY_HOMEKIT
+        default "Espressif"
+
+    config AIRPLAY_HOMEKIT_SETUP_CODE
+        string "HomeKit setup code"
+        depends on AIRPLAY_HOMEKIT
+        default "3939"
+        help
+            Setup code used by full HomeKit pairing. Transient AirPlay
+            enrollment remains available for Apple Home speaker setup.
+
     config ENABLE_AIRPLAY_ARTWORK
         bool "Advertise artwork support"
+        default y if AIRPLAY_HOMEKIT
         default n
 
     menu "Hardware playback buttons"
@@ -162,6 +197,7 @@ menu "AirPlay Receiver"
 
     config AIRPLAY_MODEL_ID
         string "AirPlay model identifier"
+        default "AirPlaySpeaker1,1" if AIRPLAY_HOMEKIT
         default "AudioAccessory6,1"
         help
             The model this receiver announces to AirPlay senders (mDNS

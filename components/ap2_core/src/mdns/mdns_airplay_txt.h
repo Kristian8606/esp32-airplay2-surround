@@ -14,12 +14,16 @@
 #define MDNS_AIRPLAY_LABEL_MAX 63
 /* The device name as read from the settings: 64 bytes and the NUL. */
 #define MDNS_AIRPLAY_DEVICE_NAME_LEN 65
-#define MDNS_AIRPLAY_FALLBACK_NAME "AirPlay Surround Gateway"
+#define MDNS_AIRPLAY_FALLBACK_NAME "ESP32 AirPlay"
 /* "AA:BB:CC:DD:EE:FF" and the NUL. */
 #define MDNS_AIRPLAY_MAC_STR_LEN 18
 #define MDNS_AIRPLAY_PUBLIC_KEY_LEN 32
 
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+#define MDNS_AIRPLAY_AIRPLAY_TXT_COUNT 18
+#else
 #define MDNS_AIRPLAY_AIRPLAY_TXT_COUNT 9
+#endif
 #define MDNS_AIRPLAY_RAOP_TXT_COUNT 12
 
 /* One TXT record; the same layout as mdns_txt_item_t. */
@@ -37,6 +41,8 @@ typedef struct {
   char pk[2 * MDNS_AIRPLAY_PUBLIC_KEY_LEN + 1];
   char pi[AIRPLAY_PAIRING_ID_LEN];
   char vv[12];
+  char serial[AIRPLAY_SERIAL_LEN];
+  char firmware[32];
   mdns_airplay_txt_t airplay[MDNS_AIRPLAY_AIRPLAY_TXT_COUNT];
   mdns_airplay_txt_t raop[MDNS_AIRPLAY_RAOP_TXT_COUNT];
 } mdns_airplay_txt_records_t;

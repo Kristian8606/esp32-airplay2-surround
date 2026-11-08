@@ -21,6 +21,13 @@ void rtsp_port_free(void *ptr);
 void rtsp_port_lock(void);
 void rtsp_port_unlock(void);
 
+/* Resource snapshot for the bounded Pair Verify diagnostic (no allocation). */
+typedef struct {
+  uint32_t internal_free, internal_largest;
+  uint32_t psram_free, psram_largest;
+} rtsp_pairing_memory_t;
+void rtsp_port_pairing_memory(rtsp_pairing_memory_t *out);
+
 /* A millisecond clock for the remote command timeout. */
 uint32_t rtsp_port_now_ms(void);
 
@@ -30,6 +37,8 @@ esp_err_t rtsp_port_settings_get_volume(float *volume);
 esp_err_t rtsp_port_settings_set_volume(float volume);
 esp_err_t rtsp_port_settings_persist_volume(void);
 esp_err_t rtsp_port_settings_get_name(char *name, size_t len);
+/* Persist and republish from an internal-stack settings worker. */
+esp_err_t rtsp_port_settings_set_name(const char *name);
 
 /* The station MAC ("deviceid" of /info). */
 void rtsp_port_device_mac(uint8_t mac[6]);
@@ -46,6 +55,13 @@ void rtsp_port_event_close(rtsp_conn_t *conn);
 /* Close another control connection (take-over). Returns at once; the
  * connection's task ends it and calls rtsp_conn_end(). */
 void rtsp_port_conn_close(rtsp_conn_t *conn);
+
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+/* Notify the preallocated internal-stack reset worker after the reply. */
+void rtsp_port_homekit_reset(void);
+/* Last effective name, cached before streaming; no NVS worker allocation. */
+esp_err_t rtsp_port_homekit_reset_name(char *name, size_t len);
+#endif
 
 /* A free UDP port pair for a realtime stream. */
 esp_err_t rtsp_port_udp_pair(uint16_t *data_port, uint16_t *control_port);

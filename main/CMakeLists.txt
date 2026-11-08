@@ -6,6 +6,7 @@ include("${CMAKE_CURRENT_LIST_DIR}/../common/common.cmake")
 
 set(GATEWAY_SRCS
     "main.c"
+    "homekit_reset.c"
     "web_gateway.c"
     "airplay_identity.c"
     "gw_proxy.c"

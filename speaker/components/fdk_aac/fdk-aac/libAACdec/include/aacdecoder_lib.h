@@ -101,7 +101,7 @@ amm-info@iis.fraunhofer.de
 *******************************************************************************/
 
 /* MODIFIED: Third-Party Modified Version of the Fraunhofer FDK AAC Codec
- * Library for Android, changed 2026-10-24 and 2026-10-26 for esp32-airplay2-surround
+ * Library for Android, changed 2026-10-24, 2026-10-26 and 2026-11-08 for esp32-airplay2-surround
  * (github.com/Kristian8606/esp32-airplay2-surround): single-channel
  * synthesis and output for 5.1/7.1 streams, synthesis timestamps, and S32
  * PCM output before the stock S16 rounding for every channel layout.
@@ -1099,14 +1099,23 @@ LINKSPEC_H AAC_DECODER_ERROR aacDecoder_DecodeFrame(HANDLE_AACDECODER self,
 /* airplay-esp32 patch, 2026-10-26: signed 32-bit PCM output taken before
  * the standard INT_PCM/S16 rounding. Same flags, sample counts, channel order
  * and selected-channel semantics as DecodeFrame. LONG is always 32 bits in
- * FDK. The application must disable AAC_PCM_LIMITER_ENABLE: the stock limiter
- * has an S16 output, so this API returns AAC_DEC_UNSUPPORTED_FORMAT rather
- * than silently discarding precision. AAC-SLS output is also unsupported.
+ * FDK. The S32 limiter extension (2026-11-08) preserves output precision.
+ * AAC-SLS output is unsupported.
  * This output precision does not describe the source precision of lossy AAC. */
 LINKSPEC_H AAC_DECODER_ERROR aacDecoder_DecodeFrame32(HANDLE_AACDECODER self,
                                                        LONG *pTimeData,
                                                        const INT timeDataSize,
                                                        const UINT flags);
+
+/* airplay-esp32 patch (2026-11-08): actual extra lookahead frames of the last
+ * decoded frame, or zero when disabled. Reset only limiter history on a
+ * discontinuity; keep the AAC codec/concealment history. */
+LINKSPEC_H UINT aacDecoder_GetLimiterDelay(HANDLE_AACDECODER self);
+LINKSPEC_H AAC_DECODER_ERROR aacDecoder_ResetLimiter(HANDLE_AACDECODER self);
+/* End of a sequence: emit the pending lookahead tail, then reset it.
+ * capacity is samples across channels; frames is samples per channel. */
+LINKSPEC_H AAC_DECODER_ERROR aacDecoder_DrainLimiter32(
+    HANDLE_AACDECODER self, LONG *output, INT capacity, UINT *frames);
 
 /**
  * \brief       De-allocate all resources of an AAC decoder instance.

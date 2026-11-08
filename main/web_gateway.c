@@ -1,6 +1,7 @@
 /* The Gateway's own pages and APIs: the speakers page, and play/pause and
  * volume of the current AirPlay sender. */
 #include "web_server_internal.h"
+#include "homekit_reset.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -350,6 +351,7 @@ static esp_err_t speaker_fw_post_handler(httpd_req_t *req) {
 static esp_err_t speaker_fw_bin_handler(httpd_req_t *req) { return gw_fw_serve(req); }
 
 void web_role_register(httpd_handle_t server) {
+  ESP_ERROR_CHECK(homekit_reset_register(server));
 #define REG(U, M, H)                                                     \
   do {                                                                   \
     httpd_uri_t x = {.uri = U, .method = M, .handler = H};               \

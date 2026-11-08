@@ -14,6 +14,7 @@ typedef enum {
   NODE_DATA,
   NODE_INT,
   NODE_REAL,
+  NODE_BOOL,
 } node_kind_t;
 
 typedef struct {
@@ -31,12 +32,13 @@ typedef struct {
 #define N_ARRAY(entries) {.kind = NODE_ARRAY, .len = (entries)}
 #define N_STR(s)         {.kind = NODE_STRING, .v.text = (s)}
 #define N_INT(i)         {.kind = NODE_INT, .v.integer = (int64_t)(i)}
+#define N_BOOL(b)        {.kind = NODE_BOOL, .v.integer = (b)}
 #define N_REAL(r)        {.kind = NODE_REAL, .v.real = (r)}
 #define N_DATA(p, n)     {.kind = NODE_DATA, .len = (uint32_t)(n), .v.bytes = (p)}
 
 #define NODE_COUNT(list) (sizeof(list) / sizeof((list)[0]))
 
-#define MAX_NODES       96
+#define MAX_NODES       128
 #define BP_TRAILER_LEN  32u
 #define BP_MAX_OFFSET   0xFFFFu
 
@@ -241,6 +243,9 @@ static size_t write_plist(uint8_t *out, size_t capacity, const node_t *nodes,
     case NODE_INT:
       put_integer(&w, nodes[i].v.integer);
       break;
+    case NODE_BOOL:
+      put_byte(&w, nodes[i].v.integer ? 0x09 : 0x08);
+      break;
     case NODE_REAL:
       put_real(&w, nodes[i].v.real);
       break;
@@ -320,8 +325,10 @@ size_t ap2_reply_info(uint8_t *out, size_t capacity, const ap2_info_t *info) {
     return 0;
   }
 
+  const bool homekit = info->manufacturer && info->serial_number &&
+                       info->firmware_revision;
   const node_t doc[] = {
-      N_DICT(14),
+      N_DICT(homekit ? 25 : 14),
       N_STR("deviceid"), N_STR(info->device_id),
       N_STR("features"), N_INT(info->features),
       N_STR("model"), N_STR(info->model),
@@ -352,6 +359,33 @@ size_t ap2_reply_info(uint8_t *out, size_t capacity, const ap2_info_t *info) {
       N_STR("supportedFormats"), N_DICT(2),
       N_STR("audioStream"), N_INT(info->audio_stream_formats),
       N_STR("bufferStream"), N_INT(info->buffer_stream_formats),
+      N_STR("deviceID"), N_STR(info->device_id),
+      N_STR("manufacturer"), N_STR(info->manufacturer),
+      N_STR("serialNumber"), N_STR(info->serial_number),
+      N_STR("firmwareRevision"), N_STR(info->firmware_revision),
+      N_STR("build"), N_STR(info->firmware_revision),
+      N_STR("sourceVersion"), N_STR(info->source_version),
+      N_STR("protocolVersion"), N_STR(info->protocol_versions),
+      N_STR("keepAliveLowPower"), N_BOOL(true),
+      N_STR("keepAliveSendStatsAsBody"), N_BOOL(true),
+      N_STR("sdk"), N_STR("AirPlay;2.0.2"),
+      N_STR("firmwareBuildDate"), N_STR(__DATE__),
+  };
+  return write_plist(out, capacity, doc, NODE_COUNT(doc) - (homekit ? 0 : 22));
+}
+
+size_t ap2_reply_configure(uint8_t *out, size_t capacity, const char *identifier,
+                            const uint8_t public_key[32], const char *name,
+                            bool hk_access_control) {
+  if (!identifier || !public_key || !name) return 0;
+  const node_t doc[] = {
+      N_DICT(5),
+      N_STR("Identifier"), N_STR(identifier),
+      N_STR("PublicKey"), N_DATA(public_key, 32),
+      N_STR("Device_Name"), N_STR(name),
+      N_STR("Enable_HK_Access_Control"), N_BOOL(hk_access_control),
+      /* Playback stays open, as advertised by acl=0. */
+      N_STR("Access_Control_Level"), N_INT(0),
   };
   return write_plist(out, capacity, doc, NODE_COUNT(doc));
 }
