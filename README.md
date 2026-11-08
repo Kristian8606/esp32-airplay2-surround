@@ -30,6 +30,8 @@ system.
   pair and the subwoofer, as on an AV receiver.
 - 📡 **One AirPlay target.** You pick the Gateway, not eight speakers. Pairing,
   RTSP and the Apple TV's clock are handled once, by the Gateway.
+- 🏠 **Apple Home (HomeKit)** pairing, artwork, playback and volume controls
+  for the whole surround system as one speaker.
 - ⏱️ **Microsecond clock alignment** between speakers through the access
   point's beacon timer (TSF). No extra hardware, no cables.
 - 🎤 **Room calibration** with an optional INMP441 microphone on the
@@ -56,6 +58,7 @@ system.
 ## Contents
 
 - [Gallery](#gallery)
+- [Apple Home (HomeKit)](#apple-home-homekit)
 - [How it works](#how-it-works)
 - [What you need](#what-you-need)
 - [Assembly and wiring](#assembly-and-wiring)
@@ -97,6 +100,28 @@ Click an image to open it full size.
     <td align="center" width="50%">
       <a href="images/speakers-page-tiles.png"><img src="images/speakers-page-tiles.png" alt="Gateway speakers page: one tile per speaker" width="100%"></a>
       <br><sub>One tile per speaker: role, level, delay and live sync</sub>
+    </td>
+  </tr>
+</table>
+
+## Apple Home (HomeKit)
+
+Add the Gateway as a speaker in **Apple Home** to see artwork for the current
+music or video and control playback and volume. The surround system appears
+as **one accessory**, with every speaker keeping its assigned channel.
+
+HomeKit support, setup code, manufacturer and artwork advertising can be
+configured under **AirPlay Receiver** in `idf.py menuconfig`.
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <a href="images/IMG_1584.PNG"><img src="images/IMG_1584.PNG" alt="ESP32 Gateway in Apple Home with film artwork, playback and volume controls" width="300"></a>
+      <br><sub>The Gateway in Apple Home</sub>
+    </td>
+    <td align="center" width="50%">
+      <a href="images/IMG_1583.PNG"><img src="images/IMG_1583.PNG" alt="Apple Home speaker view showing artwork and playback controls" width="300"></a>
+      <br><sub>Artwork and playback controls</sub>
     </td>
   </tr>
 </table>
@@ -368,7 +393,7 @@ the same menus; some options matter for one firmware only:
 | Menu | What you can set | For |
 |---|---|---|
 | **Surround Build Role** | the role (set by the folder: leave it); a fixed Gateway address for networks that filter mDNS; the sync test pulse | both |
-| **AirPlay Receiver** | setup Wi-Fi name and password; playback buttons and AirPlay model (the icon senders show) | Wi-Fi both, the rest Gateway |
+| **AirPlay Receiver** | setup Wi-Fi name and password; HomeKit, setup code, manufacturer, artwork; playback buttons and AirPlay model (the icon senders show) | Wi-Fi both, the rest Gateway |
 | **Multichannel Experiment** | 5.1 / 7.1 on or off, default speaker position | both |
 | **I2S Playout** | BCLK / LRCK / DATA / MCLK GPIOs, output latency of your DAC, wired latency test; web admin password | speakers (password both) |
 | **Amplifier Power Control** | amplifier enable GPIO and level | speakers |
