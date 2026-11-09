@@ -303,6 +303,15 @@ static void fw_tick(int64_t now_us) {
        * it runs its old firmware. */
       AP_LOGW(TAG, "speaker %s did not install the new firmware: it keeps its old one",
               s_fw_busy.name);
+      /* One of another protocol version is tried again only at its HELLO:
+       * end its link so it connects again. */
+      for (size_t i = 0; i < SURROUND_MAX_SPEAKERS; ++i) {
+        gw_speaker_t *sp = &s_spk[i];
+        if (sp->fd >= 0 && sp->fw_only &&
+            memcmp(sp->hello.mac, s_fw_busy.mac, sizeof(s_fw_busy.mac)) == 0) {
+          close_speaker(sp, "firmware not installed");
+        }
+      }
     }
   }
   if (!fw_allowed() || s_fw_busy.active) return;
@@ -758,7 +767,9 @@ static void speakers_task(void *arg) {
                  now_us >= sp->cal_until_us) {
         close_speaker(sp, sp->state == SPK_CONNECTED ? "no HELLO"
                                                      : "no answer to PING");
-      } else if (ping && sp->state != SPK_CONNECTED) {
+      } else if (ping && (sp->state != SPK_CONNECTED || sp->fw_only)) {
+        /* Also one that only installs firmware: its link stays up until it
+         * restarts, so close_speaker() notes the restart and nothing else. */
         send_frame(sp, SURROUND_MSG_PING, NULL, 0);
       }
     }

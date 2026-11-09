@@ -58,6 +58,7 @@ static int http_get(const update_job_t *job, uint8_t *buf, uint8_t **body,
   }
   size_t have = 0;
   char *end = NULL;
+  buf[0] = '\0'; /* the error path below reads it as a string */
   while (!end) {
     const int n = recv(fd, buf + have, SPK_UPDATE_BUF - 1U - have, 0);
     if (n <= 0) break;
@@ -66,7 +67,7 @@ static int http_get(const update_job_t *job, uint8_t *buf, uint8_t **body,
     end = strstr((char *)buf, "\r\n\r\n");
     if (!end && have >= SPK_UPDATE_BUF - 1U) break;
   }
-  if (!end || strncmp((char *)buf + 8, " 200", 4) != 0) {
+  if (!end || have < 12U || strncmp((char *)buf + 8, " 200", 4) != 0) {
     char *eol = strstr((char *)buf, "\r\n");
     if (eol) *eol = '\0';
     ESP_LOGE(TAG, "Gateway answered \"%s\"", have ? (char *)buf : "nothing");
@@ -80,7 +81,8 @@ static int http_get(const update_job_t *job, uint8_t *buf, uint8_t **body,
 
 static esp_err_t install(const update_job_t *job) {
   const esp_partition_t *part = esp_ota_get_next_update_partition(NULL);
-  if (!part || job->m.size > part->size) return ESP_ERR_INVALID_SIZE;
+  if (!part || job->m.size == 0U || job->m.size > part->size)
+    return ESP_ERR_INVALID_SIZE;
   uint8_t *buf = heap_caps_malloc(SPK_UPDATE_BUF, MALLOC_CAP_8BIT);
   if (!buf) return ESP_ERR_NO_MEM;
   uint8_t *data = NULL;
