@@ -157,6 +157,11 @@ typedef enum {
   SOUND_STEREO_ROUTE_MUTE,
 } sound_stereo_route_t;
 void sound_engine_set_stereo_route(sound_stereo_route_t route);
+/* Surround subwoofer: crossover low-pass on everything it plays (a stereo
+ * source's mix and the LFE channel alike), Linkwitz-Riley 24 dB/octave,
+ * before the EQ. 0 = off, the default; spk_link.c sets it from the role.
+ * Heard within the DMA queue (~87 ms). Runtime only, no NVS. */
+void sound_engine_set_lfe_lowpass_hz(uint32_t hz);
 
 /* What the receiver is playing, for status pages (Surround Gateway list). */
 typedef struct {

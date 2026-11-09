@@ -31,6 +31,7 @@
 #define KEY_MC_SPEAKER "mc_speaker"
 #define KEY_SURROUND_TRIM "sur_trim"
 #define KEY_SURROUND_DELAY "sur_delay"
+#define KEY_LFE_LOWPASS "lfe_lp_hz"
 
 #define DEVICE_NAME_MAX 64
 
@@ -491,4 +492,22 @@ esp_err_t settings_set_surround_tuning(int32_t trim_db10, int32_t delay_us) {
   static const char *const keys[] = {KEY_SURROUND_TRIM, KEY_SURROUND_DELAY};
   const int32_t values[] = {trim_db10, delay_us};
   return write_i32("Surround tuning", 2, keys, values);
+}
+
+esp_err_t settings_get_lfe_lowpass(int32_t *hz, int32_t fallback) {
+  if (hz == NULL) {
+    return ESP_ERR_INVALID_ARG;
+  }
+  nvs_handle_t handle = 0;
+  bool opened = open_read(&handle) == ESP_OK;
+  *hz = read_i32(handle, opened, KEY_LFE_LOWPASS, fallback);
+  if (opened) {
+    nvs_close(handle);
+  }
+  return ESP_OK;
+}
+
+esp_err_t settings_set_lfe_lowpass(int32_t hz) {
+  static const char *const keys[] = {KEY_LFE_LOWPASS};
+  return write_i32("Subwoofer crossover", 1, keys, &hz);
 }

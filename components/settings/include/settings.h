@@ -63,3 +63,8 @@ esp_err_t settings_set_mc_speaker(int32_t speaker);
  * tenths of a dB and extra delay in us. 0 and 0 when nothing saved. */
 esp_err_t settings_get_surround_tuning(int32_t *trim_db10, int32_t *delay_us);
 esp_err_t settings_set_surround_tuning(int32_t trim_db10, int32_t delay_us);
+
+/* Subwoofer crossover set from the Gateway web page, in Hz (0 = off).
+ * fallback when nothing was saved. */
+esp_err_t settings_get_lfe_lowpass(int32_t *hz, int32_t fallback);
+esp_err_t settings_set_lfe_lowpass(int32_t hz);

@@ -18,7 +18,7 @@
 #include <assert.h>
 #include <stdint.h>
 
-#define SURROUND_PROTO_VERSION   9
+#define SURROUND_PROTO_VERSION   10 /* 10: subwoofer crossover in CONFIG */
 /* The first version whose speakers install firmware from the Gateway
  * (FW_UPDATE). A Gateway keeps updating a speaker of any version from this
  * one on, also when their versions differ: HELLO and FW_UPDATE never change
@@ -214,23 +214,33 @@ typedef struct __attribute__((packed)) {
 #define SURROUND_TRIM_MAX_DB10  0
 #define SURROUND_DELAY_MIN_US   0      /* extra delay, e.g. distance */
 #define SURROUND_DELAY_MAX_US   50000
+/* Subwoofer crossover: the low-pass a speaker in the subwoofer role puts on
+ * what it plays (the mix of a stereo source, the LFE channel of 5.1/7.1),
+ * Linkwitz-Riley 24 dB/octave. 0 = off; other roles ignore it. */
+#define SURROUND_LOWPASS_OFF        0
+#define SURROUND_LOWPASS_MIN_HZ     40
+#define SURROUND_LOWPASS_MAX_HZ     250
+#define SURROUND_LOWPASS_DEFAULT_HZ 120
 
 typedef struct __attribute__((packed)) {
   int8_t channel;      /* aac_speaker_t, -1 = mono mix */
   int16_t trim_db10;
   int32_t delay_us;
   uint8_t multichannel; /* built with CONFIG_AIRPLAY_MULTICHANNEL */
+  uint16_t lowpass_hz;  /* subwoofer crossover, SURROUND_LOWPASS_* */
 } surround_config_t;
 
 #define SURROUND_SET_CHANNEL 0x01U
 #define SURROUND_SET_TRIM    0x02U
 #define SURROUND_SET_DELAY   0x04U
+#define SURROUND_SET_LOWPASS 0x08U
 
 typedef struct __attribute__((packed)) {
   uint8_t fields; /* SURROUND_SET_*: which of the values below to apply */
   int8_t channel;
   int16_t trim_db10;
   int32_t delay_us;
+  uint16_t lowpass_hz;
 } surround_set_config_t;
 
 #define SURROUND_STATUS_ACTIVE    0x01U /* a stream is started */

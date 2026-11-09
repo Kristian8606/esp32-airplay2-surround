@@ -48,6 +48,7 @@ static esp_err_t speakers_get_handler(httpd_req_t *req) {
       cJSON_AddNumberToObject(o, "trim_db", sp->config.trim_db10 / 10.0);
       cJSON_AddNumberToObject(o, "delay_ms", sp->config.delay_us / 1000.0);
       cJSON_AddBoolToObject(o, "multichannel", sp->config.multichannel != 0U);
+      cJSON_AddNumberToObject(o, "lowpass_hz", sp->config.lowpass_hz);
     }
     if (sp->status_valid) {
       const surround_status_t *st = &sp->status;
@@ -102,6 +103,7 @@ static esp_err_t speakers_post_handler(httpd_req_t *req) {
   cJSON *ch = j ? cJSON_GetObjectItem(j, "channel") : NULL;
   cJSON *trim = j ? cJSON_GetObjectItem(j, "trim_db") : NULL;
   cJSON *delay = j ? cJSON_GetObjectItem(j, "delay_ms") : NULL;
+  cJSON *lowpass = j ? cJSON_GetObjectItem(j, "lowpass_hz") : NULL;
   surround_set_config_t cfg = {0};
   uint8_t mac[6];
   const char *error = NULL;
@@ -136,6 +138,17 @@ static esp_err_t speakers_post_handler(httpd_req_t *req) {
       cfg.delay_us = (int32_t)v;
     } else {
       error = "delay_ms: 0 .. 50";
+    }
+  }
+  if (!error && lowpass) {
+    const double d = cJSON_IsNumber(lowpass) ? lowpass->valuedouble : -1.0;
+    const long v = d >= 0.0 && d <= 1000.0 ? lround(d) : -1;
+    if (v == SURROUND_LOWPASS_OFF ||
+        (v >= SURROUND_LOWPASS_MIN_HZ && v <= SURROUND_LOWPASS_MAX_HZ)) {
+      cfg.fields |= SURROUND_SET_LOWPASS;
+      cfg.lowpass_hz = (uint16_t)v;
+    } else {
+      error = "lowpass_hz: 0 (off) or 40 .. 250";
     }
   }
   if (!error && cfg.fields == 0U) error = "nothing to set";

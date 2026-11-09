@@ -18,6 +18,7 @@
 #include "audio_eq.h"
 #include "audio_fade.h"
 #include "audio_loudness.h"
+#include "audio_lowpass.h"
 #include "ap2_audio_crypto.h"
 #include "audio_diag.h"
 #include "ap2_buffered_fifo.h"
@@ -2775,6 +2776,24 @@ void sound_engine_set_stereo_route(sound_stereo_route_t route) {
   __atomic_store_n(&s_stereo_route, (uint32_t)route, __ATOMIC_RELEASE);
 }
 
+/* Subwoofer crossover (audio_lowpass.h). The frequency is written by the
+ * link task; the filter and its state belong to the I2S side (output_stage,
+ * room calibration), like the EQ: it filters exactly what is heard, and a
+ * stop clears it together with the EQ's state. */
+static uint32_t s_lfe_lowpass_hz;
+static audio_lowpass_t s_lfe_lowpass;
+
+void sound_engine_set_lfe_lowpass_hz(uint32_t hz) {
+  __atomic_store_n(&s_lfe_lowpass_hz, hz, __ATOMIC_RELEASE);
+}
+
+static void lfe_lowpass_apply(float *block, uint32_t frames, int sample_rate) {
+  const uint32_t hz = __atomic_load_n(&s_lfe_lowpass_hz, __ATOMIC_ACQUIRE);
+  if (audio_lowpass_prepare(&s_lfe_lowpass, hz,
+                            sample_rate > 0 ? (uint32_t)sample_rate : 44100U))
+    audio_lowpass_process(&s_lfe_lowpass, block, frames);
+}
+
 /* Surround speaker with a stereo source: keep only its side of it. Applied
  * when a block is decoded, before the PCM FIFO, so each block is routed by
  * its own format (a role change is heard after the FIFO's ~850 ms). A
@@ -2806,6 +2825,7 @@ static void apply_stereo_route(float *block, uint32_t frames,
 static const audio_out_sample_t *output_stage(float *block, uint32_t frames,
                                               int sample_rate,
                                               int32_t current_q15[2]) {
+  lfe_lowpass_apply(block, frames, sample_rate);
   audio_eq_process(block, frames, 2, sample_rate > 0 ? sample_rate : 44100);
   apply_output_volume_f32(block, frames, current_q15);
   /* Loudness follows the volume just applied (current_q15 = its target). */
@@ -2840,6 +2860,7 @@ static bool playout_flush_checked(const char *reason) {
     }
     /* I2S is stopped. Only now forget the EQ and loudness filters' memory of
      * the audio before the stop, so whatever plays next starts from silence. */
+    audio_lowpass_reset(&s_lfe_lowpass);
     audio_eq_reset_state();
     audio_loudness_reset();
     fade_in_arm();
@@ -2869,6 +2890,7 @@ static bool playout_keep_running_stop(const char *reason, bool *idle_zeros) {
     return false;
   }
   /* What plays next starts from silence, as after a real stop. */
+  audio_lowpass_reset(&s_lfe_lowpass);
   audio_eq_reset_state();
   audio_loudness_reset();
   fade_in_arm();
@@ -3059,7 +3081,9 @@ static esp_err_t roomcal_play(cal_chirp_kind_t kind, float gain, int bursts,
       block[2U * f] = v;
       block[2U * f + 1U] = v;
     }
-    /* Silence too, so the filters ring out naturally after each chirp. */
+    /* Silence too, so the filters ring out naturally after each chirp. The
+     * subwoofer's crossover is in the path, so its delay is measured. */
+    lfe_lowpass_apply(block, frames, (int)rate);
     audio_eq_process(block, frames, 2, (int)rate);
     const uint32_t muted = sound_engine_get_output_mute_mask();
     for (uint32_t f = 0; muted && f < frames; ++f) {

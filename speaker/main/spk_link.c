@@ -5,6 +5,7 @@
 #include <inttypes.h>
 #include <math.h>
 #include <netinet/in.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -66,6 +67,21 @@ static volatile int s_link_fd = -1;
 static int32_t s_trim_db10;
 static int32_t s_delay_us;
 static int32_t s_sender_volume_q15 = 32768;
+/* Subwoofer crossover (settings_get_lfe_lowpass), used in the subwoofer
+ * role only. */
+static int32_t s_lowpass_hz = SURROUND_LOWPASS_DEFAULT_HZ;
+
+static bool lowpass_valid(int32_t hz) {
+  return hz == SURROUND_LOWPASS_OFF ||
+         (hz >= SURROUND_LOWPASS_MIN_HZ && hz <= SURROUND_LOWPASS_MAX_HZ);
+}
+
+/* "120 Hz" or "off", for the log. */
+static const char *lowpass_text(uint32_t hz, char *buf, size_t len) {
+  if (hz == 0U) return "off";
+  snprintf(buf, len, "%" PRIu32 " Hz", hz);
+  return buf;
+}
 
 static bool send_all(int fd, const uint8_t *data, size_t len) {
   while (len > 0) {
@@ -186,10 +202,21 @@ static void apply_stereo_route(void) {
       break;
   }
   sound_engine_set_stereo_route(route);
+  /* The subwoofer plays below its crossover only, stereo mix and LFE
+   * channel alike; every other role plays its full range. */
+  const uint32_t lowpass =
+      role == AAC_SPEAKER_LFE ? (uint32_t)s_lowpass_hz : 0U;
+  sound_engine_set_lfe_lowpass_hz(lowpass);
   static const char *const names[] = {"stereo", "left", "right", "mono mix",
                                       "silent"};
-  AP_LOGI(TAG, "stereo sources: %s (role %s)", names[route],
-          aac_speaker_name(role));
+  if (role == AAC_SPEAKER_LFE) {
+    char hz[16];
+    AP_LOGI(TAG, "stereo sources: %s (role %s), crossover %s", names[route],
+            aac_speaker_name(role), lowpass_text(lowpass, hz, sizeof(hz)));
+  } else {
+    AP_LOGI(TAG, "stereo sources: %s (role %s)", names[route],
+            aac_speaker_name(role));
+  }
 }
 
 static void apply_volume(void) {
@@ -205,16 +232,35 @@ static void send_config(int fd) {
 #if defined(CONFIG_AIRPLAY_MULTICHANNEL) && CONFIG_AIRPLAY_MULTICHANNEL
       .multichannel = 1,
 #endif
+      .lowpass_hz = (uint16_t)s_lowpass_hz,
   };
   (void)send_msg(fd, SURROUND_MSG_CONFIG, &c, sizeof(c));
 }
 
 static void set_config(int fd, const surround_set_config_t *m) {
+  /* The role and the crossover both decide the route and the filter:
+   * applied once below, after both are known. */
+  bool route = false;
+  if (m->fields & SURROUND_SET_LOWPASS) {
+    if (lowpass_valid(m->lowpass_hz)) {
+      if (m->lowpass_hz != s_lowpass_hz) {
+        s_lowpass_hz = m->lowpass_hz;
+        (void)settings_set_lfe_lowpass(s_lowpass_hz);
+        route = true;
+      }
+      char hz[16];
+      AP_LOGI(TAG, "CMD set_config crossover %s",
+              lowpass_text((uint32_t)s_lowpass_hz, hz, sizeof(hz)));
+    } else {
+      AP_LOGW(TAG, "CMD set_config: crossover %u Hz out of range",
+              (unsigned)m->lowpass_hz);
+    }
+  }
   if (m->fields & SURROUND_SET_CHANNEL) {
     if (m->channel >= AAC_SPEAKER_MIX && m->channel < AAC_SPEAKER_COUNT) {
       aac_decoder_set_speaker(m->channel);
       (void)settings_set_mc_speaker(m->channel);
-      apply_stereo_route();
+      route = true;
       AP_LOGI(TAG, "CMD set_config channel %d (%s)", (int)m->channel,
               aac_speaker_name(m->channel));
     } else {
@@ -247,6 +293,7 @@ static void set_config(int fd, const surround_set_config_t *m) {
     }
   }
   if (tuning) (void)settings_set_surround_tuning(s_trim_db10, s_delay_us);
+  if (route) apply_stereo_route();
   send_config(fd);
 }
 
@@ -717,6 +764,9 @@ esp_err_t spk_link_start(void) {
   if (delay >= SURROUND_DELAY_MIN_US && delay <= SURROUND_DELAY_MAX_US &&
       sound_engine_set_extra_delay_us(delay) == ESP_OK)
     s_delay_us = delay;
+  int32_t lowpass = SURROUND_LOWPASS_DEFAULT_HZ;
+  (void)settings_get_lfe_lowpass(&lowpass, SURROUND_LOWPASS_DEFAULT_HZ);
+  if (lowpass_valid(lowpass)) s_lowpass_hz = lowpass;
   apply_volume();
   apply_stereo_route();
   ESP_LOGI(TAG, "Surround tuning: trim %.1f dB, delay %" PRId32 " us",
