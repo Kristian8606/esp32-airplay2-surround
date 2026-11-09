@@ -133,11 +133,12 @@ select:disabled,input:disabled{opacity:.45}
  <div class='cal-msg' id='fw-msg'></div>
 </div>
 <div class='grid' id='list'><div class='panel empty'>Loading...</div></div>
-<div class='panel help'><b>Stereo</b> plays on the front pair and the subwoofer only; centre and surrounds stay silent. 5.1 and 7.1 play each channel on its own speaker only: with 5.1 the rear pair is silent, and with 7.1 the rear channels are not heard if there is no rear speaker. <b>Level:</b> lower the louder speakers, 0 dB is the loudest. <b>Delay:</b> play later; 1 m of extra distance to the listener is about 2.9 ms, so delay the closer speakers. <b>Crossover:</b> the subwoofer plays only below it, the stereo mix and the LFE channel alike (24 dB/octave; 120 Hz suits both); the other speakers play their full range. Remove a low-pass from the subwoofer's own EQ when you use it, or the bass is cut twice. The <b>EQ</b> is set on each speaker's own page. A speaker shows up here by itself once it is on the same Wi-Fi as the Gateway.</div>
+<div class='panel help'><b>Stereo</b> plays on the front pair and the subwoofer only; centre and surrounds stay silent. 5.1 and 7.1 play each channel on its own speaker only: with 5.1 the rear pair is silent, and with 7.1 the rear channels are not heard if there is no rear speaker. <b>Level:</b> lower the louder speakers, 0 dB is the loudest. <b>Delay:</b> play later; 1 m of extra distance to the listener is about 2.9 ms, so delay the closer speakers. <b>Crossover:</b> the subwoofer plays only below it, the stereo mix and the LFE channel alike (24 dB/octave; 120 Hz suits both); the other speakers play their full range. Remove a low-pass from the subwoofer's own EQ when you use it, or the bass is cut twice. <b>LFE gain:</b> 5.1/7.1 mix their LFE channel 10 dB low and a receiver adds the 10 dB back; +10 dB is the standard, stereo is never boosted. A limiter keeps boosted peaks from clipping at high volume. Set the subwoofer's level with music so it matches the other speakers. The <b>EQ</b> is set on each speaker's own page. A speaker shows up here by itself once it is on the same Wi-Fi as the Gateway.</div>
 </div><script>
 const ROLES=[[-1,'Mono mix'],[0,'Front Left (L)'],[1,'Front Right (R)'],[2,'Centre (C)'],[3,'Subwoofer (LFE)'],[4,'Side Left (Ls)'],[5,'Side Right (Rs)'],[6,'Rear Left (Lrs)'],[7,'Rear Right (Rrs)']];
 /* The tile is named after the role it plays; the device name stays below. */
 const LOWPASS=[0,80,100,120,150];
+const LFEGAIN=[0,5,10];
 const TITLE={'-1':'Mono mix',0:'Front Left',1:'Front Right',2:'Centre',3:'Subwoofer',4:'Side Left',5:'Side Right',6:'Rear Left',7:'Rear Right'};
 function title(ch,fallback){return ch!==undefined&&TITLE[ch]?TITLE[ch]:fallback;}
 const SHORT={'-1':'MIX',0:'FL',1:'FR',2:'C',3:'SUB',4:'SL',5:'SR',6:'RL',7:'RR'};
@@ -160,10 +161,11 @@ function makeCard(s){
   "<div class='ctl'><div class='fg full'><label>Role</label><select>"+ROLES.map(r=>"<option value='"+r[0]+"'>"+r[1]+"</option>").join('')+"</select></div>"+
   "<div class='fg'><label>Level (dB)</label><input type='number' class='trim' min='-30' max='0' step='0.5'></div>"+
   "<div class='fg'><label>Delay (ms)</label><input type='number' class='delay' min='0' max='50' step='0.1'></div>"+
-  "<div class='fg full lpf' style='display:none'><label>Crossover (subwoofer low-pass)</label><select class='lp'>"+LOWPASS.map(v=>"<option value='"+v+"'>"+lpName(v)+"</option>").join('')+"</select></div></div>"+
+  "<div class='fg lpf' style='display:none'><label>Crossover (low-pass)</label><select class='lp'>"+LOWPASS.map(v=>"<option value='"+v+"'>"+lpName(v)+"</option>").join('')+"</select></div>"+
+  "<div class='fg lpf' style='display:none'><label>LFE gain (5.1/7.1)</label><select class='lg'>"+LFEGAIN.map(v=>"<option value='"+v+"'>"+(v?'+'+v+' dB':'0 dB')+"</option>").join('')+"</select></div></div>"+
   "<div class='actions'><button class='btn'>Save</button><span class='msg'></span><span class='links'></span></div><div class='note' style='display:none'></div>";
- const c={el:d,dirty:false,mac:s.mac,sel:d.querySelector('select'),trim:d.querySelector('.trim'),delay:d.querySelector('.delay'),lp:d.querySelector('.lp'),lpf:d.querySelector('.lpf'),btn:d.querySelector('.btn'),msg:d.querySelector('.msg'),note:d.querySelector('.note')};
- [c.sel,c.trim,c.delay,c.lp].forEach(x=>x.addEventListener('input',()=>{c.dirty=true;c.msg.textContent='';showLp(c);}));
+ const c={el:d,dirty:false,mac:s.mac,sel:d.querySelector('select'),trim:d.querySelector('.trim'),delay:d.querySelector('.delay'),lp:d.querySelector('.lp'),lg:d.querySelector('.lg'),lpf:d.querySelectorAll('.lpf'),btn:d.querySelector('.btn'),msg:d.querySelector('.msg'),note:d.querySelector('.note')};
+ [c.sel,c.trim,c.delay,c.lp,c.lg].forEach(x=>x.addEventListener('input',()=>{c.dirty=true;c.msg.textContent='';showLp(c);}));
  c.btn.onclick=()=>save(c);
  cards[k]=c;return c;
 }
@@ -175,7 +177,13 @@ function setLp(c,hz){
  if(![...c.lp.options].some(o=>o.value===v))c.lp.add(new Option(lpName(hz),v));
  c.lp.value=v;
 }
-function showLp(c){c.lpf.style.display=c.sel.value==='3'&&c.lpOk?'':'none';}
+function showLp(c){c.lpf.forEach(e=>e.style.display=c.sel.value==='3'&&c.lpOk?'':'none');}
+function setLg(c,db){
+ if(db===undefined)return;
+ const v=String(db);
+ if(![...c.lg.options].some(o=>o.value===v))c.lg.add(new Option('+'+db+' dB',v));
+ c.lg.value=v;
+}
 function chip(cls,t){return "<span class='chip "+cls+"'>"+esc(t)+"</span>";}
 function rate(hz){return hz%1000?(hz/1000).toFixed(1)+' kHz':(hz/1000)+' kHz';}
 function layout(n){return n==8?['7.1','c-71']:n==6?['5.1','c-51']:n==2?['Stereo','c-st']:n==1?['Mono','c-mono']:[n+' ch','c-mono'];}
@@ -226,11 +234,11 @@ function update(c,s,dup,common){
  c.el.querySelector('.play').innerHTML=playHtml(s.playback,s.channel);
  c.el.classList.toggle('live',audible(s.playback,s.channel));
  const have=s.channel!==undefined;
- [c.sel,c.trim,c.delay,c.lp,c.btn].forEach(x=>x.disabled=!have);
- c.lpOk=s.lowpass_hz!==undefined; /* an older speaker has no crossover */
+ [c.sel,c.trim,c.delay,c.lp,c.lg,c.btn].forEach(x=>x.disabled=!have);
+ c.lpOk=s.lowpass_hz!==undefined&&s.lfe_gain_db!==undefined; /* an older speaker has neither */
  /* Never touch a field that is being edited or is open. */
  const editing=c.el.contains(document.activeElement)&&document.activeElement.tagName!=='BUTTON';
- if(have&&!c.dirty&&!editing){c.sel.value=String(s.channel);c.trim.value=s.trim_db;c.delay.value=s.delay_ms;setLp(c,s.lowpass_hz);}
+ if(have&&!c.dirty&&!editing){c.sel.value=String(s.channel);c.trim.value=s.trim_db;c.delay.value=s.delay_ms;setLp(c,s.lowpass_hz);setLg(c,s.lfe_gain_db);}
  showLp(c);
  const notes=[];
  if(have&&!s.multichannel)notes.push('This speaker was built without multichannel support: it ignores the role and plays the stereo mix.');
@@ -291,7 +299,7 @@ async function load(){
 }
 async function save(c){
  const body={mac:c.mac,channel:parseInt(c.sel.value,10),trim_db:parseFloat(c.trim.value),delay_ms:parseFloat(c.delay.value)};
- if(body.channel===3&&c.lpOk)body.lowpass_hz=parseInt(c.lp.value,10);
+ if(body.channel===3&&c.lpOk){body.lowpass_hz=parseInt(c.lp.value,10);body.lfe_gain_db=parseInt(c.lg.value,10);}
  if(isNaN(body.trim_db)||isNaN(body.delay_ms)){c.msg.className='msg err';c.msg.textContent='Enter numbers';return;}
  c.btn.disabled=true;c.msg.className='msg';c.msg.textContent='Saving...';
  try{const r=await fetch('/api/speakers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();

@@ -32,6 +32,7 @@
 #define KEY_SURROUND_TRIM "sur_trim"
 #define KEY_SURROUND_DELAY "sur_delay"
 #define KEY_LFE_LOWPASS "lfe_lp_hz"
+#define KEY_LFE_GAIN "lfe_gain_db"
 
 #define DEVICE_NAME_MAX 64
 
@@ -510,4 +511,22 @@ esp_err_t settings_get_lfe_lowpass(int32_t *hz, int32_t fallback) {
 esp_err_t settings_set_lfe_lowpass(int32_t hz) {
   static const char *const keys[] = {KEY_LFE_LOWPASS};
   return write_i32("Subwoofer crossover", 1, keys, &hz);
+}
+
+esp_err_t settings_get_lfe_gain(int32_t *db, int32_t fallback) {
+  if (db == NULL) {
+    return ESP_ERR_INVALID_ARG;
+  }
+  nvs_handle_t handle = 0;
+  bool opened = open_read(&handle) == ESP_OK;
+  *db = read_i32(handle, opened, KEY_LFE_GAIN, fallback);
+  if (opened) {
+    nvs_close(handle);
+  }
+  return ESP_OK;
+}
+
+esp_err_t settings_set_lfe_gain(int32_t db) {
+  static const char *const keys[] = {KEY_LFE_GAIN};
+  return write_i32("Subwoofer LFE gain", 1, keys, &db);
 }

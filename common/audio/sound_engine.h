@@ -162,6 +162,12 @@ void sound_engine_set_stereo_route(sound_stereo_route_t route);
  * before the EQ. 0 = off, the default; spk_link.c sets it from the role.
  * Heard within the DMA queue (~87 ms). Runtime only, no NVS. */
 void sound_engine_set_lfe_lowpass_hz(uint32_t hz);
+/* Surround subwoofer: the LFE gain of 5.1/7.1 in dB (0 = none), the level
+ * the LFE channel is mixed below the others. Stereo blocks keep unity
+ * gain. While it is set, a limiter at the end of the chain keeps the
+ * boosted peaks below full scale. spk_link.c sets it from the role.
+ * Runtime only, no NVS. */
+void sound_engine_set_lfe_gain_db(uint32_t db);
 
 /* What the receiver is playing, for status pages (Surround Gateway list). */
 typedef struct {

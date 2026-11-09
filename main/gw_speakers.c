@@ -495,10 +495,11 @@ static void handle_message(gw_speaker_t *sp, uint8_t type, const uint8_t *p,
       memcpy(&sp->config, p, sizeof(sp->config));
       sp->config_valid = true;
       AP_LOGI(TAG, "speaker %s: channel %d, trim %.1f dB, delay %" PRId32
-                   " us, crossover %u Hz",
+                   " us, crossover %u Hz, LFE gain +%u dB",
               spk_label(sp), (int)sp->config.channel,
               sp->config.trim_db10 / 10.0, sp->config.delay_us,
-              (unsigned)sp->config.lowpass_hz);
+              (unsigned)sp->config.lowpass_hz,
+              (unsigned)sp->config.lfe_gain_db);
       break;
     }
     case SURROUND_MSG_CAL_RESULT: {

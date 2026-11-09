@@ -18,7 +18,7 @@
 #include <assert.h>
 #include <stdint.h>
 
-#define SURROUND_PROTO_VERSION   10 /* 10: subwoofer crossover in CONFIG */
+#define SURROUND_PROTO_VERSION   11 /* 10: crossover, 11: LFE gain in CONFIG */
 /* The first version whose speakers install firmware from the Gateway
  * (FW_UPDATE). A Gateway keeps updating a speaker of any version from this
  * one on, also when their versions differ: HELLO and FW_UPDATE never change
@@ -221,6 +221,10 @@ typedef struct __attribute__((packed)) {
 #define SURROUND_LOWPASS_MIN_HZ     40
 #define SURROUND_LOWPASS_MAX_HZ     250
 #define SURROUND_LOWPASS_DEFAULT_HZ 120
+/* Subwoofer LFE gain for 5.1/7.1 in dB: the 10 dB the LFE channel is mixed
+ * below the others (Dolby/DTS in-band gain). Stereo is not affected. */
+#define SURROUND_LFE_GAIN_MAX_DB     10
+#define SURROUND_LFE_GAIN_DEFAULT_DB 10
 
 typedef struct __attribute__((packed)) {
   int8_t channel;      /* aac_speaker_t, -1 = mono mix */
@@ -228,12 +232,14 @@ typedef struct __attribute__((packed)) {
   int32_t delay_us;
   uint8_t multichannel; /* built with CONFIG_AIRPLAY_MULTICHANNEL */
   uint16_t lowpass_hz;  /* subwoofer crossover, SURROUND_LOWPASS_* */
+  uint8_t lfe_gain_db;  /* subwoofer LFE gain, 0 .. SURROUND_LFE_GAIN_MAX_DB */
 } surround_config_t;
 
 #define SURROUND_SET_CHANNEL 0x01U
 #define SURROUND_SET_TRIM    0x02U
 #define SURROUND_SET_DELAY   0x04U
 #define SURROUND_SET_LOWPASS 0x08U
+#define SURROUND_SET_LFE_GAIN 0x10U
 
 typedef struct __attribute__((packed)) {
   uint8_t fields; /* SURROUND_SET_*: which of the values below to apply */
@@ -241,6 +247,7 @@ typedef struct __attribute__((packed)) {
   int16_t trim_db10;
   int32_t delay_us;
   uint16_t lowpass_hz;
+  uint8_t lfe_gain_db;
 } surround_set_config_t;
 
 #define SURROUND_STATUS_ACTIVE    0x01U /* a stream is started */

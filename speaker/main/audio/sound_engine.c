@@ -18,6 +18,7 @@
 #include "audio_eq.h"
 #include "audio_fade.h"
 #include "audio_loudness.h"
+#include "audio_lfe.h"
 #include "audio_lowpass.h"
 #include "ap2_audio_crypto.h"
 #include "audio_diag.h"
@@ -2794,12 +2795,40 @@ static void lfe_lowpass_apply(float *block, uint32_t frames, int sample_rate) {
     audio_lowpass_process(&s_lfe_lowpass, block, frames);
 }
 
+/* Subwoofer LFE gain for 5.1/7.1 (audio_lfe.h), set by the link task.
+ * The gain is applied where a block is decoded, which knows the block's
+ * format (stereo blocks keep unity gain); s_lfe_gain_now belongs to the one
+ * producer that runs (buffered processor or realtime stage). The limiter
+ * belongs to the I2S side and runs while a gain is set. */
+static uint32_t s_lfe_gain_db;
+static float s_lfe_gain_now = 1.0f;
+static audio_lfe_limiter_t s_lfe_limiter = {.gain = 1.0f};
+
+void sound_engine_set_lfe_gain_db(uint32_t db) {
+  __atomic_store_n(&s_lfe_gain_db, db, __ATOMIC_RELEASE);
+}
+
+static void lfe_gain_apply(float *block, uint32_t frames, bool multichannel) {
+  const uint32_t db = __atomic_load_n(&s_lfe_gain_db, __ATOMIC_ACQUIRE);
+  audio_lfe_gain_apply(block, frames, &s_lfe_gain_now,
+                       multichannel ? audio_lfe_gain_linear(db) : 1.0f);
+}
+
+static void lfe_limiter_apply(float *block, uint32_t frames, int sample_rate) {
+  if (__atomic_load_n(&s_lfe_gain_db, __ATOMIC_ACQUIRE) == 0U &&
+      s_lfe_limiter.gain == 1.0f)
+    return;
+  audio_lfe_limiter_process(&s_lfe_limiter, block, frames,
+                            sample_rate > 0 ? (uint32_t)sample_rate : 44100U);
+}
+
 /* Surround speaker with a stereo source: keep only its side of it. Applied
  * when a block is decoded, before the PCM FIFO, so each block is routed by
  * its own format (a role change is heard after the FIFO's ~850 ms). A
  * multichannel block is already this speaker's channel. */
 static void apply_stereo_route(float *block, uint32_t frames,
                                bool multichannel) {
+  lfe_gain_apply(block, frames, multichannel);
   const sound_stereo_route_t route = (sound_stereo_route_t)__atomic_load_n(
       &s_stereo_route, __ATOMIC_ACQUIRE);
   if (route == SOUND_STEREO_ROUTE_STEREO || multichannel) return;
@@ -2832,6 +2861,9 @@ static const audio_out_sample_t *output_stage(float *block, uint32_t frames,
   audio_loudness_process_f32(block, frames, current_q15[0] > current_q15[1]
                                                 ? current_q15[0] : current_q15[1]);
   fade_in_apply(block, frames);
+  /* The subwoofer's LFE gain can take a 5.1/7.1 peak above full scale at a
+   * high volume: limit it here, where the level is final. */
+  lfe_limiter_apply(block, frames, sample_rate);
   return audio_out_from_float_block_inplace(block, (size_t)frames * 2U);
 }
 
@@ -2861,6 +2893,7 @@ static bool playout_flush_checked(const char *reason) {
     /* I2S is stopped. Only now forget the EQ and loudness filters' memory of
      * the audio before the stop, so whatever plays next starts from silence. */
     audio_lowpass_reset(&s_lfe_lowpass);
+    audio_lfe_limiter_reset(&s_lfe_limiter);
     audio_eq_reset_state();
     audio_loudness_reset();
     fade_in_arm();
@@ -2891,6 +2924,7 @@ static bool playout_keep_running_stop(const char *reason, bool *idle_zeros) {
   }
   /* What plays next starts from silence, as after a real stop. */
   audio_lowpass_reset(&s_lfe_lowpass);
+  audio_lfe_limiter_reset(&s_lfe_limiter);
   audio_eq_reset_state();
   audio_loudness_reset();
   fade_in_arm();

@@ -70,6 +70,9 @@ static int32_t s_sender_volume_q15 = 32768;
 /* Subwoofer crossover (settings_get_lfe_lowpass), used in the subwoofer
  * role only. */
 static int32_t s_lowpass_hz = SURROUND_LOWPASS_DEFAULT_HZ;
+/* Subwoofer LFE gain for 5.1/7.1 (settings_get_lfe_gain), subwoofer role
+ * only. */
+static int32_t s_lfe_gain_db = SURROUND_LFE_GAIN_DEFAULT_DB;
 
 static bool lowpass_valid(int32_t hz) {
   return hz == SURROUND_LOWPASS_OFF ||
@@ -207,12 +210,17 @@ static void apply_stereo_route(void) {
   const uint32_t lowpass =
       role == AAC_SPEAKER_LFE ? (uint32_t)s_lowpass_hz : 0U;
   sound_engine_set_lfe_lowpass_hz(lowpass);
+  const uint32_t lfe_gain =
+      role == AAC_SPEAKER_LFE ? (uint32_t)s_lfe_gain_db : 0U;
+  sound_engine_set_lfe_gain_db(lfe_gain);
   static const char *const names[] = {"stereo", "left", "right", "mono mix",
                                       "silent"};
   if (role == AAC_SPEAKER_LFE) {
     char hz[16];
-    AP_LOGI(TAG, "stereo sources: %s (role %s), crossover %s", names[route],
-            aac_speaker_name(role), lowpass_text(lowpass, hz, sizeof(hz)));
+    AP_LOGI(TAG, "stereo sources: %s (role %s), crossover %s, LFE gain +%" PRIu32
+                 " dB (5.1/7.1)",
+            names[route], aac_speaker_name(role),
+            lowpass_text(lowpass, hz, sizeof(hz)), lfe_gain);
   } else {
     AP_LOGI(TAG, "stereo sources: %s (role %s)", names[route],
             aac_speaker_name(role));
@@ -233,6 +241,7 @@ static void send_config(int fd) {
       .multichannel = 1,
 #endif
       .lowpass_hz = (uint16_t)s_lowpass_hz,
+      .lfe_gain_db = (uint8_t)s_lfe_gain_db,
   };
   (void)send_msg(fd, SURROUND_MSG_CONFIG, &c, sizeof(c));
 }
@@ -254,6 +263,19 @@ static void set_config(int fd, const surround_set_config_t *m) {
     } else {
       AP_LOGW(TAG, "CMD set_config: crossover %u Hz out of range",
               (unsigned)m->lowpass_hz);
+    }
+  }
+  if (m->fields & SURROUND_SET_LFE_GAIN) {
+    if (m->lfe_gain_db <= SURROUND_LFE_GAIN_MAX_DB) {
+      if (m->lfe_gain_db != s_lfe_gain_db) {
+        s_lfe_gain_db = m->lfe_gain_db;
+        (void)settings_set_lfe_gain(s_lfe_gain_db);
+        route = true;
+      }
+      AP_LOGI(TAG, "CMD set_config LFE gain +%d dB", (int)s_lfe_gain_db);
+    } else {
+      AP_LOGW(TAG, "CMD set_config: LFE gain %u dB out of range",
+              (unsigned)m->lfe_gain_db);
     }
   }
   if (m->fields & SURROUND_SET_CHANNEL) {
@@ -767,6 +789,10 @@ esp_err_t spk_link_start(void) {
   int32_t lowpass = SURROUND_LOWPASS_DEFAULT_HZ;
   (void)settings_get_lfe_lowpass(&lowpass, SURROUND_LOWPASS_DEFAULT_HZ);
   if (lowpass_valid(lowpass)) s_lowpass_hz = lowpass;
+  int32_t lfe_gain = SURROUND_LFE_GAIN_DEFAULT_DB;
+  (void)settings_get_lfe_gain(&lfe_gain, SURROUND_LFE_GAIN_DEFAULT_DB);
+  if (lfe_gain >= 0 && lfe_gain <= SURROUND_LFE_GAIN_MAX_DB)
+    s_lfe_gain_db = lfe_gain;
   apply_volume();
   apply_stereo_route();
   ESP_LOGI(TAG, "Surround tuning: trim %.1f dB, delay %" PRId32 " us",

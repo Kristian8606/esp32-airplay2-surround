@@ -68,3 +68,8 @@ esp_err_t settings_set_surround_tuning(int32_t trim_db10, int32_t delay_us);
  * fallback when nothing was saved. */
 esp_err_t settings_get_lfe_lowpass(int32_t *hz, int32_t fallback);
 esp_err_t settings_set_lfe_lowpass(int32_t hz);
+
+/* Subwoofer LFE gain for 5.1/7.1 in dB, set from the Gateway web page.
+ * fallback when nothing was saved. */
+esp_err_t settings_get_lfe_gain(int32_t *db, int32_t fallback);
+esp_err_t settings_set_lfe_gain(int32_t db);
