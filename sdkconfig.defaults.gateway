@@ -26,3 +26,16 @@ CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 CONFIG_AIRPLAY_HOMEKIT=y
 CONFIG_ENABLE_AIRPLAY_ARTWORK=y
 CONFIG_AIRPLAY_MODEL_ID="AirPlaySpeaker1,1"
+
+# The Gateway transmits: it sends the whole stream to every speaker (up to
+# 8 x the stream, at up to twice real time while their buffers fill). The
+# shared defaults are sized for a receiver that transmits little (16 static
+# TX buffers, TX BA window 6). Here more TX buffers (each ~1.6 KB of internal
+# RAM, held for good: +26 KB) and a wider Block Ack window let more frames go
+# out per A-MPDU, so the same bytes take less air time and leave the
+# sender's PTP Syncs more room. 12 is the upper end of Espressif's
+# throughput recommendation (9-12); the buffers are shared by every
+# speaker's BA session, so a wider window would find no frames to fill it.
+# Check "MEM ... internalMin" in the boot/stream log after a change.
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=32
+CONFIG_ESP_WIFI_TX_BA_WIN=12
