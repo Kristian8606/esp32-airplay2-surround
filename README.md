@@ -116,11 +116,11 @@ configured under **AirPlay Receiver** in `idf.py menuconfig`.
 <table>
   <tr>
     <td align="center" width="50%">
-      <a href="images/IMG_1584.PNG"><img src="images/IMG_1584.PNG" alt="ESP32 Gateway in Apple Home with film artwork, playback and volume controls" width="300"></a>
+      <a href="images/homekit-gateway.jpg"><img src="images/homekit-gateway.jpg" alt="ESP32 Gateway in Apple Home with film artwork, playback and volume controls" width="300"></a>
       <br><sub>The Gateway in Apple Home</sub>
     </td>
     <td align="center" width="50%">
-      <a href="images/IMG_1583.PNG"><img src="images/IMG_1583.PNG" alt="Apple Home speaker view showing artwork and playback controls" width="300"></a>
+      <a href="images/homekit-player.jpg"><img src="images/homekit-player.jpg" alt="Apple Home speaker view showing artwork and playback controls" width="300"></a>
       <br><sub>Artwork and playback controls</sub>
     </td>
   </tr>
