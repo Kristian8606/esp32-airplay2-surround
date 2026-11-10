@@ -107,6 +107,22 @@ select:disabled,input:disabled{opacity:.45}
 .cal-table .pm{color:var(--muted,#8d8d93);font-size:11px;margin-left:4px}
 .cal-actions{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
 .help b{color:var(--text);font-weight:500}
+/* Collapsible panels: a header row with its status, the body slides open. */
+.acc{padding:0;position:relative;overflow:hidden}
+.acc.busy::before{content:'';position:absolute;left:0;right:0;top:0;height:2px;background:var(--glow)}
+.acc-h{display:flex;align-items:center;gap:12px;width:100%;padding:16px 18px;background:none;border:none;color:var(--text);font-family:inherit;text-align:left;cursor:pointer;border-radius:16px}
+.acc-h:focus-visible{outline:1px solid var(--accent);outline-offset:-1px}
+.acc-t{flex:1;font-size:15px;font-weight:600;white-space:nowrap}
+.acc-h .chev{color:var(--muted);font-size:14px;transition:transform .2s,color .2s;transform:rotate(-90deg)}
+.acc-h:hover .chev{color:var(--text)}
+.acc.open .acc-h .chev{transform:none}
+.acc-h .chip{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.acc-b{display:grid;grid-template-rows:0fr;transition:grid-template-rows .25s ease}
+.acc.open .acc-b{grid-template-rows:1fr}
+.acc-in{min-height:0;overflow:hidden;visibility:hidden;transition:visibility 0s .25s}
+.acc.open .acc-in{visibility:visible;transition-delay:0s}
+.acc-p{padding:0 18px 18px}
+.acc-p .cal-top p{margin-top:0}
 @media(max-width:560px){.header h1{font-size:24px}.node{width:70px}.node .dot{width:36px;height:36px;font-size:11px}.node .who{font-size:9px;max-width:70px}.room{aspect-ratio:1/1}.room .seat{top:58%}}
 </style></head><body><div class='wrap'>
 <div class='header'>
@@ -114,23 +130,29 @@ select:disabled,input:disabled{opacity:.45}
  <div class='now'><div class='stat'><label>Now playing</label><span id='now-fmt'>&mdash;</span></div><div class='stat'><label>Speakers</label><span id='now-count'>&mdash;</span></div></div>
 </div>
 <div class='panel'><div class='ptitle'>Room</div><div class='room' id='room'><div class='floor'></div><div class='screen'></div><div class='seat'>YOU</div></div><div class='mixlist' id='mixlist'></div></div>
-<div class='panel cal' id='cal' style='display:none'>
+<div class='panel cal acc' id='cal' style='display:none'>
+ <button class='acc-h' aria-expanded='false'><span class='chev'>&#9662;</span><span class='acc-t'>Room calibration</span><span class='chip c-dim' id='cal-chip'>Microphone not tested</span></button>
+ <div class='acc-b'><div class='acc-in'><div class='acc-p'>
  <div class='cal-top'>
-  <div><h3>Room calibration</h3><p>Put the Gateway with its microphone at your seat, ear height, and keep the room quiet.</p></div>
-  <div class='cal-btns'><span class='chip c-dim' id='cal-chip'>Microphone not tested</span><button class='btn sec' id='cal-test'>Test mic</button><button class='btn' id='cal-start'>Calibrate</button></div>
+  <div><p>Put the Gateway with its microphone at your seat, ear height, and keep the room quiet.</p></div>
+  <div class='cal-btns'><button class='btn sec' id='cal-test'>Test mic</button><button class='btn' id='cal-start'>Calibrate</button></div>
  </div>
  <div class='cal-bar'><div id='cal-bar'></div></div>
  <div class='cal-row'><div class='cal-msg' id='cal-msg'></div><button class='cal-toggle' id='cal-toggle' style='display:none'><span id='cal-toggle-t'>Hide results</span><span class='chev'>&#9662;</span></button></div>
  <table class='cal-table' id='cal-table' style='display:none'><thead><tr><th>Role</th><th>Speaker</th><th>Distance</th><th>Delay</th><th>Level</th></tr></thead><tbody id='cal-rows'></tbody></table>
  <div class='cal-actions' id='cal-actions' style='display:none'><span class='msg'>Nothing changes until you apply. The farthest speaker gets 0 ms, the quietest 0 dB.</span><span class='cal-btns'><button class='btn sec' id='cal-discard'>Discard</button><button class='btn' id='cal-apply'>Apply to speakers</button></span></div>
+ </div></div></div>
 </div>
-<div class='panel cal' id='fwbox'>
+<div class='panel cal acc' id='fwbox'>
+ <button class='acc-h' aria-expanded='false'><span class='chev'>&#9662;</span><span class='acc-t'>Speaker firmware</span><span class='chip c-dim' id='fw-chip'>&hellip;</span></button>
+ <div class='acc-b'><div class='acc-in'><div class='acc-p'>
  <div class='cal-top'>
-  <div><h3>Speaker firmware</h3><p>Upload the speaker firmware here once. Every speaker with another build installs it from the Gateway by itself, one at a time, right away: a speaker that is playing stops for its update, restarts and plays again from the next track, skip or seek.</p></div>
+  <div><p>Upload the speaker firmware here once. Every speaker with another build installs it from the Gateway by itself, one at a time, right away: a speaker that is playing stops for its update, restarts and plays again from the next track, skip or seek.</p></div>
   <div class='cal-btns'><input type='file' id='fw-file' accept='.bin' style='display:none'><button class='btn sec' id='fw-pick'>Choose .bin</button><button class='btn' id='fw-up' disabled>Upload</button></div>
  </div>
  <div class='cal-bar'><div id='fw-bar'></div></div>
  <div class='cal-msg' id='fw-msg'></div>
+ </div></div></div>
 </div>
 <div class='grid' id='list'><div class='panel empty'>Loading...</div></div>
 <div class='panel help'><b>Stereo</b> plays on the front pair and the subwoofer only; centre and surrounds stay silent. 5.1 and 7.1 play each channel on its own speaker only: with 5.1 the rear pair is silent, and with 7.1 the rear channels are not heard if there is no rear speaker. <b>Level:</b> lower the louder speakers, 0 dB is the loudest. <b>Delay:</b> play later; 1 m of extra distance to the listener is about 2.9 ms, so delay the closer speakers. <b>Crossover:</b> the subwoofer plays only below it, the stereo mix and the LFE channel alike (24 dB/octave; 120 Hz suits both); the other speakers play their full range. Remove a low-pass from the subwoofer's own EQ when you use it, or the bass is cut twice. <b>LFE gain:</b> 5.1/7.1 mix their LFE channel 10 dB low and a receiver adds the 10 dB back; +10 dB is the standard, stereo is never boosted. A limiter keeps boosted peaks from clipping at high volume. Set the subwoofer's level with music so it matches the other speakers. The <b>EQ</b> is set on each speaker's own page. A speaker shows up here by itself once it is on the same Wi-Fi as the Gateway.</div>
@@ -308,9 +330,16 @@ async function save(c){
  }catch(e){c.msg.className='msg err';c.msg.textContent='Error';}
  c.btn.disabled=false;
 }
+/* ---- Collapsible panels: open or closed is remembered in this browser;
+ * a run that starts (calibration, firmware update) opens its panel. ---- */
+function accSet(b,o){b.classList.toggle('open',o);b.querySelector('.acc-h').setAttribute('aria-expanded',o);}
+function accBusy(id,busy,open){const b=document.getElementById(id);b.classList.toggle('busy',busy);if(open)accSet(b,true);}
+['cal','fwbox'].forEach(id=>{const b=document.getElementById(id);let o=false;try{o=localStorage.getItem('acc_'+id)==='1';}catch(e){}accSet(b,o);
+ b.querySelector('.acc-h').onclick=()=>{const n=!b.classList.contains('open');accSet(b,n);try{localStorage.setItem('acc_'+id,n?'1':'0');}catch(e){}};});
+function chipSet(id,cls,t){const c=document.getElementById(id);c.className='chip '+cls;c.textContent=t;}
 /* ---- Speaker firmware held by the Gateway ---- */
 const FWS={pending:' \u00b7 will update',updating:' \u00b7 updating\u2026',failed:' \u00b7 update failed',halted:' \u00b7 update stopped',manual:' \u00b7 update by hand'};
-let fwUploading=false;
+let fwUploading=false,fwWasBusy=false;
 /* The Gateway's stored build, whether every speaker runs it, and the build
  * of the chosen file: Upload stays off for the build they all have. */
 let fwStored=null,fwAllCurrent=false,fwFileBuild=null;
@@ -342,6 +371,12 @@ async function fwLoad(){
  if(d.halted_by){t+=' Updating stopped: '+d.halted_by+' did not come back with this firmware, so no other speaker gets it. Check that speaker, then upload the firmware again to continue.';msg.className='cal-msg err';}
  msg.textContent=t;
  document.getElementById('fw-bar').style.width=d.updating?'100%':'0';
+ if(d.halted_by)chipSet('fw-chip','c-bad','Update stopped');
+ else if(d.updating)chipSet('fw-chip','c-rt','Updating '+d.updating.name+'…');
+ else if(!d.stored)chipSet('fw-chip','c-dim','No firmware stored');
+ else if(fwAllCurrent)chipSet('fw-chip','c-ok','All speakers current');
+ else chipSet('fw-chip','c-dim',d.build);
+ const busy=!!(d.updating||d.halted_by);accBusy('fwbox',!!d.updating,busy&&!fwWasBusy);fwWasBusy=busy;
 }
 document.getElementById('fw-pick').onclick=()=>document.getElementById('fw-file').click();
 document.getElementById('fw-file').onchange=async e=>{const f=e.target.files[0];document.getElementById('fw-pick').textContent=f?f.name:'Choose .bin';
@@ -352,12 +387,13 @@ document.getElementById('fw-up').onclick=()=>{
  if(!/speaker/i.test(f.name)&&!confirm(f.name+' does not look like a speaker firmware (airplay-speaker_*.bin). Upload anyway?'))return;
  btn.disabled=true;fwUploading=true;msg.className='cal-msg';msg.textContent='Uploading '+f.name+'\u2026';
  const x=new XMLHttpRequest();x.open('POST','/api/speakers/firmware');
- x.upload.onprogress=e=>{if(e.lengthComputable)bar.style.width=(100*e.loaded/e.total)+'%';};
- x.onload=()=>{fwUploading=false;fwButton();let d={};try{d=JSON.parse(x.responseText);}catch(e){}
+ accBusy('fwbox',true,false);chipSet('fw-chip','c-rt','Uploading…');
+ x.upload.onprogress=e=>{if(e.lengthComputable){bar.style.width=(100*e.loaded/e.total)+'%';chipSet('fw-chip','c-rt','Uploading '+Math.round(100*e.loaded/e.total)+'%');}};
+ x.onload=()=>{fwUploading=false;fwButton();accBusy('fwbox',false,false);let d={};try{d=JSON.parse(x.responseText);}catch(e){}
   if(d.success){msg.className='cal-msg';msg.textContent='Stored '+d.build+'. Speakers with another build update one by one now.';}
   else{msg.className='cal-msg err';msg.textContent=d.error||('Upload failed (HTTP '+x.status+')');}
   bar.style.width='0';setTimeout(fwLoad,1500);load();};
- x.onerror=()=>{fwUploading=false;fwButton();msg.className='cal-msg err';msg.textContent='Upload failed';bar.style.width='0';};
+ x.onerror=()=>{fwUploading=false;fwButton();accBusy('fwbox',false,false);fwLoad();msg.className='cal-msg err';msg.textContent='Upload failed';bar.style.width='0';};
  x.setRequestHeader('Content-Type','application/octet-stream');x.send(f);
 };
 /* ---- Room calibration ---- */
@@ -376,7 +412,8 @@ function calRender(c){
  msg.className='cal-msg'+(c.state==='failed'?' err':'');
  document.getElementById('cal-bar').style.width=busy?(c.steps?Math.max(5,100*(c.step-0.5)/c.steps):5)+'%':(c.state==='done'&&!c.mic_test?'100%':'0');
  const chip=document.getElementById('cal-chip');
- if(c.noise_dbfs!==undefined){chip.className='chip '+(c.noise_dbfs<-50?'c-ok':'c-warn');chip.textContent='Mic OK · noise '+c.noise_dbfs.toFixed(0)+' dBFS';}
+ if(busy){chip.className='chip c-rt';chip.textContent=c.mic_test?'Testing mic…':'Measuring'+(c.steps?' '+Math.min(Math.max(c.step,1),c.steps)+'/'+c.steps:'…');}
+ else if(c.noise_dbfs!==undefined){chip.className='chip '+(c.noise_dbfs<-50?'c-ok':'c-warn');chip.textContent='Mic OK · noise '+c.noise_dbfs.toFixed(0)+' dBFS';}
  else if(c.state==='failed'||c.state==='done'){chip.className='chip c-bad';chip.textContent='No microphone signal';}
  else{chip.className='chip c-dim';chip.textContent='Microphone not tested';}
  ['cal-test','cal-start'].forEach(id=>document.getElementById(id).disabled=busy);
@@ -384,6 +421,7 @@ function calRender(c){
  const rows=document.getElementById('cal-rows'),has=!c.mic_test&&c.speakers.length>0;
  /* A new run always shows its progress. */
  if(busy&&!calWasBusy)calSetHidden(false);
+ accBusy('cal',busy,busy&&!calWasBusy);
  calWasBusy=busy;
  const show=has&&(busy||!calHidden);
  const tg=document.getElementById('cal-toggle');
