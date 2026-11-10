@@ -375,7 +375,7 @@ cd esp32-airplay2-surround
 
 | Code | Where |
 |---|---|
-| the Gateway's own (proxy, relays, speaker registry, speakers page); its AirPlay receiver (mDNS, pairing, RTSP) is in `components/ap2_core` | `main/` |
+| the Gateway's own (proxy, relays, speaker registry, speakers page); its AirPlay receiver (mDNS, pairing, RTSP) is `ap2_core` from [esp-airplay2-core](https://github.com/Kristian8606/esp-airplay2-core) | `main/` |
 | the speaker's own (audio engine, link to the Gateway, EQ page) and FDK AAC | `speaker/main/`, `speaker/components/` |
 | shared (web server, clock, sync protocol) | `common/`, `data/www/`, and the components in `components/` |
 | menuconfig options of both | `components/airplay_options/` |
@@ -847,12 +847,12 @@ with a fresh RTT floor. There is **no one-way fallback**.
    applying live clock corrections at most once per second. It logs
    `SERVO LINE: line ... ppm, sync ... ms -> I2S ... ppm`.
 
-The Gateway has one clock implementation, in
-`common/network/apple_clock.c` and `apple_clock_core.c`. A speaker's
+The Gateway has one clock implementation, the `apple_clock` component of
+[esp-airplay2-core](https://github.com/Kristian8606/esp-airplay2-core). A speaker's
 `common/network/ptp_clock.c` is only the external TIME state and conversion
 interface for its audio engine; it has no PTP sockets or passive estimator.
 The optional oscilloscope pulse on the Gateway reads the same published
-Apple line. The algorithm is described in `apple_clock_core.h`.
+Apple line. The algorithm is described in that component's `src/apple_clock_core.h`.
 
 **Absolute accuracy.** Two-way timing cannot distinguish a permanent
 uplink/downlink asymmetry from clock offset. The remaining error is half
@@ -907,7 +907,7 @@ are listed in
 
 | Part | Where | What it does |
 |---|---|---|
-| AirPlay 2 core | `components/ap2_core` | pairing, plists, audio decryption, the FairPlay setup replies, the RTSP server (`rtsp` in the log) and the mDNS announcement (`mdns_airplay`), the last two Gateway only, under Apache-2.0 (the FairPlay tables excepted); both firmwares |
+| AirPlay 2 core | `ap2_core` ([esp-airplay2-core](https://github.com/Kristian8606/esp-airplay2-core)) | pairing, plists, audio decryption, the FairPlay setup replies, the RTSP server (`rtsp` in the log) and the mDNS announcement (`mdns_airplay`), the last two Gateway only, under Apache-2.0 (the FairPlay tables excepted); both firmwares |
 | Web server | `components/web_server` | the shared pages and APIs, captive portal (`web_server` in the log), under Apache-2.0; both firmwares |
 | Settings | `components/settings` | device name, Wi-Fi networks, volume and the speaker settings in NVS, under Apache-2.0; both firmwares |
 | Status LED | `components/led` | the AirPlay state and a level meter on the WS2812 LED (`led` in the log), under Apache-2.0; both firmwares |
@@ -920,7 +920,7 @@ are listed in
 | Speaker firmware | `main/gw_fw.c`, `speaker/main/spk_update.c` | the image in the Gateway's `storage` partition (`gw_fw`); download, check and install on the speaker (`spk_update`) |
 | Buffered relay | `main/gw_relay.c` | reads the TCP audio stream into a buffer and copies it to every speaker; drops the old track at a FLUSH (`RELAY …`) |
 | Realtime relay | `main/gw_rt_relay.c` | copies UDP audio and sync packets, passes retransmit requests on (`RT RELAY …`) |
-| Apple clock | `common/network/apple_clock.c`, `common/network/apple_clock_core.c` | Gateway-only two-way PTP transport, RTT filtering, rate estimation and continuous published line (`apple_clock …`) |
+| Apple clock | `apple_clock` ([esp-airplay2-core](https://github.com/Kristian8606/esp-airplay2-core)) | Gateway-only two-way PTP transport, RTT filtering, rate estimation and continuous published line (`apple_clock …`) |
 | Time distribution | `common/surround/tsf_fit.c`, `main/gw_speakers.c`, `speaker/main/spk_time.c` | TSF fits on both sides; maps the same Apple line into TIME and each speaker's local clock |
 | Speaker clock state | `common/network/ptp_clock.c` | external TIME state, rate carry and conversions for the audio engine; no PTP receiver |
 | Speaker link | `speaker/main/spk_link.c` | finds the Gateway, runs every forwarded call locally (`CMD …`) |
@@ -1030,9 +1030,12 @@ afterwards).
   Kristian Dimitrov: [`LICENSE`](LICENSE), [`NOTICE`](NOTICE). The project
   has been rewritten in full; the components in `components/` carry their
   own copy of the license and a `NOTICE`. The exceptions are below.
-- **FairPlay setup replies** (`components/ap2_core/src/fairplay/fairplay_tables.c`)
-  are fixed interop data from reverse engineering, not under the Apache
-  License; see [`components/ap2_core/NOTICE`](components/ap2_core/NOTICE).
+- **AirPlay 2 protocol core** (`ap2_core`, `apple_clock`) comes from
+  [esp-airplay2-core](https://github.com/Kristian8606/esp-airplay2-core)
+  (Apache License 2.0) through the ESP-IDF component manager. Its
+  **FairPlay setup replies** (`src/fairplay/fairplay_tables.c`) are fixed
+  interop data from reverse engineering, not under the Apache License; see
+  the [`NOTICE` of ap2_core](https://github.com/Kristian8606/esp-airplay2-core/blob/v1.0.0/components/ap2_core/NOTICE).
 - **Fraunhofer FDK AAC** (`speaker/components/fdk_aac/fdk-aac`) is under the
   Fraunhofer FDK license, [`NOTICE`](speaker/components/fdk_aac/fdk-aac/NOTICE). The
   copy here is a **Third-Party Modified Version of the Fraunhofer FDK AAC

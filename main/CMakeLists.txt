@@ -17,9 +17,6 @@ set(GATEWAY_SRCS
     "gw_mic.c"
     "gw_calib.c"
 )
-list(APPEND GATEWAY_SRCS
-    "${AIRPLAY_COMMON_DIR}/network/apple_clock.c"
-    "${AIRPLAY_COMMON_DIR}/network/apple_clock_core.c")
 if(CONFIG_AIRPLAY_HARDWARE_BUTTONS)
     list(APPEND GATEWAY_SRCS "playback_buttons.c")
 endif()

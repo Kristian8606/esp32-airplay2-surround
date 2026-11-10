@@ -4,3 +4,13 @@ dependencies:
   espressif/libsodium: "^1.0.21"
   espressif/esp_audio_codec: "^2.5.0"
   espressif/cjson: "^1.7.19"
+  # The AirPlay 2 protocol core and the PTP clock towards Apple, shared with
+  # airplay-esp32. Moved to a new tag only after a test.
+  ap2_core:
+    git: https://github.com/Kristian8606/esp-airplay2-core.git
+    path: components/ap2_core
+    version: v1.0.0
+  apple_clock:
+    git: https://github.com/Kristian8606/esp-airplay2-core.git
+    path: components/apple_clock
+    version: v1.0.0

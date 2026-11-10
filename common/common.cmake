@@ -43,6 +43,7 @@ set(AIRPLAY_COMMON_PRIV_REQUIRES
     ota
     wifi
     helpers
+    apple_clock
     led
     settings
     web_server
@@ -70,7 +71,7 @@ function(airplay_link_web_server)
     target_link_libraries(${web_server_lib} PRIVATE ${COMPONENT_LIB})
 endfunction()
 
-# The RTSP server in ap2_core calls the audio engine, clock,
+# The RTSP server in ap2_core (esp-airplay2-core) calls the audio engine,
 # amplifier and identity, which are compiled into this main
 # component: give it their headers and link it with main.
 # Call after idf_component_register().

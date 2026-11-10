@@ -27,18 +27,6 @@ menu "Surround Build Role"
             (_apsurround._tcp). Set an IPv4 address here to skip the search,
             for example when mDNS is filtered on the network.
 
-    config AIRPLAY_APPLE_CLOCK_ASYM_US
-        int "Path asymmetry correction (us)"
-        default 0
-        range -2000 2000
-        depends on AIRPLAY_ROLE_GATEWAY
-        help
-            Added to the sender's time from both directions. Two-way PTP
-            cannot see a difference between the two directions of the path;
-            if a measurement against a HomePod (microphone, oscilloscope)
-            shows a constant one, set it here. Positive: the speakers play
-            earlier.
-
     config AIRPLAY_SURROUND_SYNC_PULSE
         bool "Sync test pulse at every second of sender time"
         default n
