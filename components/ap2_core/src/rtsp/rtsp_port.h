@@ -37,8 +37,11 @@ esp_err_t rtsp_port_settings_get_volume(float *volume);
 esp_err_t rtsp_port_settings_set_volume(float volume);
 esp_err_t rtsp_port_settings_persist_volume(void);
 esp_err_t rtsp_port_settings_get_name(char *name, size_t len);
-/* Persist and republish from an internal-stack settings worker. */
+/* Saves the name from an internal-stack settings worker. */
 esp_err_t rtsp_port_settings_set_name(const char *name);
+/* Announces the saved name: host name and both mDNS instance names. Call
+ * without the lock; it waits for the mDNS task. */
+esp_err_t rtsp_port_settings_announce_name(void);
 
 /* The station MAC ("deviceid" of /info). */
 void rtsp_port_device_mac(uint8_t mac[6]);

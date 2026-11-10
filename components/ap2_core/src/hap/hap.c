@@ -5,9 +5,9 @@
 #include <string.h>
 
 #include "airplay_identity.h"
+#include "ap2_port.h"
 #include "ap2_pairings.h"
 #include "esp_log.h"
-#include "esp_mac.h"
 #include "hap_private.h"
 #include "nvs.h"
 #include "sodium.h"
@@ -59,7 +59,7 @@ esp_err_t ap2_hap_identity_init(void) {
     return ESP_FAIL;
   }
 
-  err = esp_read_mac(mac, ESP_MAC_WIFI_STA);
+  err = ap2_port_device_mac(mac);
   if (err != ESP_OK) {
     return err;
   }

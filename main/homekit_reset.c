@@ -14,6 +14,7 @@
 #include "web_server_internal.h"
 #include "sound_engine.h"
 #include "rtsp_server.h"
+#include "ap2_port.h"
 
 #define RESET_BODY_CAP 128
 static const char *TAG = "homekit_reset";
@@ -96,7 +97,7 @@ static void homekit_reset_task(void *arg) {
   for (;;) vTaskDelay(portMAX_DELAY);
 }
 
-void homekit_reset_schedule(void) {
+void ap2_port_homekit_reset_schedule(void) {
   /* Created before the AirPlay server starts. No heap allocation here. */
   xTaskNotifyGive(s_homekit_reset_task);
 }

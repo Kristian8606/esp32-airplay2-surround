@@ -3,9 +3,15 @@
 #include <stdio.h>
 
 #include "ap2_pairings.h"
+#include "ap2_port.h"
 #include "esp_app_desc.h"
 #include "esp_mac.h"
 #include "sodium.h"
+
+/* On the S3 the Wi-Fi station MAC is the one in eFuse. */
+esp_err_t ap2_port_device_mac(uint8_t mac[6]) {
+  return esp_read_mac(mac, ESP_MAC_WIFI_STA);
+}
 
 void airplay_get_pairing_id(char *out, size_t len) {
   if (!out || len == 0) {

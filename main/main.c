@@ -26,9 +26,10 @@
 
 static const char *TAG = "main";
 #ifdef CONFIG_AIRPLAY_HOMEKIT
+/* Runs under the RTSP lock (pairings change only through RTSP). The RTSP
+ * server publishes the new status flags itself, after its reply. */
 static void homekit_changed(bool paired) {
   ESP_LOGI(TAG, "HomeKit: %s a home", paired ? "added to" : "removed from");
-  mdns_airplay_update_flags();
 }
 #endif
 

@@ -9,7 +9,6 @@
 #include <string.h>
 
 #include "esp_heap_caps.h"
-#include "esp_mac.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
@@ -22,9 +21,7 @@
 #include "settings.h"
 #include "mdns_airplay.h"
 #include "wifi.h"
-#ifdef CONFIG_AIRPLAY_HOMEKIT
-#include "homekit_reset.h"
-#endif
+#include "ap2_port.h"
 
 #define RTSP_TCP_PORT 7000
 #define MAX_CONTROL 8
@@ -97,7 +94,7 @@ void *rtsp_port_malloc(size_t size) {
 void rtsp_port_free(void *ptr) { heap_caps_free(ptr); }
 
 #ifdef CONFIG_AIRPLAY_HOMEKIT
-void rtsp_port_homekit_reset(void) { homekit_reset_schedule(); }
+void rtsp_port_homekit_reset(void) { ap2_port_homekit_reset_schedule(); }
 esp_err_t rtsp_port_homekit_reset_name(char *name, size_t len) {
   if (!name || !len) return ESP_ERR_INVALID_ARG;
   rtsp_port_lock();
@@ -120,7 +117,7 @@ uint32_t rtsp_port_now_ms(void) {
 }
 
 void rtsp_port_device_mac(uint8_t mac[6]) {
-  if (esp_read_mac(mac, ESP_MAC_WIFI_STA) != ESP_OK) memset(mac, 0, 6);
+  if (ap2_port_device_mac(mac) != ESP_OK) memset(mac, 0, 6);
 }
 
 /* Settings may read and write flash. With the cache off a task whose stack
@@ -131,7 +128,8 @@ typedef enum {
   SET_SET_VOLUME,
   SET_PERSIST_VOLUME,
   SET_GET_NAME,
-  SET_SET_NAME
+  SET_SET_NAME,
+  SET_ANNOUNCE_NAME
 } settings_op_t;
 
 typedef struct {
@@ -162,6 +160,10 @@ static void settings_task(void *arg) {
       job->err = settings_set_device_name(job->name);
       if (job->err == ESP_OK)
         job->err = settings_get_device_name(job->name, sizeof(job->name));
+      break;
+    case SET_ANNOUNCE_NAME:
+      /* The saved name, as settings normalized it. */
+      job->err = settings_get_device_name(job->name, sizeof(job->name));
       if (job->err == ESP_OK) {
         wifi_set_hostname(job->name);
         job->err = mdns_airplay_update_name(job->name);
@@ -249,6 +251,10 @@ esp_err_t rtsp_port_settings_set_name(const char *name) {
 #endif
   heap_caps_free(job);
   return err;
+}
+
+esp_err_t rtsp_port_settings_announce_name(void) {
+  return run_settings_err(SET_ANNOUNCE_NAME, 0.0f);
 }
 
 esp_err_t rtsp_port_udp_pair(uint16_t *data_port, uint16_t *control_port) {

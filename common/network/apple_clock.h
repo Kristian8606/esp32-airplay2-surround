@@ -1,6 +1,6 @@
 #pragma once
 
-/* Gateway clock: owns UDP 319/320 and estimates Apple's time from two-way
+/* Apple clock: owns UDP 319/320 and estimates Apple's time from two-way
  * Sync/Delay_Req exchanges. No passive estimator or fallback clock. */
 #include <stdbool.h>
 #include <stdint.h>

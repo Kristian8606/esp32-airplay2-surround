@@ -96,12 +96,64 @@ static struct {
   double volume;
   bool volume_known;
   bool homekit_reset_pending;
+  /* mDNS changes wait for publish_pending(), outside the lock: TXT updates
+   * send packets and a new name waits for the mDNS task. */
+  bool mdns_pending;       /* status flags or group may have changed */
+  bool name_pending;       /* a new name was saved, not announced yet */
+  bool publishing;         /* one task publishes at a time */
   unsigned next_conn_id;
 } s;
 
 static void wipe(void *p, size_t n) {
   volatile uint8_t *v = p;
   while (n--) *v++ = 0;
+}
+
+/* ---- mDNS publishing ---- */
+
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+/* Under the lock: the TXT status flags or the group may have changed. */
+static void mdns_mark(void) { s.mdns_pending = true; }
+#endif
+
+/* Without the lock, after a reply or a closed connection. Only one task
+ * publishes; one that finds another publishing leaves the work to it, which
+ * loops until nothing is pending, so the last state is always published. */
+static void publish_pending(void) {
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+  for (;;) {
+    char gid[sizeof(((rtsp_conn_t *)0)->group_id)] = {0};
+    bool leader = false, flags, rename;
+
+    rtsp_port_lock();
+    if ((!s.mdns_pending && !s.name_pending) || s.publishing) {
+      rtsp_port_unlock();
+      return;
+    }
+    flags = s.mdns_pending;
+    rename = s.name_pending;
+    s.mdns_pending = false;
+    s.name_pending = false;
+    s.publishing = true;
+    if (s.holder != NULL) {
+      memcpy(gid, s.holder->group_id, sizeof(gid));
+      leader = s.holder->group_contains_leader;
+    }
+    rtsp_port_unlock();
+
+    if (flags) {
+      mdns_airplay_update_flags();
+      mdns_airplay_set_group(gid, leader);
+    }
+    if (rename && rtsp_port_settings_announce_name() != ESP_OK) {
+      RTSP_LOGW("speaker name saved, announcing it on the network failed");
+    }
+
+    rtsp_port_lock();
+    s.publishing = false;
+    rtsp_port_unlock();
+  }
+#endif
 }
 
 static void ip_text(uint32_t ip, char out[16]) {
@@ -146,8 +198,10 @@ static void change_volume(double volume) {
 void rtsp_core_remote_volume(double volume) {
   if (s.holder == NULL) return;
   change_volume(volume);
+#ifdef CONFIG_AIRPLAY_LOG_RTSP_REQUESTS
   RTSP_LOGI("volume from remote command, q15 %" PRId32,
             rtsp_volume_to_q15(volume));
+#endif
 }
 
 /* ---- Session ---- */
@@ -205,8 +259,7 @@ static esp_err_t session_start(rtsp_conn_t *c) {
 
 #ifdef CONFIG_AIRPLAY_HOMEKIT
   airplay_set_session_active(true);
-  mdns_airplay_update_flags();
-  mdns_airplay_set_group(c->group_id, c->group_contains_leader);
+  mdns_mark();
 #endif
   amp_control_session_connected();
   rtsp_events_emit(RTSP_EVENT_CLIENT_CONNECTED);
@@ -240,8 +293,7 @@ static void session_end(void) {
   sound_engine_set_encryption(&none);
 #ifdef CONFIG_AIRPLAY_HOMEKIT
   airplay_set_session_active(false);
-  mdns_airplay_update_flags();
-  mdns_airplay_set_group(NULL, false);
+  mdns_mark();
 #endif
   amp_control_session_disconnected();
   rtsp_events_emit(RTSP_EVENT_DISCONNECTED);
@@ -422,10 +474,12 @@ static void do_pair(rtsp_conn_t *c, const rtsp_msg_t *m, reply_t *r,
     if (step == 5) { fn = ap2_hap_setup_m5; last = true; }
   } else {
     if (step == 1) {
+#ifdef CONFIG_AIRPLAY_LOG_RTSP_REQUESTS
       const char *hkp = rtsp_msg_header(m, "X-Apple-HKP");
       const char *derive = rtsp_msg_header(m, "X-Apple-Pair-Derive");
       RTSP_LOGI("[%u] pair-verify M1: protocol=%.8s HKP=%.8s derive=%.8s", c->id,
                 m->start[2], hkp ? hkp : "-", derive ? derive : "-");
+#endif
       fn = ap2_hap_verify_m1;
     }
     if (step == 3) { fn = ap2_hap_verify_m3; last = true; }
@@ -446,6 +500,9 @@ static void do_pair(rtsp_conn_t *c, const rtsp_msg_t *m, reply_t *r,
   }
   r->content_type = CT_OCTET;
   r->body_len = out_len;
+#ifdef CONFIG_AIRPLAY_HOMEKIT
+  if (setup && step == 5) mdns_mark(); /* full pair-setup stores a home */
+#endif
   if (last && ap2_hap_established(c->hap)) {
     if (take_keys(c)) {
       RTSP_LOGI("connection %u paired, encrypted from the next request",
@@ -504,9 +561,12 @@ static void do_configure(rtsp_conn_t *c, const rtsp_msg_t *m, reply_t *r) {
   }
   const bool reset = admin && config.has_hk_access_control &&
                      !config.hk_access_control;
-  if (!reset && config.has_name && rtsp_port_settings_set_name(config.name) != ESP_OK) {
-    refuse(r, CODE_INTERNAL, "speaker name was not saved or announced");
-    return;
+  if (!reset && config.has_name) {
+    if (rtsp_port_settings_set_name(config.name) != ESP_OK) {
+      refuse(r, CODE_INTERNAL, "speaker name was not saved");
+      return;
+    }
+    s.name_pending = true; /* host name and mDNS follow after the reply */
   }
   char name[DEVICE_NAME_MAX], pi[AIRPLAY_PAIRING_ID_LEN];
   const esp_err_t name_err = reset
@@ -524,7 +584,7 @@ static void do_configure(rtsp_conn_t *c, const rtsp_msg_t *m, reply_t *r) {
     refuse(r, CODE_INTERNAL, "configure reply does not fit");
     return;
   }
-  if (!reset && config.has_name) RTSP_LOGI("HomeKit configure: speaker name saved and announced");
+  if (!reset && config.has_name) RTSP_LOGI("HomeKit configure: speaker name saved");
   if (reset) homekit_reset_after_reply(c, r);
   else revoke_homekit_connections(c, r);
 }
@@ -595,6 +655,7 @@ static void do_pairings(rtsp_conn_t *c, const rtsp_msg_t *m, reply_t *r) {
   ap2_tlv8_put_byte(&w, AP2_TLV_STATE, 2);
   if (error) ap2_tlv8_put_byte(&w, AP2_TLV_ERROR, error);
   r->body_len = ap2_tlv8_writer_size(&w);
+  mdns_mark(); /* joining or leaving a home changes the status flags */
 }
 #endif
 
@@ -674,7 +735,7 @@ static void do_setup_session(rtsp_conn_t *c, const rtsp_msg_t *m, reply_t *r) {
   }
 #endif
 #ifdef CONFIG_AIRPLAY_HOMEKIT
-  if (holds(c)) mdns_airplay_set_group(c->group_id, c->group_contains_leader);
+  if (holds(c)) mdns_mark(); /* this SETUP's group */
 #endif
   n = ap2_reply_setup_session(c->body, sizeof(c->body), c->event_port);
   if (n == 0) {
@@ -898,11 +959,13 @@ static void do_set_parameter(rtsp_conn_t *c, const rtsp_msg_t *m,
     /* progress: accepted */
   }
   if (have_volume && holds(c)) {
-    char text[24];
     volume = rtsp_volume_clamp(volume);
     change_volume(volume);
+#ifdef CONFIG_AIRPLAY_LOG_RTSP_REQUESTS
+    char text[24];
     rtsp_format_volume(volume, text, sizeof(text));
     RTSP_LOGI("volume %s, q15 %" PRId32, text, rtsp_volume_to_q15(volume));
+#endif
   }
 }
 
@@ -1253,7 +1316,12 @@ static int process_plain(rtsp_conn_t *c, const uint8_t *data, size_t len,
       }
       c->reply_http = rtsp_str_ieq(c->reader.msg.start[2], "HTTP/1.1") ||
                       rtsp_str_ieq(c->reader.msg.start[2], "HTTP/1.0");
+#ifdef CONFIG_AIRPLAY_LOG_RTSP_REQUESTS
+      /* Timing and memory of each pair-verify step, with the request log. */
       const bool verify_trace = path_is(c->reader.msg.start[1], "/pair-verify");
+#else
+      const bool verify_trace = false;
+#endif
       rtsp_pairing_memory_t mem_before = {0}, mem_after;
       uint32_t arrived = 0, locked = 0, handled = 0;
       if (verify_trace) {
@@ -1289,6 +1357,7 @@ static int process_plain(rtsp_conn_t *c, const uint8_t *data, size_t len,
        * if the peer disconnects while its final response is being sent. */
       if (r.homekit_reset) rtsp_port_homekit_reset();
 #endif
+      publish_pending(); /* after the reply, outside the lock */
       rtsp_reader_next(&c->reader);
       if (rc != 0 || r.close) {
         *used_out = used;
@@ -1352,6 +1421,7 @@ void rtsp_conn_end(rtsp_conn_t *c) {
   while (*link && *link != c) link = &(*link)->next;
   if (*link) *link = c->next;
   rtsp_port_unlock();
+  publish_pending(); /* a session that ended with its connection */
   rtsp_reader_next(&c->reader);
   ap2_hap_session_delete(c->hap);
   wipe(c, sizeof(*c));
