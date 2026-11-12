@@ -16,6 +16,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "gw_mic.h"
+#include "gw_radio.h"
 #include "gw_speakers.h"
 #include "rtsp_server.h"
 
@@ -768,6 +769,7 @@ esp_err_t gw_calib_start(bool mic_test_only) {
   return ESP_ERR_NOT_SUPPORTED;
 #else
   if (!init_once()) return ESP_ERR_NO_MEM;
+  gw_radio_stop(); /* the chirps need the speakers free */
   xSemaphoreTake(s_lock, portMAX_DELAY);
   if (s_running) {
     xSemaphoreGive(s_lock);

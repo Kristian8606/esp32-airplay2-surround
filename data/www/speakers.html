@@ -461,4 +461,4 @@ document.getElementById('cal-apply').onclick=()=>calPost('apply');
 document.getElementById('cal-discard').onclick=()=>calPost('discard');
 fetch('/api/system/info').then(r=>r.json()).then(d=>{const i=d.info||{};document.getElementById('gw-fw').textContent='Gateway fw '+(i.firmware_build||i.firmware_version||'?');}).catch(()=>{});
 buildRoom();load();setInterval(load,3000);calLoad();fwLoad();setInterval(fwLoad,3000);
-</script></body></html>
+</script><script src='/radio.js'></script></body></html>

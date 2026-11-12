@@ -16,6 +16,7 @@
 #include "esp_wifi.h"
 #include "gw_calib.h"
 #include "gw_fw.h"
+#include "gw_radio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -626,7 +627,8 @@ static void time_tick(int64_t now_us) {
   memcpy(m.bssid, s_bssid, sizeof(m.bssid));
 
   apple_clock_line_t al;
-  apple_clock_get(&al);
+  /* While the web radio plays, its line (the Gateway's own clock). */
+  if (!gw_radio_clock_line(&al)) apple_clock_get(&al);
   int64_t tsf_b_ns = 0;
   if (al.ready &&
       tsf_fit_tsf_at(&s_tsf, local_ns + 1000000000LL, &tsf_b_ns) &&

@@ -6,7 +6,11 @@
  * volume), is logged with a "FWD" prefix and is forwarded with the same
  * arguments to the speakers (gw_speakers.c), which make the same call.
  * The buffered audio stream is accepted by gw_relay.c, the realtime UDP
- * stream by gw_rt_relay.c; both copy it unchanged to every speaker. */
+ * stream by gw_rt_relay.c; both copy it unchanged to every speaker.
+ *
+ * The web radio (gw_radio.c) makes the same calls. Every call starts with
+ * gw_radio_yield(): a call of an AirPlay sender while the radio plays stops
+ * the radio first, so AirPlay always takes the speakers. */
 
 #include "sound_engine.h"
 
@@ -19,6 +23,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "gw_radio.h"
 #include "gw_relay.h"
 #include "gw_rt_relay.h"
 #include "gw_speakers.h"
@@ -79,6 +84,7 @@ esp_err_t sound_engine_release_for_wifi_scan(void) {
 }
 
 void sound_engine_set_format(const sound_format_t *format) {
+  gw_radio_yield();
   if (!format) return;
   taskENTER_CRITICAL(&s_mux);
   s.format = *format;
@@ -103,6 +109,7 @@ uint32_t sound_engine_get_sample_rate(void) {
 }
 
 void sound_engine_set_encryption(const sound_cipher_t *encrypt) {
+  gw_radio_yield();
   sound_cipher_t next = {0};
   if (encrypt) next = *encrypt;
   taskENTER_CRITICAL(&s_mux);
@@ -121,6 +128,7 @@ void sound_engine_set_encryption(const sound_cipher_t *encrypt) {
 }
 
 void sound_engine_set_stream_type(sound_stream_t type) {
+  gw_radio_yield();
   taskENTER_CRITICAL(&s_mux);
   s.stream_type = type;
   taskEXIT_CRITICAL(&s_mux);
@@ -130,6 +138,7 @@ void sound_engine_set_stream_type(sound_stream_t type) {
 }
 
 esp_err_t sound_engine_start_buffered(uint16_t tcp_port) {
+  gw_radio_yield();
   const sound_format_t f = s.format;
   /* Accept and refuse the same formats as the speaker's receiver. */
   const int codec_type = strcmp(f.codec, "AAC") == 0 ? 4 :
@@ -162,6 +171,7 @@ esp_err_t sound_engine_start_buffered(uint16_t tcp_port) {
 
 esp_err_t sound_engine_start_stream(uint16_t data_port, uint16_t control_port,
                                       uint16_t tcp_port) {
+  gw_radio_yield();
   if (s.stream_type == SOUND_STREAM_BUFFERED) {
     return sound_engine_start_buffered(tcp_port);
   }
@@ -194,6 +204,7 @@ esp_err_t sound_engine_start_stream(uint16_t data_port, uint16_t control_port,
 }
 
 void sound_engine_stop(void) {
+  gw_radio_yield();
   gw_relay_stop();
   gw_rt_relay_stop();
   taskENTER_CRITICAL(&s_mux);
@@ -230,17 +241,20 @@ int32_t sound_engine_get_volume_q15(void) {
 }
 
 void sound_engine_seek_flush(void) {
+  gw_radio_yield();
   AP_LOGI(TAG, "FWD seek_flush");
   gw_speakers_send(SURROUND_MSG_SEEK_FLUSH, NULL, 0);
 }
 
 void sound_engine_realtime_flush_to_rtp(uint32_t flush_rtp) {
+  gw_radio_yield();
   AP_LOGI(TAG, "FWD realtime_flush_to_rtp rtp=%" PRIu32, flush_rtp);
   const surround_realtime_flush_t m = {.rtp = flush_rtp};
   gw_speakers_send(SURROUND_MSG_REALTIME_FLUSH_TO_RTP, &m, sizeof(m));
 }
 
 void sound_engine_realtime_flush_wait_sender_anchor(void) {
+  gw_radio_yield();
   AP_LOGI(TAG, "FWD realtime_flush_wait_sender_anchor");
   gw_speakers_send(SURROUND_MSG_REALTIME_FLUSH_WAIT_ANCHOR, NULL, 0);
 }
@@ -250,6 +264,7 @@ esp_err_t sound_engine_set_deferred_flush_range(uint32_t from_seq,
                                                    uint32_t until_seq,
                                                    uint32_t until_ts,
                                                    bool timestamps_valid) {
+  gw_radio_yield();
   AP_LOGI(TAG,
           "FWD set_deferred_flush_range from %" PRIu32 "/%" PRIu32
           " until %" PRIu32 "/%" PRIu32 " ts_valid=%d",
@@ -266,6 +281,7 @@ esp_err_t sound_engine_set_deferred_flush_range(uint32_t from_seq,
 }
 
 void sound_engine_set_immediate_flush(uint32_t until_seq, uint32_t until_ts) {
+  gw_radio_yield();
   AP_LOGI(TAG, "FWD set_immediate_flush until %" PRIu32 "/%" PRIu32, until_seq,
           until_ts);
   const surround_immediate_flush_t m = {.until_seq = until_seq,
@@ -276,6 +292,7 @@ void sound_engine_set_immediate_flush(uint32_t until_seq, uint32_t until_ts) {
 }
 
 void sound_engine_pause(void) {
+  gw_radio_yield();
   taskENTER_CRITICAL(&s_mux);
   s.playing = false;
   taskEXIT_CRITICAL(&s_mux);
@@ -285,6 +302,7 @@ void sound_engine_pause(void) {
 }
 
 void sound_engine_set_playing(bool playing) {
+  gw_radio_yield();
   taskENTER_CRITICAL(&s_mux);
   s.playing = playing;
   taskEXIT_CRITICAL(&s_mux);
@@ -296,6 +314,7 @@ void sound_engine_set_playing(bool playing) {
 
 void sound_engine_set_anchor_time(uint64_t clock_id, uint64_t network_time_ns,
                                     uint32_t rtp_time) {
+  gw_radio_yield();
   apple_clock_line_t ps = {0};
   apple_clock_get(&ps);
   uint64_t local_ns = 0;
@@ -323,6 +342,7 @@ bool sound_engine_set_realtime_anchor_local(
     uint64_t clock_id, uint32_t gm_epoch, uint32_t mastership_age_ms,
     uint64_t remote_ptp_ns, uint64_t candidate_local_ns, uint32_t rtp_time,
     sound_realtime_anchor_result_t *result) {
+  gw_radio_yield();
   /* RTSP converted the anchor with the Gateway's clock; each speaker
    * converts the sender time again with its own. */
   AP_LOGI(TAG,
@@ -342,6 +362,7 @@ bool sound_engine_set_realtime_anchor_local(
 
 void sound_engine_set_client_control(uint32_t client_ip,
                                        uint16_t client_control_port) {
+  gw_radio_yield();
   /* The speakers send their NACKs to the Gateway, which passes them on. */
   gw_rt_relay_set_sender_control(client_ip, client_control_port);
   const surround_client_control_t m = {.port = gw_rt_relay_control_port()};
@@ -356,6 +377,7 @@ void sound_engine_set_client_control(uint32_t client_ip,
 }
 
 void sound_engine_set_playout_latency_samples(uint32_t latency_samples) {
+  gw_radio_yield();
   AP_LOGI(TAG, "FWD set_playout_latency_samples %" PRIu32, latency_samples);
   const surround_playout_latency_t m = {.latency_samples = latency_samples};
   gw_speakers_send(SURROUND_MSG_SET_PLAYOUT_LATENCY, &m, sizeof(m));
