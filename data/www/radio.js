@@ -195,11 +195,11 @@ function open() { root.classList.add('r-open'); document.body.style.overflow = '
 function close() { root.classList.remove('r-open'); document.body.style.overflow = ''; }
 pill.onclick = open; bSt.onclick = open; x.onclick = close; shade.onclick = close;
 document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
-bStop.onclick = async () => { bStop.disabled = true; try { render(await fetchJ('/api/radio/stop')); } catch (e) {} bStop.disabled = false; };
+bStop.onclick = async () => { bStop.disabled = true; try { render(await fetchJ('/api/radio/stop', { method: 'POST' })); } catch (e) {} bStop.disabled = false; };
 
 /* ---- volume: live while dragging, kept on the Gateway ---- */
 let volT0 = 0, volTimer = null;
-const sendVol = () => fetch('/api/radio/volume?db=' + vol.value, { cache: 'no-store' }).catch(() => {});
+const sendVol = () => fetch('/api/radio/volume?db=' + vol.value, { method: 'POST', cache: 'no-store' }).catch(() => {});
 vol.oninput = () => { dragging = true; volT.textContent = vol.value + ' dB'; const n = Date.now(); clearTimeout(volTimer); if (n - volT0 > 250) { volT0 = n; sendVol(); } else volTimer = setTimeout(sendVol, 250); };
 vol.onchange = () => { clearTimeout(volTimer); sendVol(); setTimeout(() => { dragging = false; }, 600); };
 

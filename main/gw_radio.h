@@ -48,7 +48,9 @@ void gw_radio_yield(void);
  * messages carry (the Gateway's own clock); false otherwise. */
 bool gw_radio_clock_line(apple_clock_line_t *out);
 
-/* /api/radio (status), /api/radio/start?vol=-30&name=..&logo=..&url=...,
- * /api/radio/stop, /api/radio/volume?db=-30, /api/radio/favs (GET/POST a
- * JSON array kept in NVS) and /radio.js (the page's radio controls). */
+/* GET /api/radio (status), POST /api/radio/start {"url","name","logo","vol"},
+ * POST /api/radio/stop, POST /api/radio/volume?db=-30, GET/POST
+ * /api/radio/favs (a JSON array kept in NVS) and GET /radio.js (the page's
+ * radio controls). What changes something asks the admin password
+ * (web_admin_ok), like the other settings. */
 void gw_radio_register_web(httpd_handle_t server);

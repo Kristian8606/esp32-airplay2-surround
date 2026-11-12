@@ -7,11 +7,14 @@
  *
  * Timing: the radio's clock line is the Gateway's esp_timer clock itself
  * (time = local ns, rate 0) under a clock id of its own. The anchor puts the
- * first frame START_DELAY ahead; the task reads the station only while the
- * frames sent run less than MAX_LEAD ahead of the play position, so the
- * station's own pace sets the stream and nothing builds up. If the station
- * stalls until the lead falls under MIN_LEAD, the speakers pause and the
- * next frame gets a new anchor, START_DELAY ahead again. */
+ * first frame START_DELAY ahead. Like an Apple buffered sender, the task
+ * then sends as far ahead as it can get: everything the station gives (its
+ * burst on connect, any catching up later) up to MAX_LEAD ahead of the play
+ * position, so each speaker holds that much and rides out a Wi-Fi dropout of
+ * its own. The station's pace then keeps the lead. If the station stalls
+ * until the lead falls under MIN_LEAD, the speakers pause and the next frame
+ * gets a new anchor, START_DELAY ahead again. The song title arrives with
+ * the audio it belongs to and is shown when that audio plays. */
 
 #include "gw_radio.h"
 
@@ -45,6 +48,7 @@
 #include "rtsp_server.h"
 #include "sodium.h"
 #include "sound_engine.h"
+#include "web_server_internal.h"
 #include "airplay_audio_formats.h"
 
 static const char *TAG = "gw_radio";
@@ -56,7 +60,10 @@ static const char *TAG = "gw_radio";
 #define RADIO_HTTP_BUF      4096
 #define RADIO_HTTP_TIMEOUT_MS 4000
 #define RADIO_START_DELAY_NS  2000000000LL /* anchor ahead of now */
-#define RADIO_MAX_LEAD_NS     5000000000LL /* read the station below this */
+/* Read the station while the frames sent are less than this ahead of the
+ * play position. 20 s of ALAC is 2.5 MB at 44.1 kHz / 16 bit and 3.8 MB at
+ * 48 kHz / 24 bit: within the speakers' 6 MiB buffer and the relay's 4 MiB. */
+#define RADIO_MAX_LEAD_NS     20000000000LL
 #define RADIO_MIN_LEAD_NS     250000000LL  /* under this: pause, re-anchor */
 #define RADIO_SENDER_STOP_MS  8000  /* the AirPlay session ends in this */
 #define RADIO_STOP_WAIT_MS    6000
@@ -104,6 +111,7 @@ typedef struct {
   int volume_db;
   int lead_ms;
   uint32_t rebuffers;
+  uint32_t enc_errors; /* ALAC frames lost (8 ms each) */
 } radio_status_t;
 
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -176,8 +184,11 @@ typedef struct {
   int meta_left;    /* metadata bytes still to read */
   int meta_len;
   char meta[4081];  /* 255 * 16 + 1 */
+  bool has_title;   /* a StreamTitle came; title holds it */
+  char title[128];
 } icy_t;
 
+/* The StreamTitle of a metadata block, for the audio after it. */
 static void icy_title(icy_t *icy) {
   icy->meta[icy->meta_len] = '\0';
   const char *p = strstr(icy->meta, "StreamTitle='");
@@ -185,11 +196,14 @@ static void icy_title(icy_t *icy) {
   p += 13;
   const char *e = strstr(p, "';");
   if (!e) e = p + strlen(p);
-  char t[sizeof(s_st.title)];
   size_t n = (size_t)(e - p);
-  if (n >= sizeof(t)) n = sizeof(t) - 1;
-  memcpy(t, p, n);
-  t[n] = '\0';
+  if (n >= sizeof(icy->title)) n = sizeof(icy->title) - 1;
+  memcpy(icy->title, p, n);
+  icy->title[n] = '\0';
+  icy->has_title = true;
+}
+
+static void title_show(const char *t) {
   taskENTER_CRITICAL(&s_mux);
   const bool changed = strcmp(s_st.title, t) != 0;
   if (changed) strlcpy(s_st.title, t, sizeof(s_st.title));
@@ -295,6 +309,7 @@ static esp_err_t station_open(station_t *st, const char *url) {
   if (!st->http) return ESP_ERR_NO_MEM;
   esp_http_client_set_header(st->http, "Icy-MetaData", "1");
   for (int hop = 0; hop < 6; ++hop) {
+    if (atomic_load(&s_stop)) return ESP_FAIL;
     esp_err_t err = esp_http_client_open(st->http, 0);
     if (err != ESP_OK) {
       st_set(R_STARTING, "Station not reachable (%s)", esp_err_to_name(err));
@@ -358,6 +373,49 @@ static int64_t lead_ns(const stream_t *o) {
   return o->anchor_ns + sent_ns - now_ns();
 }
 
+/* The RTP time playing now; false while nothing is anchored. */
+static bool play_rtp(const stream_t *o, uint32_t *rtp) {
+  if (!o->playing) return false;
+  const int64_t d = now_ns() - o->anchor_ns;
+  *rtp = d < 0 ? o->anchor_rtp - 1U
+               : o->anchor_rtp + (uint32_t)(d * o->rate / 1000000000LL);
+  return true;
+}
+
+/* Song titles waiting for their audio to play (the lead is up to 20 s). */
+#define RADIO_TITLES 4
+typedef struct {
+  struct {
+    uint32_t rtp;
+    char t[128];
+  } q[RADIO_TITLES];
+  int n;
+} titles_t;
+
+static void titles_pop(titles_t *tl) {
+  title_show(tl->q[0].t);
+  memmove(&tl->q[0], &tl->q[1], sizeof(tl->q[0]) * (size_t)(tl->n - 1));
+  tl->n--;
+}
+
+static void titles_push(titles_t *tl, const stream_t *o, const char *t) {
+  if (!o->session) {
+    title_show(t); /* nothing plays yet: the title is the station's now */
+    return;
+  }
+  if (tl->n == RADIO_TITLES) titles_pop(tl);
+  /* The audio after the metadata starts after what is decoded so far. */
+  tl->q[tl->n].rtp = o->rtp + o->fill;
+  strlcpy(tl->q[tl->n].t, t, sizeof(tl->q[0].t));
+  tl->n++;
+}
+
+static void titles_due(titles_t *tl, const stream_t *o) {
+  uint32_t now = 0;
+  if (!tl->n || !play_rtp(o, &now)) return;
+  while (tl->n && (int32_t)(now - tl->q[0].rtp) >= 0) titles_pop(tl);
+}
+
 static bool send_all(int sock, const uint8_t *p, size_t n) {
   while (n > 0) {
     if (atomic_load(&s_stop)) return false;
@@ -410,8 +468,14 @@ static bool send_frame(stream_t *o) {
   esp_audio_enc_out_frame_t out = {.buffer = o->out, .len = (uint32_t)o->out_size};
   if (esp_alac_enc_process(o->enc, &in, &out) != ESP_AUDIO_ERR_OK ||
       out.encoded_bytes == 0) {
-    ESP_LOGW(TAG, "ALAC encode failed");
-    return true; /* drop the frame, keep the stream */
+    /* The frame is left out: the next one takes its RTP time, so every
+     * speaker skips the same 8 ms and the lead is 8 ms shorter. */
+    uint32_t errs;
+    taskENTER_CRITICAL(&s_mux);
+    errs = ++s_st.enc_errors;
+    taskEXIT_CRITICAL(&s_mux);
+    if ((errs & 0x3fU) == 1U) ESP_LOGW(TAG, "ALAC encode failed (%" PRIu32 " frames so far)", errs);
+    return true;
   }
   if (o->need_anchor) anchor_now(o);
 
@@ -575,6 +639,7 @@ static bool airplay_release(void) {
   rtsp_server_stop();
   for (int i = 0; i < RADIO_SENDER_STOP_MS / 100; ++i) {
     if (rtsp_server_is_idle() && sound_engine_is_idle()) return true;
+    if (atomic_load(&s_stop)) return false; /* stopped meanwhile */
     vTaskDelay(pdMS_TO_TICKS(100));
   }
   return rtsp_server_is_idle() && sound_engine_is_idle();
@@ -616,7 +681,7 @@ static void take_speakers(void) {
 
 static void radio_run(const char *url, int volume_db) {
   if (!airplay_release()) {
-    st_set(R_FAILED, "The AirPlay sender did not let go; try again");
+    if (!atomic_load(&s_stop)) st_set(R_FAILED, "The AirPlay sender did not let go; try again");
     airplay_listen();
     return;
   }
@@ -625,6 +690,7 @@ static void radio_run(const char *url, int volume_db) {
 
   station_t st = {0};
   stream_t o = {.sock = -1};
+  titles_t titles = {0};
   esp_audio_simple_dec_handle_t dec = NULL;
   uint8_t *in = heap_caps_malloc(RADIO_HTTP_BUF, MALLOC_CAP_SPIRAM);
   uint32_t pcm_cap = 4608 * 2 * 2;
@@ -672,7 +738,8 @@ static void radio_run(const char *url, int volume_db) {
       taskEXIT_CRITICAL(&s_mux);
     }
 
-    /* Read the station only as fast as the speakers play. */
+    titles_due(&titles, &o);
+    /* Ahead as far as the station gives, up to MAX_LEAD. */
     if (o.session && lead_ns(&o) > RADIO_MAX_LEAD_NS) {
       vTaskDelay(pdMS_TO_TICKS(20));
       continue;
@@ -702,6 +769,10 @@ static void radio_run(const char *url, int volume_db) {
       continue;
     }
     n = icy_strip(st.icy, in, n);
+    if (st.icy->has_title) {
+      st.icy->has_title = false;
+      titles_push(&titles, &o, st.icy->title);
+    }
 
     esp_audio_simple_dec_raw_t raw = {.buffer = in, .len = (uint32_t)n};
     while (raw.len > 0 && !atomic_load(&s_stop)) {
@@ -823,12 +894,21 @@ static bool init_once(void) {
   return s_ctl && s_done;
 }
 
+/* Returns once the radio task has ended: never two radio tasks, and AirPlay
+ * gets the speakers only after the radio let go. Every wait in the task is
+ * bounded and looks at s_stop, so this is a few seconds at most. */
 static void stop_locked(void) {
   if (!atomic_load(&s_running)) return;
   atomic_store(&s_stop, true);
-  if (xSemaphoreTake(s_done, pdMS_TO_TICKS(RADIO_STOP_WAIT_MS)) != pdTRUE) {
-    ESP_LOGE(TAG, "the radio did not stop in %d ms", RADIO_STOP_WAIT_MS);
+  int waited_ms = 0;
+  while (atomic_load(&s_running)) {
+    if (xSemaphoreTake(s_done, pdMS_TO_TICKS(500)) == pdTRUE) continue;
+    waited_ms += 500;
+    if (waited_ms % RADIO_STOP_WAIT_MS == 0) {
+      ESP_LOGW(TAG, "still waiting for the radio to stop (%d ms)", waited_ms);
+    }
   }
+  (void)xSemaphoreTake(s_done, 0);
 }
 
 void gw_radio_stop(void) {
@@ -881,7 +961,11 @@ esp_err_t gw_radio_start(const char *url, const char *name, const char *logo,
   volume_db = volume_db == GW_RADIO_SAVED_VOLUME ? saved_volume() : clamp_db(volume_db);
   xSemaphoreTake(s_ctl, portMAX_DELAY);
   stop_locked();
-  (void)xSemaphoreTake(s_done, 0);
+  if (atomic_load(&s_running)) {
+    xSemaphoreGive(s_ctl);
+    return ESP_ERR_INVALID_STATE;
+  }
+  (void)xSemaphoreTake(s_done, 0); /* a task that ended by itself gave it */
   taskENTER_CRITICAL(&s_mux);
   memset(&s_st, 0, sizeof(s_st));
   s_st.state = R_STARTING;
@@ -910,22 +994,6 @@ esp_err_t gw_radio_start(const char *url, const char *name, const char *logo,
 
 /* ---- web ---- */
 
-static void url_decode(char *s) {
-  char *o = s;
-  for (; *s; ++s) {
-    if (*s == '%' && isxdigit((unsigned char)s[1]) && isxdigit((unsigned char)s[2])) {
-      const char h[3] = {s[1], s[2], 0};
-      *o++ = (char)strtol(h, NULL, 16);
-      s += 2;
-    } else if (*s == '+') {
-      *o++ = ' ';
-    } else {
-      *o++ = *s;
-    }
-  }
-  *o = '\0';
-}
-
 static esp_err_t send_status(httpd_req_t *req) {
   radio_status_t st;
   taskENTER_CRITICAL(&s_mux);
@@ -950,6 +1018,7 @@ static esp_err_t send_status(httpd_req_t *req) {
   cJSON_AddNumberToObject(root, "volume_db", st.volume_db);
   cJSON_AddNumberToObject(root, "lead_ms", st.lead_ms);
   cJSON_AddNumberToObject(root, "rebuffers", st.rebuffers);
+  cJSON_AddNumberToObject(root, "encoder_errors", st.enc_errors);
   char *json = cJSON_PrintUnformatted(root);
   cJSON_Delete(root);
   if (!json) return httpd_resp_send_500(req);
@@ -962,52 +1031,10 @@ static esp_err_t send_status(httpd_req_t *req) {
 
 static esp_err_t status_handler(httpd_req_t *req) { return send_status(req); }
 
-static esp_err_t start_handler(httpd_req_t *req) {
-  const size_t qlen = httpd_req_get_url_query_len(req);
-  char *q = qlen ? malloc(qlen + 1) : NULL;
-  char *url = malloc(sizeof(s_next_url) * 3);
-  if (!url || (qlen && !q)) {
-    free(q);
-    free(url);
-    return httpd_resp_send_500(req);
-  }
-  url[0] = '\0';
-  int vol = GW_RADIO_SAVED_VOLUME;
-  char name[sizeof(s_st.label) * 3] = "", logo[sizeof(s_st.logo) * 3] = "";
-  if (q && httpd_req_get_url_query_str(req, q, qlen + 1) == ESP_OK) {
-    /* url= is the last parameter: take the rest, so a station URL with its
-     * own ?a=b&c=d works even when typed unencoded. */
-    char *u = strstr(q, "url=");
-    if (u) {
-      strlcpy(url, u + 4, sizeof(s_next_url) * 3);
-      *u = '\0';
-    }
-    char v[8];
-    if (httpd_query_key_value(q, "vol", v, sizeof(v)) == ESP_OK) vol = atoi(v);
-    (void)httpd_query_key_value(q, "name", name, sizeof(name));
-    (void)httpd_query_key_value(q, "logo", logo, sizeof(logo));
-  }
-  free(q);
-  url_decode(url);
-  url_decode(name);
-  url_decode(logo);
-  const esp_err_t err = gw_radio_start(url, name, logo, vol);
-  free(url);
-  if (err == ESP_ERR_INVALID_ARG) {
-    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-                               "Usage: /api/radio/start?vol=-30&url=http://...");
-  }
-  if (err == ESP_ERR_INVALID_STATE) {
-    httpd_resp_set_status(req, "409 Conflict");
-    return httpd_resp_sendstr(req, "The room calibration runs");
-  }
-  if (err != ESP_OK) return httpd_resp_send_500(req);
-  return send_status(req);
-}
-
 /* The page: POST {"url":..,"name":..,"logo":..,"vol":-30} (a URL may be
  * longer than a GET query can carry). */
 static esp_err_t start_post_handler(httpd_req_t *req) {
+  if (!web_admin_ok(req)) return ESP_OK;
   if (req->content_len == 0 || req->content_len > 2048) {
     return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body");
   }
@@ -1046,15 +1073,17 @@ static esp_err_t start_post_handler(httpd_req_t *req) {
 }
 
 static esp_err_t stop_handler(httpd_req_t *req) {
+  if (!web_admin_ok(req)) return ESP_OK;
   gw_radio_stop();
   return send_status(req);
 }
 
 static esp_err_t volume_handler(httpd_req_t *req) {
+  if (!web_admin_ok(req)) return ESP_OK;
   char q[32], v[8];
   if (httpd_req_get_url_query_str(req, q, sizeof(q)) != ESP_OK ||
       httpd_query_key_value(q, "db", v, sizeof(v)) != ESP_OK) {
-    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Usage: /api/radio/volume?db=-30");
+    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Usage: POST /api/radio/volume?db=-30");
   }
   gw_radio_set_volume(atoi(v));
   return send_status(req);
@@ -1083,6 +1112,7 @@ static esp_err_t favs_get_handler(httpd_req_t *req) {
 }
 
 static esp_err_t favs_post_handler(httpd_req_t *req) {
+  if (!web_admin_ok(req)) return ESP_OK;
   if (req->content_len == 0 || req->content_len > RADIO_FAVS_MAX) {
     return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Too many favourites");
   }
@@ -1128,10 +1158,9 @@ void gw_radio_register_web(httpd_handle_t server) {
   (void)init_once();
   const httpd_uri_t uris[] = {
       {.uri = "/api/radio", .method = HTTP_GET, .handler = status_handler},
-      {.uri = "/api/radio/start", .method = HTTP_GET, .handler = start_handler},
       {.uri = "/api/radio/start", .method = HTTP_POST, .handler = start_post_handler},
-      {.uri = "/api/radio/stop", .method = HTTP_GET, .handler = stop_handler},
-      {.uri = "/api/radio/volume", .method = HTTP_GET, .handler = volume_handler},
+      {.uri = "/api/radio/stop", .method = HTTP_POST, .handler = stop_handler},
+      {.uri = "/api/radio/volume", .method = HTTP_POST, .handler = volume_handler},
       {.uri = "/api/radio/favs", .method = HTTP_GET, .handler = favs_get_handler},
       {.uri = "/api/radio/favs", .method = HTTP_POST, .handler = favs_post_handler},
       {.uri = "/radio.js", .method = HTTP_GET, .handler = radio_js_handler},
