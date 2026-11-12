@@ -645,13 +645,16 @@ static bool airplay_release(void) {
   return rtsp_server_is_idle() && sound_engine_is_idle();
 }
 
-static void airplay_listen(void) {
-  if (rtsp_server_is_idle()) {
-    const esp_err_t err = rtsp_server_start();
-    if (err != ESP_OK) {
-      ESP_LOGE(TAG, "AirPlay listener did not start again: %s", esp_err_to_name(err));
-    }
+/* Starts the AirPlay listener the radio stopped. Only right after
+ * rtsp_server_stop(): never while AirPlay takes the speakers back, when the
+ * RTSP task holds its lock and waits in gw_radio_yield() for this task (the
+ * RTSP calls here take that lock too). */
+static bool airplay_listen(void) {
+  const esp_err_t err = rtsp_server_start();
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "AirPlay listener did not start again: %s", esp_err_to_name(err));
   }
+  return err == ESP_OK;
 }
 
 static void take_speakers(void) {
@@ -686,7 +689,8 @@ static void radio_run(const char *url, int volume_db) {
     return;
   }
   take_speakers();
-  airplay_listen(); /* AirPlay can take the speakers back at any time */
+  /* AirPlay can take the speakers back at any time. */
+  const bool listening = airplay_listen();
 
   station_t st = {0};
   stream_t o = {.sock = -1};
@@ -857,7 +861,7 @@ out:
   if (dec) esp_audio_simple_dec_close(dec);
   session_close(&o);
   atomic_store(&s_owns, false); /* TIME follows the Apple clock again */
-  airplay_listen();
+  if (!listening) (void)airplay_listen(); /* one more try, if the first failed */
   free(in);
   free(pcm);
   free(st.icy);
