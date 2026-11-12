@@ -1,8 +1,10 @@
 /* Web radio controls for the Speakers page (gw_radio.c serves this file).
  * Adds a Radio button to the header while nothing plays, a player bar above
  * the Room while the radio plays, and a Stations panel. While AirPlay plays
- * none of it shows. Station search: Radio Browser (radio-browser.info),
- * straight from this browser; the Gateway keeps only the favourites. */
+ * none of it shows. Station lists and search: Radio Browser
+ * (radio-browser.info), straight from this browser; the country tab starts at
+ * the browser's own country and names the countries in its language. The
+ * Gateway keeps only the favourites and the volume. */
 (function () {
 'use strict';
 const RB = ['de1', 'fi1', 'nl1', 'de2'].map(h => 'https://' + h + '.api.radio-browser.info');
@@ -93,10 +95,30 @@ const tabs = el('div', 'r-tabs'), x = el('button', 'r-x', 'Close ✕');
 const head = el('div', 'r-head'); head.append(tabs, x);
 const msg = el('div', 'r-msg'), form = el('div', 'r-form'), list = el('div', 'r-list');
 sheet.append(el('div', 'r-grip'), head, msg, form, list);
-const TABS = [['fav', 'Favourites'], ['bg', 'Bulgaria'], ['search', 'Search'], ['url', 'URL']];
+/* ---- the country: the browser's own at first, then the one picked ---- */
+const regionName = (() => {
+  let dn = null;
+  try { dn = new Intl.DisplayNames([navigator.language || 'en'], { type: 'region' }); } catch (e) {}
+  return c => { try { return (dn && dn.of(c)) || c; } catch (e) { return c; } };
+})();
+function guessCC() {
+  for (const l of navigator.languages || [navigator.language || '']) {
+    const m = /-([A-Za-z]{2})(?:-|$)/.exec(l); if (m) return m[1].toUpperCase();
+  }
+  const lang = (navigator.language || '').slice(0, 2).toUpperCase();
+  return /^[A-Z]{2}$/.test(lang) && lang !== 'EN' ? lang : 'US';
+}
+let cc = '';
+try { cc = localStorage.getItem('radioCC') || ''; } catch (e) {}
+if (!/^[A-Z]{2}$/.test(cc)) cc = guessCC();
+
+const TABS = [['fav', 'Favourites'], ['cc', regionName(cc)], ['search', 'Search'], ['url', 'URL']];
 let tab = 'fav';
 try { tab = localStorage.getItem('radioTab') || 'fav'; } catch (e) {}
-TABS.forEach(([k, t]) => { const b = el('button', 'r-tab', t); b.type = 'button'; b.dataset.k = k; b.onclick = () => show(k); tabs.appendChild(b); });
+if (tab === 'bg') tab = 'cc';
+let ccTab = null;
+TABS.forEach(([k, t]) => { const b = el('button', 'r-tab', t); b.type = 'button'; b.dataset.k = k; b.onclick = () => show(k); tabs.appendChild(b); if (k === 'cc') ccTab = b; });
+const ccSel = el('select'); ccSel.setAttribute('aria-label', 'Country');
 
 const q = el('input'); q.type = 'search'; q.placeholder = 'Station name or genre'; q.setAttribute('aria-label', 'Search stations');
 const uName = el('input'); uName.placeholder = 'Name (optional)';
@@ -105,7 +127,8 @@ const uPlay = el('button', 'btn', 'Play'), uSave = el('button', 'btn sec', '★ 
 const uBtns = el('div', 'r-ctl'); uBtns.style.marginTop = '2px'; uBtns.append(uPlay, uSave);
 
 /* ---- state ---- */
-let favs = [], cur = null, lastUrl = '', dragging = false, pollT = null, bgCache = null, searchT = null;
+let favs = [], cur = null, lastUrl = '', dragging = false, pollT = null, searchT = null;
+let countries = null; const ccCache = {};
 const fetchJ = async (u, o) => { const r = await fetch(u, Object.assign({ cache: 'no-store' }, o)); if (!r.ok) throw new Error(await r.text() || r.status); return r.json(); };
 async function rb(path) {
   for (const base of RB) {
@@ -142,11 +165,10 @@ async function show(k) {
   [...tabs.children].forEach(b => b.classList.toggle('on', b.dataset.k === k));
   form.textContent = ''; setMsg(cur && cur.state === 'failed' && cur.message ? 'Last station: ' + cur.message : '', true);
   if (k === 'fav') fill(favs, 'Tap ☆ on a station to keep it here.');
-  else if (k === 'bg') {
-    if (bgCache) { fill(bgCache, 'No stations.'); return; }
-    fill([], 'Loading…');
-    try { const r = await rb('/json/stations/bycountrycodeexact/BG?hidebroken=true&order=clickcount&reverse=true&limit=100'); bgCache = r.data.map(toStation).filter(usable); if (tab === 'bg') fill(bgCache, 'No stations.'); }
-    catch (e) { if (tab === 'bg') fill([], 'The station list needs internet on this phone or computer.'); }
+  else if (k === 'cc') {
+    form.appendChild(ccSel);
+    fillCountries();
+    showCountry();
   } else if (k === 'search') {
     form.appendChild(q); fill([], 'Type a name or a genre (jazz, rock, news…).'); setTimeout(() => q.focus(), 50);
     if (q.value.trim()) search();
@@ -154,6 +176,34 @@ async function show(k) {
     form.append(uName, uUrl, uBtns); list.textContent = '';
     list.appendChild(el('div', 'r-empty', 'Paste the address of a stream (an Icecast/Shoutcast URL, MP3 or AAC). Playlists (.m3u, .pls) and HLS (.m3u8) do not work yet.'));
   }
+}
+/* Every country with stations, named in the browser's language. */
+async function fillCountries() {
+  if (!countries) {
+    ccSel.textContent = ''; ccSel.appendChild(el('option', '', regionName(cc))); ccSel.disabled = true;
+    try {
+      const r = await rb('/json/countrycodes?hidebroken=true');
+      countries = r.data.filter(c => /^[A-Z]{2}$/.test(c.name) && c.stationcount > 0)
+        .map(c => ({ cc: c.name, n: c.stationcount, name: regionName(c.name) }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    } catch (e) { return; }
+  }
+  ccSel.textContent = ''; ccSel.disabled = false;
+  countries.forEach(c => { const o = el('option', '', c.name + ' (' + c.n + ')'); o.value = c.cc; if (c.cc === cc) o.selected = true; ccSel.appendChild(o); });
+}
+ccSel.onchange = () => {
+  cc = ccSel.value; try { localStorage.setItem('radioCC', cc); } catch (e) {}
+  ccTab.textContent = regionName(cc); showCountry();
+};
+async function showCountry() {
+  const want = cc;
+  if (ccCache[want]) { fill(ccCache[want], 'No stations that the Gateway can play.'); return; }
+  fill([], 'Loading…');
+  try {
+    const r = await rb('/json/stations/bycountrycodeexact/' + want + '?hidebroken=true&order=clickcount&reverse=true&limit=100');
+    ccCache[want] = r.data.map(toStation).filter(usable);
+    if (tab === 'cc' && cc === want) fill(ccCache[want], 'No stations that the Gateway can play.');
+  } catch (e) { if (tab === 'cc' && cc === want) fill([], 'The station list needs internet on this phone or computer.'); }
 }
 async function search() {
   const t = q.value.trim(); if (!t) { fill([], 'Type a name or a genre (jazz, rock, news…).'); return; }
