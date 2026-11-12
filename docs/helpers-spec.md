@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Three small parts used by two ESP32-S3 firmwares (ESP-IDF v6.0.2), a
+Three small parts used by two ESP32-S3 firmwares (ESP-IDF v6.1), a
 Gateway and a speaker:
 
 - **rtsp_events**: tells listeners when an AirPlay session starts, plays,
@@ -17,7 +17,7 @@ code already calls them. The public headers go to `include/` with these
 three names.
 
 Sources: **[callers]** the code that calls these functions in the
-firmwares; **[ESP-IDF]** ESP-IDF v6.0.2 and its lwIP; **[RFC 1035]**,
+firmwares; **[ESP-IDF]** ESP-IDF v6.1 and its lwIP; **[RFC 1035]**,
 **[RFC 6891]** (EDNS). Rules marked "decided" were chosen for this
 firmware where no source shows the behaviour.
 
@@ -137,7 +137,7 @@ look up names (for example `captive.apple.com`) and must get
   as 513 bytes read and is dropped, and a reply buffer of 512 bytes
   (decided).
 - `SO_RCVTIMEO` takes a `struct timeval`: both firmwares keep lwIP's
-  `LWIP_SO_SNDRCVTIMEO_NONSTANDARD` at its default 0 [ESP-IDF v6.0.2].
+  `LWIP_SO_SNDRCVTIMEO_NONSTANDARD` at its default 0 [ESP-IDF v6.1].
 - A receive error other than the timeout (for example while the access
   point goes down): the task waits 20 ms and receives again, without a
   log (decided).

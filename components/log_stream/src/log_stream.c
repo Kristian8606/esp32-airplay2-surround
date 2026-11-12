@@ -18,7 +18,7 @@
  *    browser has text to get, and then queues send_work and waits for it.
  *    It calls nothing of the web server but httpd_queue_work.
  *
- * In ESP-IDF v6.0.2 the WebSocket handler is not called for the handshake,
+ * In ESP-IDF v6.1 the WebSocket handler is not called for the handshake,
  * hence the post-handshake callback; the firmware must set
  * CONFIG_HTTPD_WS_POST_HANDSHAKE_CB_SUPPORT=y.
  */
@@ -267,7 +267,7 @@ static esp_err_t on_upgrade(httpd_req_t *req)
 static esp_err_t ws_handler(httpd_req_t *req)
 {
     if (req->method == HTTP_GET) {
-        return ESP_OK; /* not called for the handshake in v6.0.2 */
+        return ESP_OK; /* not called for the handshake in v6.1 */
     }
 
     /* Read whatever the browser sent and drop it. The page never sends

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Both firmwares (ESP32-S3, ESP-IDF v6.0.2), a Gateway and the speakers,
+Both firmwares (ESP32-S3, ESP-IDF v6.1), a Gateway and the speakers,
 keep a few settings in NVS: the device name, up to 8 Wi-Fi networks, the
 AirPlay volume and the speaker's audio settings. This part reads and
 writes them.
@@ -21,7 +21,7 @@ stay as they are; other code calls them. The public header goes to
 
 Sources: **[black box]** the current settings code run on a computer
 against a fake NVS that recorded every call; **[callers]** the code that
-calls these functions; **[ESP-IDF]** ESP-IDF v6.0.2 (NVS API). Rules marked
+calls these functions; **[ESP-IDF]** ESP-IDF v6.1 (NVS API). Rules marked
 "decided" were chosen where the current behaviour was a flaw or is not
 seen.
 

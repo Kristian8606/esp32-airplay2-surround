@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Both firmwares (ESP32-S3, ESP-IDF v6.0.2), a Gateway and the speakers,
+Both firmwares (ESP32-S3, ESP-IDF v6.1), a Gateway and the speakers,
 serve a web page for set-up and maintenance on port 80. This part is the
 shared core: it starts the ESP-IDF HTTP server, serves the shared pages
 and APIs (system info, Wi-Fi, device name, restart, firmware update,
@@ -18,7 +18,7 @@ a fake HTTP server and fakes of the firmware, recording every call and
 response; **[board]** `curl` against a running Gateway (v4.5.61,
 2026-11-07); **[pages]** the browser pages that call these APIs
 (`data/www/index.html`, `speedtest.html`); **[callers]** the code that
-calls the helpers; **[ESP-IDF]** ESP-IDF v6.0.2 (`esp_http_server`).
+calls the helpers; **[ESP-IDF]** ESP-IDF v6.1 (`esp_http_server`).
 Rules marked "decided" were chosen where the current behaviour was a flaw
 or is not seen.
 

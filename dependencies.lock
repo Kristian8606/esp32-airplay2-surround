@@ -76,7 +76,7 @@ dependencies:
   idf:
     source:
       type: idf
-    version: 6.0.2
+    version: 6.1.0
 direct_dependencies:
 - ap2_core
 - apple_clock
@@ -86,6 +86,6 @@ direct_dependencies:
 - espressif/libsodium
 - espressif/mdns
 - idf
-manifest_hash: b7d141d1ce00a303fd625a33486e24e2bf49e2d56ce425721b71b3fe9dfee1c7
+manifest_hash: 661be09668aba8853ff091c1a4ec9bf3069ad0dbc92eac75edb6f0174cf47c2c
 target: esp32s3
 version: 3.0.0

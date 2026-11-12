@@ -65,7 +65,7 @@ Scans: every scan gets a number; a `SCAN_DONE` while none runs is ignored.
 A scan with no result in 10 s is stopped and the right to scan kept until
 its `SCAN_DONE` or 1 s more (for the station one failure). A `SCAN_DONE`
 later than that, during the next scan, cannot be told apart in ESP-IDF
-v6.0.2 and is taken as that scan's; its list holds real networks too.
+v6.1 and is taken as that scan's; its list holds real networks too.
 
 Log tag `wifi`, one line per event, never a password. No task of its own;
 the work runs in the default event loop task, scan results go to PSRAM.

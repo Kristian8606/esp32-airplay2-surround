@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Both firmwares (ESP32-S3, ESP-IDF v6.0.2) drive one WS2812 RGB LED: a
+Both firmwares (ESP32-S3, ESP-IDF v6.1) drive one WS2812 RGB LED: a
 Gateway that receives AirPlay 2, and speakers that play one channel each.
 The LED shows the AirPlay state (standby, connected or paused, playing)
 and, while playing, a level meter of the audio the speaker sends to its
@@ -14,7 +14,7 @@ with these two functions. Session events come from `deps/rtsp_events.h`
 
 Sources: **[callers]** the code that calls these functions and emits the
 events; **[menuconfig]** the firmware options below; **[ESP-IDF]** ESP-IDF
-v6.0.2 and the Espressif `led_strip` component 3.0.3 (its public API);
+v6.1 and the Espressif `led_strip` component 3.0.3 (its public API);
 **[board]** the LED of the running firmware. Rules marked "decided" were
 chosen for this firmware where no source shows the behaviour.
 

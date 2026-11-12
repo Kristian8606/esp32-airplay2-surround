@@ -350,7 +350,7 @@ from the I2S wires.
 
 ### 1. Install ESP-IDF
 
-The firmware is built with **ESP-IDF v6.0.2**. Follow Espressif's
+The firmware is built with **ESP-IDF v6.1**. Follow Espressif's
 [installation guide](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/get-started/index.html),
 then open a terminal with the ESP-IDF environment loaded
 (`source ~/esp-idf/export.sh`, or the path where you installed it).
