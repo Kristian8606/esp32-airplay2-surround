@@ -3,16 +3,24 @@
 <title>AirPlay Audio EQ</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,system-ui,sans-serif;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);min-height:100vh;padding:20px;color:#fff}.wrap{max-width:900px;margin:0 auto}.header{text-align:center;padding:24px 0}.header h1{font-size:26px;font-weight:600;margin-bottom:8px}.header p,.hint{color:#9aa0ad;font-size:13px}.card{background:rgba(255,255,255,.05);backdrop-filter:blur(10px);border-radius:16px;padding:20px;margin-bottom:16px;border:1px solid rgba(255,255,255,.1)}.card h2{font-size:16px;font-weight:600;margin-bottom:16px;color:#8b7bff}.output-title{flex-wrap:wrap;display:flex;justify-content:space-between;align-items:center;gap:10px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.form-group{margin-bottom:14px}.form-group label{display:block;font-size:11px;color:#999;margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px}input[type=number],select{width:100%;padding:11px 12px;background:#10172b;border:1px solid rgba(255,255,255,.14);border-radius:8px;color:#fff;font-size:14px}input:focus,select:focus{outline:none;border-color:#8b7bff}.toggle{display:flex;align-items:center;gap:10px;margin-bottom:16px}.filter{background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:14px;margin-bottom:10px}.filter-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}.filter-title{font-weight:600;font-size:14px}.filter-grid{display:grid;grid-template-columns:1.1fr 1fr 1fr 1fr;gap:10px}.filter-grid .form-group{margin:0}.btn{display:inline-block;padding:11px 18px;border:none;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;text-decoration:none}.btn-primary{background:#8b7bff;color:#fff}.btn-secondary{background:rgba(255,255,255,.1);color:#fff}.btn-danger{background:#5c1a1a;color:#fff}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}.msg{padding:10px;border-radius:6px;margin-top:12px;font-size:13px}.msg.ok{background:rgba(27,67,50,.65)}.msg.err{background:rgba(92,26,26,.65)}.msg.info{background:rgba(15,52,96,.65)}.disabled{opacity:.55}.count{font-size:12px;color:#9aa0ad}input[type=range]{width:100%;accent-color:#8b7bff}.loud-graph{width:100%;height:auto;display:block;margin:14px 0 6px;background:rgba(0,0,0,.22);border-radius:10px}.loud-now{font-size:13px;color:#cfd3dc}@media(max-width:650px){.grid,.filter-grid{grid-template-columns:1fr 1fr}.wrap{max-width:100%}}@media(max-width:430px){.grid,.filter-grid{grid-template-columns:1fr}}
-</style><style>/* theme */:root{--bg:#000;--panel:#0f0f10;--panel2:#17171a;--line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.16);--text:#f4f4f5;--muted:#8d8d93;--accent:#8b7bff;--glow:linear-gradient(90deg,#3b5bff,#8b5cff 50%,#ff3d7f)}body{font-family:-apple-system,'SF Pro Display','Helvetica Neue',system-ui,sans-serif;-webkit-font-smoothing:antialiased;background:var(--bg) radial-gradient(1200px 500px at 50% -200px,rgba(110,90,255,.16),transparent 70%) no-repeat;color:var(--text)}a{color:var(--accent)}.header h1,h1{font-weight:300;letter-spacing:.5px}.header::after{content:'';display:block;width:56px;height:3px;margin:14px auto 0;border-radius:2px;background:var(--glow)}.header p,.hint,.sub{color:var(--muted)}.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;backdrop-filter:none}.card h2{color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1.6px}.btn{border-radius:999px;font-weight:600;letter-spacing:.3px;font-family:inherit}.btn-primary,.btn:not(.btn-secondary):not(.btn-danger):not(.sec){background:#fff;color:#000}.btn-primary:hover,.btn:not(.btn-secondary):not(.btn-danger):not(.sec):hover{background:#dcdcdc}.btn-secondary,.btn.sec{background:transparent;color:var(--text);border:1px solid var(--line2)}.btn-secondary:hover,.btn.sec:hover{border-color:#fff}.btn-danger{background:transparent;color:#ff8a80;border:1px solid rgba(255,69,58,.5)}input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]),select{background:#0a0a0b;border:1px solid var(--line2);border-radius:10px;color:var(--text);font-family:inherit}input:focus,select:focus{border-color:var(--accent)}input[type=checkbox],input[type=range]{accent-color:var(--accent)}.msg.ok{background:rgba(48,209,88,.12);color:#7ee2a0}.msg.err{background:rgba(255,69,58,.14);color:#ff8a80}.msg.info{background:rgba(139,123,255,.12);color:#c4b2ff}.filter{background:var(--panel2);border-color:var(--line)}.loud-graph{background:var(--panel2)}.count{color:var(--muted)}</style></head><body><div class='wrap'>
-<div class='header'><h1>Audio EQ</h1><p>Independent biquad chains for the left and right physical outputs.</p><p style='margin-top:8px'>Mute buttons act immediately, even with EQ disabled. Outputs are unmuted after restart.</p></div>
+</style><style>/* theme */:root{--bg:#000;--panel:#0f0f10;--panel2:#17171a;--line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.16);--text:#f4f4f5;--muted:#8d8d93;--accent:#8b7bff;--glow:linear-gradient(90deg,#3b5bff,#8b5cff 50%,#ff3d7f)}body{font-family:-apple-system,'SF Pro Display','Helvetica Neue',system-ui,sans-serif;-webkit-font-smoothing:antialiased;background:var(--bg) radial-gradient(1200px 500px at 50% -200px,rgba(110,90,255,.16),transparent 70%) no-repeat;color:var(--text)}a{color:var(--accent)}.header h1,h1{font-weight:300;letter-spacing:.5px}.header::after{content:'';display:block;width:56px;height:3px;margin:14px auto 0;border-radius:2px;background:var(--glow)}.header p,.hint,.sub{color:var(--muted)}.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;backdrop-filter:none}.card h2{color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1.6px}.btn{border-radius:999px;font-weight:600;letter-spacing:.3px;font-family:inherit}.btn-primary,.btn:not(.btn-secondary):not(.btn-danger):not(.sec){background:#fff;color:#000}.btn-primary:hover,.btn:not(.btn-secondary):not(.btn-danger):not(.sec):hover{background:#dcdcdc}.btn-secondary,.btn.sec{background:transparent;color:var(--text);border:1px solid var(--line2)}.btn-secondary:hover,.btn.sec:hover{border-color:#fff}.btn-danger{background:transparent;color:#ff8a80;border:1px solid rgba(255,69,58,.5)}input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]),select{background:#0a0a0b;border:1px solid var(--line2);border-radius:10px;color:var(--text);font-family:inherit}input:focus,select:focus{border-color:var(--accent)}input[type=checkbox],input[type=range]{accent-color:var(--accent)}.msg.ok{background:rgba(48,209,88,.12);color:#7ee2a0}.msg.err{background:rgba(255,69,58,.14);color:#ff8a80}.msg.info{background:rgba(139,123,255,.12);color:#c4b2ff}.filter{background:var(--panel2);border-color:var(--line)}.loud-graph{background:var(--panel2)}.count{color:var(--muted)}</style><style>.seg{display:inline-flex;border:1px solid var(--line2);border-radius:999px;overflow:hidden;flex-wrap:wrap}.seg button{background:transparent;color:var(--text);border:0;padding:8px 16px;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer}.seg button.on{background:#fff;color:#000}.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px;color:var(--muted)}.row+.row{margin-top:12px}.row .num{width:76px;padding:7px 8px;font-size:13px;text-align:center}.pill{background:transparent;color:var(--text);border:1px solid var(--line2);border-radius:999px;font-size:12px;padding:5px 12px;font-weight:600;font-family:inherit;cursor:pointer}.pill.on{background:#fff;color:#000;border-color:#fff}.pill.warn{border-color:rgba(255,69,58,.5);color:#ff8a80}.pill:disabled{opacity:.4;cursor:default}.badge{font-size:12px;padding:4px 10px;border-radius:999px}.badge.ok{background:rgba(48,209,88,.12);color:#7ee2a0}.badge.hot{background:rgba(255,159,10,.14);color:#ffc76b}.way-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}.way-head h2{margin:0}.dot{width:10px;height:10px;border-radius:50%;flex:none}.eq-graph{width:100%;height:auto;display:block;margin:12px 0 6px;background:var(--panel2);border-radius:10px}.strip-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}.strip{display:grid;grid-template-columns:22px repeat(24,minmax(0,1fr));gap:2px;align-items:center;min-width:700px}.strip .c{display:flex;flex-direction:column;align-items:center;gap:3px;border-radius:6px;padding:3px 0;cursor:pointer}.strip .c.sel{background:var(--panel2)}.strip input[type=range]{writing-mode:vertical-lr;direction:rtl;width:18px;height:120px;margin:0}.strip input[type=range]:disabled{opacity:.25}.strip input.t{width:100%;min-width:0;height:22px;padding:0;font-size:11px;text-align:center;border-radius:5px}.strip input.t:disabled{opacity:.35}.lab{font-size:11px;color:var(--muted);text-align:right}.g{font-size:11px;color:#cfd3dc;height:14px;white-space:nowrap}.band-row{margin-top:12px}.pending{background:rgba(255,159,10,.12);color:#ffc76b;border-radius:10px;padding:10px 12px;font-size:13px;margin-top:12px}</style></head><body><div class='wrap'>
+<div class='header'><h1>Audio EQ</h1><p>Both amplifier outputs carry this speaker's channel. Mono plays it full range on both; Bi-amp drives a tweeter and a woofer from the two outputs.</p><p style='margin-top:8px'>Mute buttons act immediately, even with EQ disabled. Outputs are unmuted after restart.</p></div>
 <div class='card'>
-<h2>EQ</h2>
-<div class='toggle'><input type='checkbox' id='eq-enabled'><label for='eq-enabled'>Enable EQ and preamp</label></div>
-<div class='grid'>
-<input type='hidden' id='channel-mode' value='stereo'>
+<h2>Amplifier outputs</h2>
+<div class='row'><div class='seg' id='mode'><button data-m='mono'>Mono</button><button data-m='biamp'>Bi-amp</button></div></div>
+<p class='hint' style='margin-top:12px' id='mode-hint'></p>
+<div id='layout-pending'></div>
+<div class='toggle' style='margin:16px 0 8px'><input type='checkbox' id='eq-enabled'><label for='eq-enabled'>Enable EQ and preamp</label></div>
+<div class='toggle' style='margin:0'><input type='checkbox' id='live' checked><label for='live'>Apply while adjusting (not saved until Apply &amp; Save)</label></div>
 </div>
-<p class='hint'>Both outputs carry this speaker's channel (L = R); each has its own independent filters, so one output can be low-pass and the other high-pass.</p>
+<div class='card' id='xo-card' style='display:none'>
+<h2>Crossover</h2>
+<div class='row'><span>Slope</span><div class='seg' id='slope'><button data-s='12'>LR2 &middot; 12 dB/oct</button><button data-s='24'>LR4 &middot; 24 dB/oct</button><button data-s='48'>LR8 &middot; 48 dB/oct</button></div></div>
+<div class='row'><span>Frequency</span><input type='range' id='xo-r' min='0' max='1000' step='1' style='flex:1;min-width:160px'><input type='number' class='num' id='xo-n' min='800' max='8000' step='10'><span>Hz</span></div>
+<div class='row'><span>Tweeter on</span><b id='tw-side' style='color:var(--text)'></b><button type='button' class='pill' id='swap'>Swap outputs</button></div>
+<p class='hint' style='margin-top:12px'>Linkwitz-Riley: tweeter and woofer sum flat. LR2 needs the tweeter inverted (set for you when you pick it); LR4 and LR8 sum in phase. The crossover runs even with the EQ disabled, and the tweeter output never gets audio without its high-pass. Before you apply Bi-amp or a swap, check which amplifier output drives the tweeter: use the Mute buttons with music playing.</p>
 </div>
+<div id='ways'></div>
 <div class='card' id='spk-card' style='display:none'>
 <h2>Surround speaker (5.1 / 7.1)</h2>
 <p class='hint' style='margin-bottom:14px'>The channel this speaker plays, the same setting as on the Gateway's Speakers page. Changes apply instantly and are remembered.</p>
@@ -26,7 +34,7 @@
 <tr><td style='padding:4px 8px 4px 0'><b>Rear L / R</b></td><td>Behind the listener, ~135&ndash;150&deg;. 7.1 only; silent with a 5.1 stream, which has no rear channels.</td></tr>
 <tr><td style='padding:4px 8px 4px 0'><b>Mono mix</b></td><td>All speakers except the subwoofer in one signal (uses the most CPU).</td></tr>
 </table>
-<p class='hint' style='margin-top:10px'>With a surround stream both EQ inputs carry this one speaker, so every <b>Source mode</b> above gives the same signal; the output filters and preamp still apply (e.g. a low-pass for the subwoofer).</p>
+<p class='hint' style='margin-top:10px'>With a surround stream both amplifier outputs carry this one speaker; the EQ, crossover and levels above still apply (e.g. a low-pass for the subwoofer).</p>
 <p class='hint' style='margin-top:6px'>Names follow Apple's 7.1 order. If a 7.1 speaker test plays Front where you expect Side (or the reverse), the stream uses the ISO order instead; tell the firmware author.</p>
 <div id='spk-msg'></div>
 </div>
@@ -42,50 +50,135 @@
 <div id='loud-msg'></div>
 </div>
 <div class='card'>
-<div class='output-title'><h2>Left Output Filters</h2><span id='left-count' class='count'></span><button type='button' class='btn btn-secondary' id='left-mute-btn' aria-pressed='false' disabled onclick="toggleMute('left')">Mute Left</button></div>
-<div class='form-group'><label for='left-preamp'>Preamp (dB)</label><input type='number' id='left-preamp' min='-24' max='0' step='0.1' value='0'></div>
-<div id='left-filters'></div>
-<div class='actions'><button class='btn btn-secondary' onclick="addFilter('left')">+ Add Left Filter</button></div>
-</div>
-<div class='card'>
-<div class='output-title'><h2>Right Output Filters</h2><span id='right-count' class='count'></span><button type='button' class='btn btn-secondary' id='right-mute-btn' aria-pressed='false' disabled onclick="toggleMute('right')">Mute Right</button></div>
-<div class='form-group'><label for='right-preamp'>Preamp (dB)</label><input type='number' id='right-preamp' min='-24' max='0' step='0.1' value='0'></div>
-<div id='right-filters'></div>
-<div class='actions'><button class='btn btn-secondary' onclick="addFilter('right')">+ Add Right Filter</button></div>
-<p class='hint' style='margin-top:12px'>Up to 24 filters per output. PK uses Frequency/Gain/Q. LP, HP, BP and Notch use Frequency/Q. LS and HS use Frequency/Gain.</p>
-</div>
-<div class='card'>
-<h2>Apply & Save</h2>
-<p class='hint'>Applies the EQ live and saves the complete configuration to NVS. No restart is required. Because EQ remains before the PCM buffer, the audible change follows the already-decoded ~1.1 s PCM lead.</p>
-<div class='actions'><button class='btn btn-primary' id='apply-save-btn' onclick='postEq()'>Apply &amp; Save</button><a href='/' class='btn btn-secondary'>Back</a></div>
+<h2>Apply &amp; Save</h2>
+<p class='hint'>Apply plays the settings now without saving them (a restart goes back to the saved ones). Apply &amp; Save also saves them to NVS. No restart is needed. A change of the output layout (Mono / Bi-amp, the tweeter's output, slope, polarity, delay) mutes for about 25 ms; EQ bands, levels and the crossover frequency change without a gap.</p>
+<div class='actions'><button class='btn btn-secondary' id='apply-btn'>Apply</button><button class='btn btn-primary' id='apply-save-btn'>Apply &amp; Save</button><a href='/' class='btn btn-secondary'>Back</a></div>
 <div id='eq-msg'></div>
 </div>
 </div><script>
-const MAX_FILTERS=24;
-const outputMuted={left:false,right:false};
-let muteBusy=false;
-function showMuteState(d){for(const side of ['left','right']){outputMuted[side]=!!d[side+'_muted'];const b=document.getElementById(side+'-mute-btn');b.textContent=(outputMuted[side]?'Unmute ':'Mute ')+(side==='left'?'Left':'Right');b.setAttribute('aria-pressed',String(outputMuted[side]));b.classList.toggle('btn-danger',outputMuted[side]);b.classList.toggle('btn-secondary',!outputMuted[side]);}}
-function disableMuteButtons(disabled){for(const side of ['left','right'])document.getElementById(side+'-mute-btn').disabled=disabled;}
-async function toggleMute(side){if(muteBusy)return;muteBusy=true;disableMuteButtons(true);try{const r=await fetch('/api/audio/mute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channel:side,muted:!outputMuted[side]})});if(!r.ok)throw new Error('HTTP '+r.status);const d=await r.json();if(!d.success)throw new Error('Request failed');showMuteState(d);msg((side==='left'?'Left':'Right')+' output '+(outputMuted[side]?'muted.':'unmuted.'),'ok');}catch(e){msg('Mute failed: '+esc(e.message),'err');}finally{muteBusy=false;disableMuteButtons(false);}}
-
-function msg(txt,type){var e=document.getElementById('eq-msg');e.innerHTML='<div class="msg '+type+'">'+txt+'</div>';}
+const NB=24,FS=48000,TYPES=['PK','LS','HS','LP','HP','BP','NOTCH'],GAIN_T=['PK','LS','HS'],Q_T=['PK','LP','HP','BP','NOTCH'];
+const F0=[25,33,44,58,77,100,135,180,235,310,410,550,720,950,1300,1700,2200,2900,3800,5000,6700,8800,12000,16000];
+const COL={m:'#8b7bff',tw:'#b9a8ff',wf:'#ff5c93'},NAME={m:'Full range',tw:'Tweeter',wf:'Woofer'};
+const TIP={PK:'Peak: frequency, gain, Q',LS:'Low shelf: frequency, gain (fixed slope)',HS:'High shelf: frequency, gain (fixed slope)',LP:'Low-pass 12 dB/oct: frequency, Q',HP:'High-pass 12 dB/oct: frequency, Q',BP:'Band-pass: frequency, Q',NOTCH:'Notch: frequency, Q'};
+const S={enabled:false,channel_mode:'stereo',mode:'mono',twOut:0,slope:24,xo:2500,live:true,ways:{m:null,tw:null,wf:null},sel:{m:null,tw:null,wf:null},applied:{mode:'mono',twOut:0},dirty:false,biFresh:false};
+const muted={left:false,right:false};
+function msg(t,c){document.getElementById('eq-msg').innerHTML=t?'<div class="msg '+c+'">'+t+'</div>':'';}
 function esc(v){return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function box(side){return document.getElementById(side+'-filters');}
-function filterHtml(f){var types=['PK','LP','HP','BP','NOTCH','LS','HS'];return '<div class="filter">'+
-'<div class="filter-head"><div><input class="f-enabled" type="checkbox" '+(f.enabled!==false?'checked':'')+'> <span class="filter-title">Filter</span></div><button class="btn btn-danger" onclick="removeFilter(this)">Delete</button></div>'+
-'<div class="filter-grid">'+
-'<div class="form-group"><label>Type</label><select class="f-type" onchange="updateFilterUi(this)">'+types.map(t=>'<option value="'+t+'" '+(t===(f.type||'PK')?'selected':'')+'>'+t+'</option>').join('')+'</select></div>'+
-'<div class="form-group"><label>Frequency Hz</label><input class="f-freq" type="number" min="10" max="20000" step="0.01" value="'+esc(f.frequency_hz??1000)+'"></div>'+
-'<div class="form-group gain-group"><label>Gain dB</label><input class="f-gain" type="number" min="-24" max="24" step="0.1" value="'+esc(f.gain_db??0)+'"></div>'+
-'<div class="form-group q-group"><label>Q</label><input class="f-q" type="number" min="0.05" max="50" step="0.001" value="'+esc(f.q??0.707)+'"></div></div></div>';}
-function renumber(side){[...box(side).children].forEach((el,i)=>{el.querySelector('.filter-title').textContent=(side==='left'?'Left ':'Right ')+'Filter '+(i+1);updateFilterUi(el.querySelector('.f-type'));});document.getElementById(side+'-count').textContent=box(side).children.length+' / '+MAX_FILTERS;}
-function addFilter(side,f={enabled:true,type:'PK',frequency_hz:1000,gain_db:0,q:0.707}){if(box(side).children.length>=MAX_FILTERS){msg('Maximum '+MAX_FILTERS+' filters per output.','err');return;}box(side).insertAdjacentHTML('beforeend',filterHtml(f));renumber(side);}
-function removeFilter(btn){var container=btn.closest('[id$="-filters"]');var side=container.id.startsWith('left')?'left':'right';btn.closest('.filter').remove();renumber(side);}
-function updateFilterUi(sel){var row=sel.closest('.filter'),type=sel.value;row.querySelector('.gain-group').classList.toggle('disabled',!['PK','LS','HS'].includes(type));row.querySelector('.q-group').classList.toggle('disabled',['LS','HS'].includes(type));}
-function collectSide(side){return [...box(side).querySelectorAll('.filter')].map(el=>({enabled:el.querySelector('.f-enabled').checked,type:el.querySelector('.f-type').value,frequency_hz:Number(el.querySelector('.f-freq').value),gain_db:Number(el.querySelector('.f-gain').value),q:Number(el.querySelector('.f-q').value)}));}
-async function loadEq(){try{var r=await fetch('/api/eq');var d=await r.json();if(!d.success)throw new Error();showMuteState(d);disableMuteButtons(false);document.getElementById('eq-enabled').checked=!!d.enabled;document.getElementById('channel-mode').value=d.channel_mode||'stereo';document.getElementById('left-preamp').value=d.left_preamp_db??d.preamp_db??0;document.getElementById('right-preamp').value=d.right_preamp_db??d.preamp_db??0;box('left').innerHTML='';box('right').innerHTML='';(d.left_filters||[]).forEach(f=>addFilter('left',f));(d.right_filters||[]).forEach(f=>addFilter('right',f));renumber('left');renumber('right');}catch(e){msg('Failed to load EQ settings.','err');}}
-function collect(){return{enabled:document.getElementById('eq-enabled').checked,channel_mode:document.getElementById('channel-mode').value,left_preamp_db:Number(document.getElementById('left-preamp').value),right_preamp_db:Number(document.getElementById('right-preamp').value),left_filters:collectSide('left'),right_filters:collectSide('right')};}
-async function postEq(){var b=document.getElementById('apply-save-btn');b.disabled=true;msg('Applying EQ live and saving to NVS...','info');try{var r=await fetch('/api/eq?action=both',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(collect())});if(!r.ok){var t=await r.text();throw new Error(t||'Invalid settings');}var d=await r.json();if(!d.success||!d.applied||!d.saved)throw new Error('Apply & Save failed');msg('Applied live and saved to NVS. No restart performed.','ok');}catch(e){msg('Apply & Save failed: '+esc(e.message),'err');}finally{b.disabled=false;}}
+function fk(f){if(f<1000)return String(Math.round(f*10)/10);let s=(f/1000).toFixed(f%1000?(f%100?2:1):0);if(s.includes('.'))s=s.replace(/0+$/,'').replace(/\.$/,'');return s+'k';}
+function qk(q){return String(Math.round(q*100)/100);}
+function parseFreq(v){v=String(v).trim().toLowerCase().replace(',','.');return v.endsWith('k')?parseFloat(v)*1000:parseFloat(v);}
+function defBand(i){return{f:F0[i],q:2,g:0,t:'PK',on:true};}
+function bandsFrom(list){const b=[];for(let i=0;i<NB;i++){const f=list&&list[i];b.push(f?{f:Number(f.frequency_hz)||F0[i],q:Number(f.q)||0.707,g:Number(f.gain_db)||0,t:TYPES.includes(f.type)?f.type:'PK',on:f.enabled!==false}:defBand(i));}return b;}
+function clone(w){return JSON.parse(JSON.stringify(w));}
+function wayFrom(d,side){return{b:bandsFrom(d[side+'_filters']),pre:Number(d[side+'_preamp_db']??d.preamp_db??0),dly:Number(d[side+'_delay_ms']||0),inv:!!d[side+'_invert']};}
+function neutral(b){return GAIN_T.includes(b.t)&&b.g===0;}
+function filtersOf(w){return w.b.map(b=>({enabled:b.on&&!neutral(b),type:b.t,frequency_hz:b.f,gain_db:b.g,q:b.q}));}
+function sameEq(a,b){return a.pre===b.pre&&JSON.stringify(filtersOf(a).filter(f=>f.enabled))===JSON.stringify(filtersOf(b).filter(f=>f.enabled));}
+/* Physical outputs [left, right]: the ways move with the drivers on a swap. */
+function byOutput(){return S.twOut?[S.ways.wf,S.ways.tw]:[S.ways.tw,S.ways.wf];}
+function collect(){const lay=byOutput(),eq=S.mode==='mono'?[S.ways.m,S.ways.m]:lay;return{enabled:S.enabled,channel_mode:S.channel_mode,left_preamp_db:eq[0].pre,right_preamp_db:eq[1].pre,left_filters:filtersOf(eq[0]),right_filters:filtersOf(eq[1]),output_mode:S.mode,tweeter_output:S.twOut?'right':'left',crossover_hz:S.xo,crossover_slope_db:S.slope,left_invert:lay[0].inv,right_invert:lay[1].inv,left_delay_ms:lay[0].dly,right_delay_ms:lay[1].dly};}
+function layoutApplied(){return S.mode===S.applied.mode&&(S.mode==='mono'||S.twOut===S.applied.twOut);}
+function ids(){return S.mode==='mono'?['m']:['tw','wf'];}
+/* Response curve: the firmware's biquads (audio_eq.c calc_biquad) at 48 kHz. */
+const NP=180,FR=[],TR=[];for(let i=0;i<=NP;i++){const f=20*Math.pow(1000,i/NP),w=2*Math.PI*f/FS;FR.push(f);TR.push([Math.cos(w),Math.sin(w),Math.cos(2*w),Math.sin(2*w)]);}
+function bq(t,f,g,q){const K=Math.tan(Math.PI*f/FS),V=Math.pow(10,Math.abs(g)/20),r2=Math.SQRT2,sv=Math.sqrt(2*V),KK=K*K;let n,b0,b1,b2,a1,a2;
+switch(t){case'LP':n=1/(1+K/q+KK);b0=KK*n;b1=2*b0;b2=b0;a1=2*(KK-1)*n;a2=(1-K/q+KK)*n;break;
+case'HP':n=1/(1+K/q+KK);b0=n;b1=-2*b0;b2=b0;a1=2*(KK-1)*n;a2=(1-K/q+KK)*n;break;
+case'BP':n=1/(1+K/q+KK);b0=K/q*n;b1=0;b2=-b0;a1=2*(KK-1)*n;a2=(1-K/q+KK)*n;break;
+case'NOTCH':n=1/(1+K/q+KK);b0=(1+KK)*n;b1=2*(KK-1)*n;b2=b0;a1=b1;a2=(1-K/q+KK)*n;break;
+case'LS':if(g>=0){n=1/(1+r2*K+KK);b0=(1+sv*K+V*KK)*n;b1=2*(V*KK-1)*n;b2=(1-sv*K+V*KK)*n;a1=2*(KK-1)*n;a2=(1-r2*K+KK)*n;}else{n=1/(1+sv*K+V*KK);b0=(1+r2*K+KK)*n;b1=2*(KK-1)*n;b2=(1-r2*K+KK)*n;a1=2*(V*KK-1)*n;a2=(1-sv*K+V*KK)*n;}break;
+case'HS':if(g>=0){n=1/(1+r2*K+KK);b0=(V+sv*K+KK)*n;b1=2*(KK-V)*n;b2=(V-sv*K+KK)*n;a1=2*(KK-1)*n;a2=(1-r2*K+KK)*n;}else{n=1/(V+sv*K+KK);b0=(1+r2*K+KK)*n;b1=2*(KK-1)*n;b2=(1-r2*K+KK)*n;a1=2*(KK-V)*n;a2=(V-sv*K+KK)*n;}break;
+default:if(g>=0){n=1/(1+K/q+KK);b0=(1+V*K/q+KK)*n;b1=2*(KK-1)*n;b2=(1-V*K/q+KK)*n;a1=b1;a2=(1-K/q+KK)*n;}else{n=1/(1+V*K/q+KK);b0=(1+K/q+KK)*n;b1=2*(KK-1)*n;b2=(1-K/q+KK)*n;a1=b1;a2=(1-V*K/q+KK)*n;}}
+return[b0,b1,b2,a1,a2];}
+function magDb(k,j){const c=TR[j],nr=k[0]+k[1]*c[0]+k[2]*c[2],ni=-(k[1]*c[1]+k[2]*c[3]),dr=1+k[3]*c[0]+k[4]*c[2],di=-(k[3]*c[1]+k[4]*c[3]);return 10*Math.log10((nr*nr+ni*ni)/(dr*dr+di*di));}
+function xoSecs(id){if(S.mode!=='biamp'||id==='m')return[];const t=id==='tw'?'HP':'LP',qs=S.slope===12?[0.5]:S.slope===48?[0.5411961,1.306563,0.5411961,1.306563]:[Math.SQRT1_2,Math.SQRT1_2];return qs.map(q=>bq(t,S.xo,0,q));}
+function resp(id){const w=S.ways[id],ks=S.enabled?w.b.filter(b=>b.on&&!neutral(b)&&b.f<FS/2).map(b=>bq(b.t,b.f,b.g,b.q)):[],xs=xoSecs(id),pre=S.enabled?w.pre:0;return FR.map((f,j)=>{let d=pre;for(const k of ks)d+=magDb(k,j);for(const k of xs)d+=magDb(k,j);return d;});}
+const X=f=>34+Math.log10(f/20)/3*558,Y=d=>8+(18-Math.max(-30,Math.min(18,d)))/48*170;
+function pts(r){return r.map((d,j)=>X(FR[j]).toFixed(1)+','+Y(d).toFixed(1)).join(' ');}
+function draw(id){const svg=document.getElementById('sv-'+id);if(!svg)return;const narrow=svg.clientWidth>0&&svg.clientWidth<480,fz=narrow?18:11;let o='';
+for(const d of [18,12,6,0,-6,-12,-18,-24,-30]){const y=Y(d).toFixed(1);o+="<line x1='34' x2='592' y1='"+y+"' y2='"+y+"' stroke='rgba(255,255,255,"+(d?0.07:0.22)+")'/>";if(d%12===0)o+="<text x='28' y='"+(Y(d)+fz/3).toFixed(1)+"' fill='#9aa0ad' font-size='"+fz+"' text-anchor='end'>"+(d>0?'+'+d:d)+"</text>";}
+for(const [f,t] of [[20,'20'],[50,'50'],[100,'100'],[200,'200'],[500,'500'],[1000,'1k'],[2000,'2k'],[5000,'5k'],[10000,'10k'],[20000,'20k']]){const x=X(f).toFixed(1);o+="<line x1='"+x+"' x2='"+x+"' y1='8' y2='178' stroke='rgba(255,255,255,0.06)'/>";if(narrow&&!['20','100','1k','10k'].includes(t))continue;o+="<text x='"+x+"' y='194' fill='#9aa0ad' font-size='"+fz+"' text-anchor='middle'>"+t+"</text>";}
+if(S.mode==='biamp'&&id!=='m'){const other=id==='tw'?'wf':'tw',x=X(S.xo).toFixed(1);o+="<polyline points='"+pts(resp(other))+"' fill='none' stroke='"+COL[other]+"' stroke-width='1.5' stroke-dasharray='4 3' opacity='0.45'/><line x1='"+x+"' x2='"+x+"' y1='8' y2='178' stroke='#8d8d93' stroke-dasharray='2 3'/>";}
+const r=resp(id);o+="<polyline points='"+pts(r)+"' fill='none' stroke='"+COL[id]+"' stroke-width='2.5'/>";
+S.ways[id].b.forEach((b,i)=>{if((b.on&&!neutral(b))||S.sel[id]===i){const g=GAIN_T.includes(b.t)?b.g:0;o+="<circle cx='"+X(Math.min(20000,Math.max(20,b.f))).toFixed(1)+"' cy='"+Y(g).toFixed(1)+"' r='"+(S.sel[id]===i?5:3)+"' fill='"+COL[id]+"'/>";}});
+svg.innerHTML=o;head(id,r);}
+function drawAll(){ids().forEach(draw);}
+/* Headroom: the EQ works in float and the volume follows it, so a boost
+ * clips only near full volume. Offer the level that removes it. */
+function head(id,r){const el=document.getElementById('hr-'+id);if(!el)return;if(!S.enabled){el.className='badge';el.textContent='EQ off';return;}const pk=Math.max(...r);if(pk>0.05){const w=S.ways[id],to=Math.max(-24,Math.floor((w.pre-pk)*10)/10);el.className='badge hot';el.innerHTML='Peak +'+pk.toFixed(1)+' dB, may clip at full volume <button type="button" class="pill" data-fix="'+id+'" data-to="'+to+'" style="margin-left:6px;padding:2px 8px">Level '+to.toFixed(1)+' dB</button>';}else{el.className='badge ok';el.textContent='Headroom OK';}}
+function outLabel(id){if(id==='m')return'Amp out L + R';return(id==='tw'?S.twOut:1-S.twOut)?'Amp out R':'Amp out L';}
+function sidesOf(id){if(id==='m')return['left','right'];return[(id==='tw'?S.twOut:1-S.twOut)?'right':'left'];}
+function gtxt(b){return GAIN_T.includes(b.t)?(b.g>0?'+':'')+(Math.round(b.g*10)/10):b.t==='NOTCH'?'N':b.t;}
+function bandHtml(id,b,i){const hg=GAIN_T.includes(b.t),hq=Q_T.includes(b.t),n=i+1;return "<div class='c"+(S.sel[id]===i?' sel':'')+"' data-i='"+i+"' title='"+TIP[b.t]+"'><span class='g' id='g-"+id+"-"+i+"'>"+gtxt(b)+"</span><input type='range' min='-18' max='18' step='0.5' value='"+(hg?b.g:0)+"' data-i='"+i+"'"+(hg?'':' disabled')+" aria-label='Band "+n+" gain'><input class='t' data-i='"+i+"' data-k='f' value='"+fk(b.f)+"' aria-label='Band "+n+" frequency'><input class='t' data-i='"+i+"' data-k='q' value='"+qk(b.q)+"'"+(hq?'':' disabled')+" aria-label='Band "+n+" Q'></div>";}
+function cardHtml(id){const w=S.ways[id];let h="<div class='card'><div class='way-head'><span class='dot' style='background:"+COL[id]+"'></span><h2>"+NAME[id]+"</h2><span class='count'>"+outLabel(id)+"</span><span style='flex:1'></span><span class='badge' id='hr-"+id+"'></span>"+sidesOf(id).map(s=>"<button type='button' class='pill' data-mute='"+s+"'></button>").join('')+"</div>";
+h+="<div class='row'><span>Level (preamp)</span><input type='number' class='num' data-w='"+id+"' data-k='pre' min='-24' max='0' step='0.1' value='"+w.pre+"'><span>dB</span>";
+if(id!=='m')h+="<span style='margin-left:8px'>Delay</span><input type='number' class='num' data-w='"+id+"' data-k='dly' min='0' max='2' step='0.01' value='"+w.dly+"'><span>ms <span id='cm-"+id+"'></span></span><button type='button' class='pill"+(w.inv?' on':'')+"' data-inv='"+id+"'>Invert polarity</button>";
+h+="</div><svg class='eq-graph' id='sv-"+id+"' viewBox='0 0 600 200' role='img' aria-label='"+NAME[id]+" response'></svg><div class='strip-wrap'><div class='strip' data-w='"+id+"'><div style='display:flex;flex-direction:column;gap:3px;align-items:flex-end'><span class='lab' style='height:14px'>dB</span><span style='height:120px'></span><span class='lab' style='line-height:22px'>Hz</span><span class='lab' style='line-height:22px'>Q</span></div>";
+w.b.forEach((b,i)=>{h+=bandHtml(id,b,i);});return h+"</div></div><div class='row band-row' id='br-"+id+"'></div></div>";}
+function bandRow(id){const el=document.getElementById('br-'+id);if(!el)return;const i=S.sel[id];if(i==null){el.innerHTML="<span>Tap a band to choose its type. Frequencies: 120 or 1.2k.</span><span style='flex:1'></span><button type='button' class='pill warn' data-flat='"+id+"'>Reset all bands</button>";return;}const b=S.ways[id].b[i];el.innerHTML="<span>Band "+(i+1)+"</span>"+TYPES.map(t=>"<button type='button' class='pill"+(b.t===t?' on':'')+"' data-t='"+t+"' data-w='"+id+"' title='"+TIP[t]+"'>"+(t==='NOTCH'?'Notch':t)+"</button>").join('')+"<span style='flex:1'></span><button type='button' class='pill' data-reset='"+id+"'>Reset band</button>";}
+function cm(id){const el=document.getElementById('cm-'+id);if(el)el.textContent=S.ways[id].dly>0?'(about '+Math.round(S.ways[id].dly*34.3)+' cm)':'';}
+function paintMute(){document.querySelectorAll('[data-mute]').forEach(b=>{const s=b.dataset.mute;b.textContent=(muted[s]?'Unmute ':'Mute ')+(s==='left'?'L':'R');b.classList.toggle('warn',muted[s]);b.setAttribute('aria-pressed',String(muted[s]));});}
+function showMuteState(d){muted.left=!!d.left_muted;muted.right=!!d.right_muted;paintMute();}
+function renderTop(){document.querySelectorAll('#mode button').forEach(b=>b.classList.toggle('on',b.dataset.m===S.mode));
+document.getElementById('mode-hint').textContent=S.mode==='mono'?'Both outputs play the full range through one EQ: one driver, or two in parallel.':'One output drives the tweeter through a high-pass, the other the woofer through a low-pass. Each has its own EQ, level, delay and polarity.';
+document.getElementById('xo-card').style.display=S.mode==='biamp'?'':'none';
+document.querySelectorAll('#slope button').forEach(b=>b.classList.toggle('on',Number(b.dataset.s)===S.slope));
+document.getElementById('xo-r').value=Math.round(1000*Math.log10(S.xo/800));document.getElementById('xo-n').value=Math.round(S.xo);
+document.getElementById('tw-side').textContent=S.twOut?'Amp out R':'Amp out L';
+document.getElementById('layout-pending').innerHTML=layoutApplied()?'':"<div class='pending'>"+(S.mode!==S.applied.mode?(S.mode==='biamp'?'Bi-amp':'Mono')+' is not playing yet':'The swap is not playing yet')+": press Apply or Apply &amp; Save. Until then nothing is applied while adjusting.</div>";}
+function renderWays(){document.getElementById('ways').innerHTML=ids().map(cardHtml).join('');ids().forEach(id=>{bandRow(id);draw(id);cm(id);});paintMute();}
+function renderAll(){renderTop();renderWays();}
+function select(id,i){S.sel[id]=i;document.querySelectorAll('.strip[data-w="'+id+'"] .c').forEach(x=>x.classList.toggle('sel',Number(x.dataset.i)===i));bandRow(id);draw(id);}
+function redrawFor(id){draw(id);if(S.mode==='biamp')draw(id==='tw'?'wf':'tw');}
+/* Live: EQ bands, levels, crossover and polarity/delay are sent 150 ms after
+ * the last move, only while the layout on the page is the one playing. */
+let liveTimer=null,inFlight=false,again=false;
+function changed(){S.dirty=true;if(S.live&&layoutApplied()){clearTimeout(liveTimer);liveTimer=setTimeout(sendLive,150);}}
+async function sendLive(){if(inFlight){again=true;return;}inFlight=true;try{const r=await fetch('/api/eq?action=apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(collect())});if(!r.ok)throw new Error((await r.text())||('HTTP '+r.status));}catch(e){msg('Live apply failed: '+esc(e.message),'err');}finally{inFlight=false;if(again){again=false;sendLive();}}}
+async function postEq(action){const save=action==='both',btn=document.getElementById(save?'apply-save-btn':'apply-btn');
+if(!layoutApplied()){const q=S.mode==='biamp'?'Play Bi-amp with the tweeter on the '+(S.twOut?'RIGHT':'LEFT')+' amplifier output?':'Play Mono: BOTH outputs get the full range, so a tweeter wired to one of them gets the bass too. Continue?';if(!confirm(q))return;}
+btn.disabled=true;clearTimeout(liveTimer);msg(save?'Applying and saving...':'Applying...','info');
+try{const r=await fetch('/api/eq?action='+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(collect())});if(!r.ok){const t=await r.text();throw new Error(t||'Invalid settings');}const d=await r.json();if(!d.success)throw new Error('Request failed');S.applied={mode:S.mode,twOut:S.twOut};if(save)S.dirty=false;renderTop();msg(save?'Applied and saved to NVS. No restart needed.':'Applied, not saved: a restart goes back to the saved settings.','ok');}
+catch(e){msg((save?'Apply &amp; Save':'Apply')+' failed: '+esc(e.message),'err');}finally{btn.disabled=false;}}
+async function loadEq(){try{const r=await fetch('/api/eq');const d=await r.json();if(!d.success)throw new Error();showMuteState(d);
+S.enabled=!!d.enabled;S.channel_mode=d.channel_mode||'stereo';S.mode=d.output_mode==='biamp'?'biamp':'mono';S.twOut=d.tweeter_output==='right'?1:0;
+S.slope=[12,24,48].includes(Number(d.crossover_slope_db))?Number(d.crossover_slope_db):24;S.xo=Number(d.crossover_hz)||2500;
+const L=wayFrom(d,'left'),R=wayFrom(d,'right'),tw=S.twOut?R:L,wf=S.twOut?L:R;let mismatch=false;
+S.biFresh=S.mode!=='biamp';
+if(S.mode==='biamp'){S.ways.tw=tw;S.ways.wf=wf;S.ways.m=clone(wf);}
+else{mismatch=!sameEq(L,R);S.ways.m=L;S.ways.tw=Object.assign(clone(L),{dly:tw.dly,inv:tw.inv});S.ways.wf=Object.assign(clone(L),{dly:wf.dly,inv:wf.inv});}
+S.applied={mode:S.mode,twOut:S.twOut};S.dirty=false;document.getElementById('eq-enabled').checked=S.enabled;renderAll();
+msg(mismatch?'The two outputs had different filters. The left output\'s are shown; Apply &amp; Save in Mono gives both outputs these.':'',mismatch?'info':'');}
+catch(e){msg('Failed to load EQ settings.','err');}}
+let muteBusy=false;
+async function toggleMute(side){if(muteBusy)return;muteBusy=true;try{const r=await fetch('/api/audio/mute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channel:side,muted:!muted[side]})});if(!r.ok)throw new Error('HTTP '+r.status);const d=await r.json();if(!d.success)throw new Error('Request failed');showMuteState(d);msg((side==='left'?'Left':'Right')+' output '+(muted[side]?'muted.':'unmuted.'),'ok');}catch(e){msg('Mute failed: '+esc(e.message),'err');}finally{muteBusy=false;}}
+document.addEventListener('click',e=>{const t=e.target,ds=t.dataset||{};
+const m=t.closest('#mode button');if(m){if(m.dataset.m!==S.mode){S.mode=m.dataset.m;S.dirty=true;
+/* The first Bi-amp starts both ways from the Mono EQ as it is now. */
+if(S.mode==='biamp'&&S.biFresh){S.biFresh=false;for(const id of ['tw','wf'])S.ways[id]=Object.assign(clone(S.ways.m),{dly:S.ways[id].dly,inv:S.ways[id].inv});}
+renderAll();}return;}
+const sb=t.closest('#slope button');if(sb){const s=Number(sb.dataset.s);if(s!==S.slope){if(s===12)S.ways.tw.inv=true;else if(S.slope===12)S.ways.tw.inv=false;S.slope=s;renderAll();changed();}return;}
+if(t.id==='swap'){S.twOut=1-S.twOut;S.dirty=true;renderAll();return;}
+if(ds.inv){const w=S.ways[ds.inv];w.inv=!w.inv;t.classList.toggle('on',w.inv);changed();return;}
+if(ds.t){const id=ds.w,b=S.ways[id].b[S.sel[id]];b.t=ds.t;b.on=true;renderWays();changed();return;}
+if(ds.reset){const id=ds.reset;S.ways[id].b[S.sel[id]]=defBand(S.sel[id]);renderWays();changed();return;}
+if(ds.flat){if(!confirm('Reset all 24 bands of the '+NAME[ds.flat].toLowerCase()+' to flat?'))return;S.ways[ds.flat].b=S.ways[ds.flat].b.map((_,i)=>defBand(i));S.sel[ds.flat]=null;renderWays();changed();return;}
+if(ds.fix){S.ways[ds.fix].pre=Number(ds.to);renderWays();changed();return;}
+if(ds.mute){toggleMute(ds.mute);return;}
+if(t.id==='apply-btn'){postEq('apply');return;}if(t.id==='apply-save-btn'){postEq('both');return;}
+const c=t.closest('.strip .c');if(c&&t.tagName!=='INPUT'){const id=c.parentElement.dataset.w,i=Number(c.dataset.i);select(id,S.sel[id]===i?null:i);}});
+document.addEventListener('focusin',e=>{const c=e.target.closest&&e.target.closest('.strip .c');if(c){const id=c.parentElement.dataset.w,i=Number(c.dataset.i);if(S.sel[id]!==i)select(id,i);}});
+document.addEventListener('input',e=>{const t=e.target;
+if(t.id==='xo-r'){S.xo=Math.round(800*Math.pow(10,Number(t.value)/1000)/10)*10;document.getElementById('xo-n').value=S.xo;drawAll();changed();return;}
+const st=t.closest('.strip');if(st&&t.type==='range'){const id=st.dataset.w,i=Number(t.dataset.i),b=S.ways[id].b[i];b.g=Number(t.value);b.on=true;document.getElementById('g-'+id+'-'+i).textContent=gtxt(b);if(S.sel[id]!==i)select(id,i);redrawFor(id);changed();}});
+document.addEventListener('change',e=>{const t=e.target;
+if(t.id==='eq-enabled'){S.enabled=t.checked;drawAll();changed();return;}
+if(t.id==='live'){S.live=t.checked;return;}
+if(t.id==='xo-n'){const n=Number(t.value);if(!(n>=800&&n<=8000)){t.value=Math.round(S.xo);msg('Crossover: 800 to 8000 Hz.','err');return;}S.xo=n;renderTop();drawAll();changed();return;}
+const st=t.closest('.strip');if(st&&t.dataset.k){const id=st.dataset.w,b=S.ways[id].b[Number(t.dataset.i)];if(t.dataset.k==='f'){const n=parseFreq(t.value);if(!(n>=10&&n<=20000)){t.value=fk(b.f);msg('Frequency: 10 Hz to 20 kHz.','err');return;}b.f=Math.round(n*100)/100;t.value=fk(b.f);}else{const n=parseFloat(String(t.value).replace(',','.'));if(!(n>=0.05&&n<=50)){t.value=qk(b.q);msg('Q: 0.05 to 50.','err');return;}b.q=Math.round(n*1000)/1000;t.value=qk(b.q);}b.on=true;redrawFor(id);changed();return;}
+const id=t.dataset.w,k=t.dataset.k;if(id&&(k==='pre'||k==='dly')){const n=parseFloat(String(t.value).replace(',','.')),w=S.ways[id],lo=k==='pre'?-24:0,hi=k==='pre'?0:2;if(!(n>=lo&&n<=hi)){t.value=w[k];msg(k==='pre'?'Level: -24 to 0 dB.':'Delay: 0 to 2 ms.','err');return;}w[k]=Math.round(n*100)/100;t.value=w[k];if(k==='dly')cm(id);redrawFor(id);changed();}});
+window.addEventListener('beforeunload',e=>{if(S.dirty){e.preventDefault();e.returnValue='';}});
+window.addEventListener('resize',drawAll);
 let loud=null,loudBusy=false;
 function lmsg(t,c){const e=document.getElementById('loud-msg');e.innerHTML=t?"<div class='msg "+c+"'>"+t+"</div>":'';}
 function shelfDb(f,p,g,high,fs){const A=Math.pow(10,g/40),w0=2*Math.PI*p.hz/fs,c=Math.cos(w0),al=Math.sin(w0)/2*Math.sqrt((A+1/A)*(1/p.slope-1)+2),sa=2*Math.sqrt(A)*al;let b0,b1,b2,a0,a1,a2;if(!high){b0=A*((A+1)-(A-1)*c+sa);b1=2*A*((A-1)-(A+1)*c);b2=A*((A+1)-(A-1)*c-sa);a0=(A+1)+(A-1)*c+sa;a1=-2*((A-1)+(A+1)*c);a2=(A+1)+(A-1)*c-sa;}else{b0=A*((A+1)+(A-1)*c+sa);b1=-2*A*((A-1)+(A+1)*c);b2=A*((A+1)+(A-1)*c-sa);a0=(A+1)-(A-1)*c+sa;a1=2*((A-1)-(A+1)*c);a2=(A+1)-(A-1)*c-sa;}const w=2*Math.PI*f/fs,c1=Math.cos(w),s1=Math.sin(w),c2=Math.cos(2*w),s2=Math.sin(2*w);const nr=b0+b1*c1+b2*c2,ni=-(b1*s1+b2*s2),dr=a0+a1*c1+a2*c2,di=-(a1*s1+a2*s2);return 10*Math.log10((nr*nr+ni*ni)/(dr*dr+di*di));}

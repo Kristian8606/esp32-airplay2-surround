@@ -3013,7 +3013,11 @@ static esp_err_t playout_run_latency_calibration_blocks(
     const bool is_burst = cal_block_is_burst(idx, NULL);
     if (is_burst) {
       latency_cal_fill_burst(burst, AUDIO_PLAYOUT_FRAMES, CAL_I2S_RATE_HZ);
-      const uint32_t muted = sound_engine_get_output_mute_mask();
+      /* The burst skips the EQ and its crossover: a bi-amped speaker's
+       * tweeter output stays silent. */
+      const int tweeter = audio_eq_tweeter_output();
+      const uint32_t muted = sound_engine_get_output_mute_mask() |
+                             (tweeter >= 0 ? 1U << tweeter : 0U);
       for (uint32_t f = 0; muted && f < AUDIO_PLAYOUT_FRAMES; ++f) {
         if (muted & 1U) burst[f * 2U] = 0;
         if (muted & 2U) burst[f * 2U + 1U] = 0;

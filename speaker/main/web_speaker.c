@@ -269,6 +269,18 @@ static void eq_config_to_json(const audio_eq_config_t *cfg, cJSON *root) {
   cJSON *right = cJSON_AddArrayToObject(root, "right_filters");
   eq_output_to_json(&cfg->left, left);
   eq_output_to_json(&cfg->right, right);
+  /* The amplifier outputs (used in bi-amp only, always reported). */
+  cJSON_AddStringToObject(
+      root, "output_mode",
+      audio_eq_output_mode_name((audio_eq_output_mode_t)cfg->output_mode));
+  cJSON_AddStringToObject(root, "tweeter_output",
+                          cfg->tweeter_output ? "right" : "left");
+  cJSON_AddNumberToObject(root, "crossover_hz", cfg->xover_hz);
+  cJSON_AddNumberToObject(root, "crossover_slope_db", cfg->xover_slope_db);
+  cJSON_AddBoolToObject(root, "left_invert", (cfg->invert_mask & 1U) != 0U);
+  cJSON_AddBoolToObject(root, "right_invert", (cfg->invert_mask & 2U) != 0U);
+  cJSON_AddNumberToObject(root, "left_delay_ms", cfg->left_delay_ms);
+  cJSON_AddNumberToObject(root, "right_delay_ms", cfg->right_delay_ms);
 }
 
 static void output_mute_to_json(cJSON *root) {
@@ -339,6 +351,58 @@ static bool json_number(const cJSON *obj, const char *name, float *out) {
   return true;
 }
 
+/* Optional fields of the amplifier outputs: absent = keep the active value,
+ * present with a wrong type or value = the whole request is refused (the
+ * ranges are checked by audio_eq_validate_config). */
+static bool opt_number(const cJSON *obj, const char *name, float *out) {
+  const cJSON *v = cJSON_GetObjectItemCaseSensitive((cJSON *)obj, name);
+  if (!v) return true;
+  if (!cJSON_IsNumber(v)) return false;
+  *out = (float)v->valuedouble;
+  return true;
+}
+
+static bool opt_invert(const cJSON *obj, const char *name, uint8_t bit,
+                       uint8_t *mask) {
+  const cJSON *v = cJSON_GetObjectItemCaseSensitive((cJSON *)obj, name);
+  if (!v) return true;
+  if (!cJSON_IsBool(v)) return false;
+  if (cJSON_IsTrue(v)) *mask |= bit;
+  else *mask &= (uint8_t)~bit;
+  return true;
+}
+
+static bool parse_eq_outputs(const cJSON *root, audio_eq_config_t *cfg) {
+  const cJSON *mode = cJSON_GetObjectItemCaseSensitive((cJSON *)root, "output_mode");
+  if (mode) {
+    audio_eq_output_mode_t m;
+    if (!cJSON_IsString(mode) ||
+        !audio_eq_output_mode_from_name(mode->valuestring, &m))
+      return false;
+    cfg->output_mode = (uint8_t)m;
+  }
+  const cJSON *tw = cJSON_GetObjectItemCaseSensitive((cJSON *)root, "tweeter_output");
+  if (tw) {
+    if (!cJSON_IsString(tw)) return false;
+    if (strcmp(tw->valuestring, "left") == 0) cfg->tweeter_output = 0U;
+    else if (strcmp(tw->valuestring, "right") == 0) cfg->tweeter_output = 1U;
+    else return false;
+  }
+  const cJSON *slope =
+      cJSON_GetObjectItemCaseSensitive((cJSON *)root, "crossover_slope_db");
+  if (slope) {
+    if (!cJSON_IsNumber(slope)) return false;
+    const double s = slope->valuedouble;
+    if (s != 12.0 && s != 24.0 && s != 48.0) return false;
+    cfg->xover_slope_db = (uint8_t)s;
+  }
+  return opt_number(root, "crossover_hz", &cfg->xover_hz) &&
+         opt_invert(root, "left_invert", 1U, &cfg->invert_mask) &&
+         opt_invert(root, "right_invert", 2U, &cfg->invert_mask) &&
+         opt_number(root, "left_delay_ms", &cfg->left_delay_ms) &&
+         opt_number(root, "right_delay_ms", &cfg->right_delay_ms);
+}
+
 static bool parse_eq_output(cJSON *array, audio_eq_output_config_t *output) {
   if (!cJSON_IsArray(array) || !output) return false;
   const int count = cJSON_GetArraySize(array);
@@ -390,8 +454,12 @@ static esp_err_t eq_post_handler(httpd_req_t *req) {
     return ESP_FAIL;
   }
 
+  /* Start from the active config: what the body leaves out is kept (a page
+   * that does not know the bi-amp fields must not turn the crossover off). */
   audio_eq_config_t cfg;
-  audio_eq_default_config(&cfg);
+  if (audio_eq_get_active_config(&cfg) != ESP_OK ||
+      cfg.version != AUDIO_EQ_CONFIG_VERSION)
+    audio_eq_default_config(&cfg);
   cJSON *enabled = cJSON_GetObjectItemCaseSensitive(root, "enabled");
   cJSON *mode = cJSON_GetObjectItemCaseSensitive(root, "channel_mode");
   cJSON *left = cJSON_GetObjectItemCaseSensitive(root, "left_filters");
@@ -403,7 +471,8 @@ static esp_err_t eq_post_handler(httpd_req_t *req) {
                json_number(root, "left_preamp_db", &cfg.left_preamp_db) &&
                json_number(root, "right_preamp_db", &cfg.right_preamp_db) &&
                parse_eq_output(left, &cfg.left) &&
-               parse_eq_output(right, &cfg.right);
+               parse_eq_output(right, &cfg.right) &&
+               parse_eq_outputs(root, &cfg);
 
   if (valid) {
     cfg.enabled = cJSON_IsTrue(enabled) ? 1U : 0U;
