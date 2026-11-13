@@ -47,6 +47,29 @@ typedef struct {
   char note[64];
 } gw_cal_speaker_t;
 
+/* Room EQ: one speaker's sweeps (one per driver with bi-amp), recorded for
+ * the Room EQ page, which deconvolves them (GET /api/calibration/sweep). */
+typedef struct {
+  bool valid;         /* the recording is ready */
+  uint8_t mac[6];
+  char name[24];
+  int8_t channel;     /* role, aac_speaker_t */
+  uint8_t kind;       /* cal_chirp_kind_t: a sweep */
+  bool raw;           /* played without the speaker's EQ */
+  int8_t level_db;    /* sweep peak, dBFS */
+  uint8_t n;          /* sweeps */
+  uint8_t way[SURROUND_CAL_BURSTS_MAX];   /* SURROUND_CAL_WAY_* */
+  double start[SURROUND_CAL_BURSTS_MAX];  /* sample of the served recording
+                                           * where each sweep left the
+                                           * speaker (its TSF, +- tens of us) */
+  float snr_db[SURROUND_CAL_BURSTS_MAX];  /* above the room noise */
+  float peak_dbfs;    /* loudest sample around the sweeps */
+  uint32_t from;      /* first sample of the recording served */
+  uint32_t count;     /* samples served */
+  float scale;        /* served int16 = sample * scale * 32767 */
+  uint32_t id;        /* a new one for every recording */
+} gw_cal_sweep_t;
+
 typedef struct {
   gw_cal_state_t state;
   bool mic_built;     /* built with the microphone */
@@ -59,6 +82,8 @@ typedef struct {
   float peak_dbfs;    /* loudest sample of the noise recording */
   uint8_t count;
   gw_cal_speaker_t spk[SURROUND_MAX_SPEAKERS];
+  bool sweep_run;     /* the last run was a Room EQ sweep */
+  gw_cal_sweep_t sweep;
 } gw_cal_status_t;
 
 /* Start in the background: the microphone test alone, or the full run.
@@ -66,6 +91,15 @@ typedef struct {
  * chirps between streams); AirPlay is back when it ends. ESP_ERR_INVALID_STATE
  * while one runs. */
 esp_err_t gw_calib_start(bool mic_test_only);
+/* Room EQ: sweeps from one speaker (by MAC), the same way: the sender's
+ * session ends for it, the level goes up from -30 dBFS until the sweep is
+ * clear of the room noise. raw: without the speaker's EQ; per_way: one sweep
+ * per driver of a bi-amp speaker. ESP_ERR_NOT_FOUND for no such speaker. */
+esp_err_t gw_calib_sweep_start(const uint8_t mac[6], bool raw, bool per_way);
+/* The sweep recording with that id while no run is under way: the
+ * microphone's samples (full scale 1.0) from sweep.from on, sweep.count of
+ * them. Only for the HTTP task, which also starts the runs. */
+bool gw_calib_sweep_samples(uint32_t id, const float **samples, gw_cal_sweep_t *info);
 void gw_calib_get(gw_cal_status_t *out);
 /* Send the suggestions to the speakers (they save them like a manual edit).
  * Returns how many speakers took them through *applied. */

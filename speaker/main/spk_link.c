@@ -518,15 +518,17 @@ static void dispatch(int fd, uint8_t type, const uint8_t *p, size_t len) {
       int bursts = m.bursts;
       if (bursts < 1) bursts = 1;
       if (bursts > SURROUND_CAL_BURSTS_MAX) bursts = SURROUND_CAL_BURSTS_MAX;
-      AP_LOGI(TAG, "CMD cal_play %s, %d dBFS, %d chirps",
-              m.kind == CAL_CHIRP_LOW ? "low" : "wide", (int)m.level_db, bursts);
+      AP_LOGI(TAG, "CMD cal_play %s, %d dBFS, %d chirps, flags 0x%02x",
+              cal_chirp_name(cal_chirp_kind(m.kind)), (int)m.level_db, bursts,
+              (unsigned)m.flags);
       /* The link task plays them itself (a few seconds): forwarded calls
        * and TIME wait in the socket meanwhile. Never during a stream. */
       if (!s_stream_started) {
         int64_t emit_us[SURROUND_CAL_BURSTS_MAX] = {0};
         int n = 0;
         esp_err_t err = sound_engine_play_cal_chirps(m.kind, m.level_db,
-                                                       bursts, emit_us, &n);
+                                                       bursts, m.flags, emit_us,
+                                                       r.way, &n);
         /* The sound leaves the speaker the output latency later. */
         const int64_t out_ns =
             (int64_t)sound_engine_get_output_latency_us() * 1000LL;

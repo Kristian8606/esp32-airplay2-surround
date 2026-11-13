@@ -907,6 +907,37 @@ void audio_eq_process(float *pcm, size_t frames, int channels,
   eq_unlock();
 }
 
+/* Bi-amp crossover alone: no polarity, no delay. */
+static void process_xover_only(float *pcm, size_t frames) {
+  const eq_plan_t *p = &s_eq.plan;
+  const uint8_t n = p->xover_sections;
+  for (int ch = 0; ch < 2; ++ch) {
+    const biquad_coeff_t *c = p->xover[ch];
+    biquad_state_t *st = s_eq.xover_state[ch];
+    for (size_t i = 0; i < frames; ++i) {
+      float x = pcm[i * 2 + (size_t)ch];
+      for (uint8_t k = 0; k < n; ++k) x = biquad_process(x, &c[k], &st[k]);
+      pcm[i * 2 + (size_t)ch] = x;
+    }
+    flush_tiny_state(st, n);
+  }
+}
+
+void audio_eq_process_raw(float *pcm, size_t frames, int channels,
+                          int sample_rate) {
+  if (!pcm || frames == 0 || channels != 2) return;
+  eq_lock();
+  if (!prepare_for_rate_unlocked(sample_rate)) {
+    guard_tweeter(pcm, frames);
+  } else {
+    if (s_eq.plan.config.output_mode == AUDIO_EQ_OUTPUT_BIAMP)
+      process_xover_only(pcm, frames);
+    /* A layout change waiting: the same switch as for music. */
+    if (s_eq.switch_phase != SWITCH_NONE) process_switch(pcm, frames, sample_rate);
+  }
+  eq_unlock();
+}
+
 const char *audio_eq_filter_type_name(audio_eq_filter_type_t type) {
   switch (type) {
     case AUDIO_EQ_FILTER_PK: return "PK";

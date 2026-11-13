@@ -18,7 +18,8 @@
 #include <assert.h>
 #include <stdint.h>
 
-#define SURROUND_PROTO_VERSION   11 /* 10: crossover, 11: LFE gain in CONFIG */
+#define SURROUND_PROTO_VERSION   12 /* 10: crossover, 11: LFE gain in CONFIG,
+                                     * 12: room EQ sweeps in CAL_PLAY */
 /* The first version whose speakers install firmware from the Gateway
  * (FW_UPDATE). A Gateway keeps updating a speaker of any version from this
  * one on, also when their versions differ: HELLO and FW_UPDATE never change
@@ -277,21 +278,39 @@ typedef struct __attribute__((packed)) {
  * (cal_chirp.h) through its EQ while the Gateway records its microphone, and
  * answers when each chirp left the speaker, on the access point's TSF (output
  * latency included). The Gateway finds the chirps in the recording: the
- * difference is the sound's travel time. Only between streams. */
+ * difference is the sound's travel time. Only between streams.
+ *
+ * Room EQ: a sweep (cal_chirp.h) instead, for one speaker's frequency
+ * response. SURROUND_CAL_RAW plays it without the speaker's EQ, preamp,
+ * polarity and delay: only a bi-amp crossover (which protects the tweeter)
+ * and the subwoofer's low-pass stay. SURROUND_CAL_PER_WAY: a bi-amp speaker
+ * plays one sweep per driver, tweeter first, the other output silent; the
+ * speaker chooses (it alone knows its outputs) and says so in way[]. */
 #define SURROUND_CAL_BURSTS_MAX 6
+#define SURROUND_CAL_RAW        0x01U
+#define SURROUND_CAL_PER_WAY    0x02U
 
 typedef struct __attribute__((packed)) {
   uint8_t seq;      /* echoed in CAL_RESULT */
   uint8_t kind;     /* cal_chirp_kind_t */
   int8_t level_db;  /* chirp peak, dB below full scale */
-  uint8_t bursts;   /* 1 .. SURROUND_CAL_BURSTS_MAX */
+  uint8_t bursts;   /* 1 .. SURROUND_CAL_BURSTS_MAX (per way: ignored) */
+  uint8_t flags;    /* SURROUND_CAL_* */
 } surround_cal_play_t;
+
+/* way[] of CAL_RESULT: the outputs that played (left, right) and, with
+ * bi-amp, which driver is on them. */
+#define SURROUND_CAL_WAY_LEFT    0x01U
+#define SURROUND_CAL_WAY_RIGHT   0x02U
+#define SURROUND_CAL_WAY_TWEETER 0x04U
+#define SURROUND_CAL_WAY_WOOFER  0x08U
 
 typedef struct __attribute__((packed)) {
   uint8_t seq;
-  uint8_t n;        /* valid entries of emit_tsf_ns */
+  uint8_t n;        /* valid entries of emit_tsf_ns and way */
   int16_t err;      /* esp_err_t */
   int64_t emit_tsf_ns[SURROUND_CAL_BURSTS_MAX];
+  uint8_t way[SURROUND_CAL_BURSTS_MAX];
 } surround_cal_result_t;
 
 /* The speaker fetches the image over HTTP from the Gateway's web server at
@@ -309,6 +328,7 @@ static_assert(sizeof(surround_hello_t) == 61, "HELLO layout is fixed");
 static_assert(sizeof(surround_fw_update_t) == 38, "FW_UPDATE layout is fixed");
 static_assert(sizeof(surround_cal_result_t) <= SURROUND_MAX_PAYLOAD,
               "cal result");
+static_assert(sizeof(surround_cal_play_t) <= SURROUND_MAX_PAYLOAD, "cal play");
 static_assert(sizeof(surround_status_t) <= SURROUND_MAX_PAYLOAD, "status");
 static_assert(sizeof(surround_config_t) <= SURROUND_MAX_PAYLOAD, "config");
 static_assert(sizeof(surround_time_t) <= SURROUND_MAX_PAYLOAD, "time");

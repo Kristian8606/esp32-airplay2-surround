@@ -98,6 +98,13 @@ static bool s_waiting;
 static surround_cal_result_t s_result;
 static uint8_t s_seq;
 
+typedef enum { CAL_MODE_TEST, CAL_MODE_FULL, CAL_MODE_SWEEP } cal_mode_t;
+static struct {
+  uint8_t mac[6];
+  bool raw, per_way;
+} s_sweep_req;
+static uint32_t s_sweep_id;
+
 static void set_message(gw_cal_state_t state, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
 static void set_message(gw_cal_state_t state, const char *fmt, ...) {
@@ -318,13 +325,14 @@ static double median(double *v, int n) {
 
 /* Ask one speaker for its chirps and wait until it has played them; the
  * answer is in s_result. False (with a note) when it did not play. */
-static bool request_chirps(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
-                           int8_t level_db) {
+static bool request_play(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
+                         int8_t level_db, uint8_t bursts, uint8_t flags) {
   if (++s_seq == 0U) ++s_seq;
   const surround_cal_play_t m = {.seq = s_seq,
                                  .kind = (uint8_t)kind,
                                  .level_db = level_db,
-                                 .bursts = CAL_CHIRP_BURSTS};
+                                 .bursts = bursts,
+                                 .flags = flags};
   xSemaphoreTake(s_lock, portMAX_DELAY);
   (void)xSemaphoreTake(s_result_sem, 0);
   memcpy(s_wait_mac, o->mac, sizeof(s_wait_mac));
@@ -353,6 +361,11 @@ static bool request_chirps(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
     return false;
   }
   return true;
+}
+
+static bool request_chirps(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
+                           int8_t level_db) {
+  return request_play(o, kind, level_db, CAL_CHIRP_BURSTS, 0U);
 }
 
 /* Without a microphone: the speaker still plays, so the chirps can be heard,
@@ -599,9 +612,12 @@ static void store_noise(bool valid, float rms, float peak) {
 }
 
 /* Every speaker in turn: measured with the microphone, or only played. */
+/* The calibration task's copy of the speaker list. */
+static gw_speaker_info_t s_list[SURROUND_MAX_SPEAKERS];
+
 static void run_speakers(bool mic_ok, const char *mic_why, const cal_noise_t *noise) {
-  static gw_speaker_info_t list[SURROUND_MAX_SPEAKERS];
-  const size_t n = gw_speakers_list(list);
+  gw_speaker_info_t *list = s_list;
+  const size_t n = gw_speakers_list(s_list);
   gw_cal_speaker_t spk[SURROUND_MAX_SPEAKERS];
   uint8_t count = 0;
   for (size_t i = 0; i < n; ++i) {
@@ -703,8 +719,196 @@ static void run_speakers(bool mic_ok, const char *mic_why, const cal_noise_t *no
   }
 }
 
+/* ---- Room EQ: one speaker's sweeps ---- */
+#define CAL_SWEEP_MIN_SNR_DB 20.0f  /* broadband, before the sweep's own gain */
+#define CAL_SWEEP_PRE_S      0.1    /* served before the first sweep */
+
+typedef enum { SWEEP_OK, SWEEP_QUIET, SWEEP_CLIPPED, SWEEP_FAILED } sweep_run_t;
+
+/* One run of sweeps at one level into *sw (the recording stays in gw_mic). */
+static sweep_run_t sweep_once(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
+                              int8_t level_db, uint8_t flags, double noise_ms,
+                              gw_cal_sweep_t *sw) {
+  const bool low = cal_chirp_is_low(kind);
+  if (gw_mic_start(CAL_RECORD_MAX_S) != ESP_OK) {
+    snprintf(o->note, sizeof(o->note), "The microphone could not start");
+    return SWEEP_FAILED;
+  }
+  vTaskDelay(pdMS_TO_TICKS(50));
+  const bool played = request_play(o, kind, level_db, 1U, flags);
+  vTaskDelay(pdMS_TO_TICKS(100));
+  gw_mic_stop();
+  if (!played) return SWEEP_FAILED;
+
+  uint32_t n = 0;
+  const float *x = gw_mic_samples(&n);
+  const uint32_t rate = GW_MIC_RATE_HZ;
+  const uint32_t len = (uint32_t)ceil(cal_chirp_length_s(kind) * rate);
+  const uint32_t period = (uint32_t)ceil(cal_chirp_period_s(kind) * rate);
+  const uint32_t pre = (uint32_t)(CAL_SWEEP_PRE_S * rate);
+  memset(sw, 0, sizeof(*sw));
+  sw->n = s_result.n;
+  double first = 0.0, last = 0.0;
+  for (int k = 0; x && k < s_result.n; ++k) {
+    int64_t emit_local = 0;
+    double idx = 0.0;
+    if (!gw_speakers_tsf_to_local(s_result.emit_tsf_ns[k], &emit_local) ||
+        !gw_mic_sample_at(emit_local, &idx) || idx < (double)pre ||
+        idx + (double)period > (double)n) {
+      snprintf(o->note, sizeof(o->note), "Sweep %d of %d not placed in the recording",
+               k + 1, s_result.n);
+      AP_LOGI(TAG, "%s at %d dBFS: %s", o->name, level_db, o->note);
+      return SWEEP_FAILED;
+    }
+    if (k == 0) first = idx;
+    last = idx;
+    sw->start[k] = idx;
+    sw->way[k] = s_result.way[k];
+    /* From just before the sweep: the high-pass settles in the silence
+     * there (the S3 runs double precision in software). */
+    const uint32_t from = (uint32_t)idx - pre;
+    const double ms = band_mean_square(x + from, n - from, pre, len, rate,
+                                       low ? 0.0 : CAL_LEVEL_HP_HZ) - noise_ms;
+    sw->snr_db[k] = (float)(10.0 * log10((ms > 1e-24 ? ms : 1e-24) / (noise_ms + 1e-24)));
+  }
+  if (!x || s_result.n == 0U) return SWEEP_FAILED;
+  sw->from = (uint32_t)(first - (double)pre);
+  const uint32_t to = (uint32_t)ceil(last) + period;
+  sw->count = (to < n ? to : n) - sw->from;
+  float peak = 0.0f;
+  for (uint32_t i = sw->from; i < sw->from + sw->count; ++i) {
+    if (fabsf(x[i]) > peak) peak = fabsf(x[i]);
+  }
+  for (int k = 0; k < sw->n; ++k) sw->start[k] -= (double)sw->from;
+  sw->peak_dbfs = to_db(peak);
+  sw->scale = peak > 1e-7f ? 0.98f / peak : 1.0f;
+  sw->level_db = level_db;
+  float snr = sw->snr_db[0];
+  for (int k = 1; k < sw->n; ++k) {
+    if (sw->snr_db[k] < snr) snr = sw->snr_db[k];
+  }
+  sweep_run_t run = SWEEP_OK;
+  if (sw->peak_dbfs >= CAL_CLIP_DBFS) {
+    run = SWEEP_CLIPPED;
+  } else if (snr < CAL_SWEEP_MIN_SNR_DB) {
+    run = SWEEP_QUIET;
+  }
+  AP_LOGI(TAG, "%s %s at %d dBFS: %d sweeps (way 0x%02x 0x%02x), %.1f dB above noise, "
+               "peak %.1f dBFS: %s",
+          o->name, cal_chirp_name(kind), level_db, sw->n, (unsigned)sw->way[0],
+          (unsigned)(sw->n > 1 ? sw->way[1] : 0U), (double)snr, (double)sw->peak_dbfs,
+          run == SWEEP_OK ? "measured" : run == SWEEP_CLIPPED ? "clipped" : "too quiet");
+  return run;
+}
+
+static void way_names(const gw_cal_sweep_t *sw, char *out, size_t size) {
+  out[0] = '\0';
+  for (int k = 0; k < sw->n; ++k) {
+    const uint8_t w = sw->way[k];
+    if (k) strlcat(out, ", ", size);
+    strlcat(out, (w & SURROUND_CAL_WAY_TWEETER) && !(w & SURROUND_CAL_WAY_WOOFER) ? "tweeter"
+                 : (w & SURROUND_CAL_WAY_WOOFER) && !(w & SURROUND_CAL_WAY_TWEETER) ? "woofer"
+                                                                                  : "both outputs",
+            size);
+  }
+}
+
+static void run_sweep(bool mic_ok, const char *mic_why, const cal_noise_t *noise,
+                      float noise_dbfs) {
+  if (!mic_ok) {
+    set_message(GW_CAL_FAILED, "%s", mic_why ? mic_why : "No microphone");
+    return;
+  }
+  gw_speaker_info_t *list = s_list;
+  const size_t count = gw_speakers_list(s_list);
+  gw_cal_speaker_t o = {0};
+  bool found = false;
+  for (size_t i = 0; i < count && !found; ++i) {
+    if (!list[i].config_valid || memcmp(list[i].mac, s_sweep_req.mac, 6) != 0) continue;
+    memcpy(o.mac, list[i].mac, sizeof(o.mac));
+    strlcpy(o.name, list[i].name[0] ? list[i].name : list[i].ip, sizeof(o.name));
+    o.channel = list[i].config.channel;
+    found = true;
+  }
+  if (!found) {
+    set_message(GW_CAL_FAILED, "The speaker is not connected");
+    return;
+  }
+  const cal_chirp_kind_t kind =
+      o.channel == CAL_AAC_SPEAKER_LFE ? CAL_SWEEP_LOW : CAL_SWEEP_WIDE;
+  const uint8_t flags = (s_sweep_req.raw ? SURROUND_CAL_RAW : 0U) |
+                        (s_sweep_req.per_way ? SURROUND_CAL_PER_WAY : 0U);
+  /* The subwoofer's sweep is low: its noise is the whole band's. */
+  const double noise_ms = cal_chirp_is_low(kind)
+                              ? pow(10.0, (double)noise_dbfs / 10.0)
+                              : noise->wide_ms;
+  const size_t levels = sizeof(k_levels_db);
+  gw_cal_sweep_t sw = {0};
+  sweep_run_t run = SWEEP_FAILED;
+  char note[96] = "";
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  s_status.steps = (uint8_t)levels;
+  xSemaphoreGive(s_lock);
+  for (size_t l = 0; l < levels; ++l) {
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_status.step = (uint8_t)(l + 1U);
+    xSemaphoreGive(s_lock);
+    set_message(GW_CAL_BUSY, "Measuring %s at %d dBFS", o.name, k_levels_db[l]);
+    run = sweep_once(&o, kind, k_levels_db[l], flags, noise_ms, &sw);
+    if (run == SWEEP_CLIPPED && l > 0) {
+      /* The level before was too quiet for the target, but it did not
+       * clip: the best there is. */
+      set_message(GW_CAL_BUSY, "Measuring %s at %d dBFS again", o.name, k_levels_db[l - 1]);
+      run = sweep_once(&o, kind, k_levels_db[l - 1], flags, noise_ms, &sw);
+      if (run == SWEEP_QUIET) {
+        run = SWEEP_OK;
+        snprintf(note, sizeof(note), " Louder clipped: measured at %d dBFS.",
+                 k_levels_db[l - 1]);
+      }
+      break;
+    }
+    if (run != SWEEP_QUIET) break;
+    if (l + 1U == levels) {
+      run = SWEEP_OK;
+      snprintf(note, sizeof(note),
+               " Quiet even at %d dBFS: turn its amplifier up or measure in quiet.",
+               k_levels_db[l]);
+      break;
+    }
+    if (!sound_engine_is_idle()) break; /* a stream started */
+  }
+  if (run == SWEEP_CLIPPED) {
+    set_message(GW_CAL_FAILED, "Clipped at %d dBFS: move the microphone away from %s",
+                sw.level_db, o.name);
+    return;
+  }
+  if (run != SWEEP_OK) {
+    set_message(GW_CAL_FAILED, "%s: %s", o.name, o.note[0] ? o.note : "not measured");
+    return;
+  }
+  memcpy(sw.mac, o.mac, sizeof(sw.mac));
+  strlcpy(sw.name, o.name, sizeof(sw.name));
+  sw.channel = o.channel;
+  sw.kind = (uint8_t)kind;
+  sw.raw = s_sweep_req.raw;
+  sw.id = ++s_sweep_id;
+  sw.valid = true;
+  float snr = sw.snr_db[0];
+  for (int k = 1; k < sw.n; ++k) {
+    if (sw.snr_db[k] < snr) snr = sw.snr_db[k];
+  }
+  char ways[48];
+  way_names(&sw, ways, sizeof(ways));
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  s_status.sweep = sw;
+  xSemaphoreGive(s_lock);
+  set_message(GW_CAL_DONE, "Measured %s (%s) at %d dBFS, %.0f dB above the room noise.%s",
+              o.name, ways, sw.level_db, (double)snr, note);
+}
+
 static void calib_task(void *arg) {
-  const bool mic_test = (bool)(uintptr_t)arg;
+  const cal_mode_t mode = (cal_mode_t)(uintptr_t)arg;
+  const bool mic_test = mode == CAL_MODE_TEST;
   bool stopped_airplay = false;
   float rms = 0.0f, peak = 0.0f;
   cal_noise_t noise = {0};
@@ -736,7 +940,11 @@ static void calib_task(void *arg) {
         mic_ok = measure_noise(&rms, &peak, &noise, &why);
       }
       store_noise(mic_ok, rms, peak);
-      run_speakers(mic_ok, why, &noise);
+      if (mode == CAL_MODE_SWEEP) {
+        run_sweep(mic_ok, why, &noise, rms);
+      } else {
+        run_speakers(mic_ok, why, &noise);
+      }
     }
   }
   if (!mic_test) {
@@ -763,11 +971,12 @@ static bool init_once(void) {
   return s_lock && s_result_sem;
 }
 
-esp_err_t gw_calib_start(bool mic_test_only) {
+static esp_err_t start_mode(cal_mode_t mode) {
 #if !(defined(CONFIG_AIRPLAY_SURROUND_CAL_MIC) && CONFIG_AIRPLAY_SURROUND_CAL_MIC)
-  (void)mic_test_only;
+  (void)mode;
   return ESP_ERR_NOT_SUPPORTED;
 #else
+  const bool mic_test_only = mode == CAL_MODE_TEST;
   if (!init_once()) return ESP_ERR_NO_MEM;
   gw_radio_stop(); /* the chirps need the speakers free */
   xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -779,10 +988,11 @@ esp_err_t gw_calib_start(bool mic_test_only) {
   memset(&s_status, 0, sizeof(s_status));
   s_status.mic_built = true;
   s_status.mic_test = mic_test_only;
+  s_status.sweep_run = mode == CAL_MODE_SWEEP;
   s_status.state = GW_CAL_BUSY;
   xSemaphoreGive(s_lock);
   if (xTaskCreatePinnedToCore(calib_task, "gw_calib", CAL_TASK_STACK,
-                              (void *)(uintptr_t)mic_test_only, CAL_TASK_PRIORITY,
+                              (void *)(uintptr_t)mode, CAL_TASK_PRIORITY,
                               NULL, 1) != pdPASS) {
     xSemaphoreTake(s_lock, portMAX_DELAY);
     s_running = false;
@@ -792,6 +1002,44 @@ esp_err_t gw_calib_start(bool mic_test_only) {
   }
   return ESP_OK;
 #endif
+}
+
+esp_err_t gw_calib_start(bool mic_test_only) {
+  return start_mode(mic_test_only ? CAL_MODE_TEST : CAL_MODE_FULL);
+}
+
+esp_err_t gw_calib_sweep_start(const uint8_t mac[6], bool raw, bool per_way) {
+  if (!mac) return ESP_ERR_INVALID_ARG;
+  gw_speaker_info_t *list = malloc(sizeof(gw_speaker_info_t) * SURROUND_MAX_SPEAKERS);
+  if (!list) return ESP_ERR_NO_MEM;
+  const size_t n = gw_speakers_list(list);
+  bool found = false;
+  for (size_t i = 0; i < n && !found; ++i) {
+    found = list[i].config_valid && memcmp(list[i].mac, mac, 6) == 0;
+  }
+  free(list);
+  if (!found) return ESP_ERR_NOT_FOUND;
+  if (gw_calib_running()) return ESP_ERR_INVALID_STATE;
+  /* Read by the task this start creates, after it. */
+  memcpy(s_sweep_req.mac, mac, sizeof(s_sweep_req.mac));
+  s_sweep_req.raw = raw;
+  s_sweep_req.per_way = per_way;
+  return start_mode(CAL_MODE_SWEEP);
+}
+
+bool gw_calib_sweep_samples(uint32_t id, const float **samples, gw_cal_sweep_t *info) {
+  if (!init_once() || !samples || !info) return false;
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  const bool ok = !s_running && s_status.sweep_run && s_status.sweep.valid &&
+                  s_status.sweep.id == id;
+  if (ok) *info = s_status.sweep;
+  xSemaphoreGive(s_lock);
+  if (!ok) return false;
+  uint32_t n = 0;
+  const float *x = gw_mic_samples(&n);
+  if (!x || info->from + info->count > n) return false;
+  *samples = x + info->from;
+  return true;
 }
 
 bool gw_calib_running(void) { return atomic_load_explicit(&s_running, memory_order_relaxed); }
@@ -815,7 +1063,8 @@ esp_err_t gw_calib_apply(int *applied) {
   if (applied) *applied = 0;
   if (!init_once()) return ESP_ERR_NO_MEM;
   xSemaphoreTake(s_lock, portMAX_DELAY);
-  if (s_running || s_status.state != GW_CAL_DONE || s_status.mic_test) {
+  if (s_running || s_status.state != GW_CAL_DONE || s_status.mic_test ||
+      s_status.sweep_run) {
     xSemaphoreGive(s_lock);
     return ESP_ERR_INVALID_STATE;
   }

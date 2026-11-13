@@ -29,7 +29,7 @@ idf_component_register(
         ap2_core esp_http_client mbedtls
 )
 
-airplay_embed_web_pages(index logs speedtest speakers)
+airplay_embed_web_pages(index logs speedtest speakers roomeq)
 # The Speakers page's radio controls (gw_radio.c serves /radio.js).
 target_add_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_LIST_DIR}/../data/www/radio.js"
     BINARY RENAME_TO "web_radio_js")

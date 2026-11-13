@@ -1,0 +1,547 @@
+<!DOCTYPE html><html><head>
+<meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
+<title>Room EQ</title>
+<style>
+:root{--bg:#000;--panel:#0f0f10;--panel2:#17171a;--line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.16);--text:#f4f4f5;--muted:#8d8d93;--accent:#8b7bff;--glow:linear-gradient(90deg,#3b5bff,#8b5cff 50%,#ff3d7f)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,'SF Pro Display','Helvetica Neue',system-ui,sans-serif;-webkit-font-smoothing:antialiased;background:var(--bg) radial-gradient(1200px 500px at 50% -200px,rgba(110,90,255,.16),transparent 70%) no-repeat;min-height:100vh;padding:20px 16px 40px;color:var(--text)}
+a{color:var(--accent);text-decoration:none}
+.wrap{max-width:1180px;margin:0 auto}
+.header{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;padding:18px 0 22px}
+.header h1{font-size:30px;font-weight:300;letter-spacing:.5px}
+.header h1 b{font-weight:600}
+.header .bar{width:56px;height:3px;border-radius:2px;background:var(--glow);margin-top:12px}
+.header p{color:var(--muted);font-size:13px;margin-top:10px}
+.now{display:flex;gap:22px;flex-wrap:wrap}
+.stat label{display:block;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1.6px;margin-bottom:4px}
+.stat span{font-size:18px;font-weight:500}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:14px;position:relative;overflow:hidden}
+.panel.busy::before{content:'';position:absolute;left:0;right:0;top:0;height:2px;background:var(--glow)}
+.ptitle{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:1.6px;margin-bottom:12px}
+.prow{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.prow .ptitle{margin:0}
+.ctl{display:grid;grid-template-columns:2fr 1fr 1fr;gap:10px}
+.seg{display:inline-flex;border:1px solid var(--line2);border-radius:999px;overflow:hidden;flex-wrap:wrap}
+.seg button{background:transparent;color:var(--text);border:0;padding:8px 16px;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer}
+.seg button.on{background:#fff;color:#000}
+.seg button:disabled{opacity:.45;cursor:default}
+.tog{display:inline-flex;align-items:center;gap:8px;background:transparent;color:var(--text);border:1px solid var(--line2);border-radius:999px;padding:8px 16px;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer}
+.tog .led{width:8px;height:8px;border-radius:50%;background:#3a3a3f}
+.tog.on{background:#fff;color:#000;border-color:#fff}
+.tog.on .led{background:#30d158;box-shadow:0 0 8px rgba(48,209,88,.8)}
+.tog:disabled{opacity:.45;cursor:default}
+.fg label{display:block;font-size:10px;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:1.2px}
+select{width:100%;padding:10px 12px;background:#0a0a0b;border:1px solid var(--line2);border-radius:10px;color:var(--text);font-size:14px;font-family:inherit}
+select:focus{outline:none;border-color:var(--accent)}
+select:disabled{opacity:.45}
+.opts{display:flex;gap:18px;flex-wrap:wrap;margin-top:14px;font-size:13px}
+.opts label{display:flex;align-items:center;gap:8px;cursor:pointer}
+.opts input{width:16px;height:16px;accent-color:#8b7bff}
+.actions{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap}
+.btn{padding:9px 22px;border:none;border-radius:999px;font-size:13px;font-weight:600;letter-spacing:.3px;cursor:pointer;background:#fff;color:#000;font-family:inherit}
+.btn:hover{background:#dcdcdc}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.sec{background:transparent;color:var(--text);border:1px solid var(--line2)}
+.btn.sec:hover{border-color:#fff;background:transparent}
+.msg{font-size:12px;color:var(--muted);flex:1;min-width:200px}
+.msg.err{color:#ff8a80}.msg.ok{color:#7ee2a0}
+.cal-bar{height:4px;border-radius:2px;background:var(--panel2);overflow:hidden;margin:14px 0 0}
+.cal-bar>div{height:100%;width:0;background:var(--glow);transition:width .4s}
+.help{margin-top:14px;color:var(--muted);font-size:12px;line-height:1.7}
+.help b{color:var(--text);font-weight:500}
+.sel{display:flex;gap:8px;flex-wrap:wrap}
+.sel select{width:auto;padding:6px 10px;font-size:12px;border-radius:999px}
+svg.graph{width:100%;height:auto;display:block;background:var(--panel2);border-radius:12px}
+svg.graph text{font-size:11px;fill:var(--muted);font-family:inherit}
+.legend{margin-top:12px;display:flex;flex-direction:column;gap:2px}
+.li{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:10px;font-size:13px}
+.li:hover{background:var(--panel2)}
+.li input{width:16px;height:16px;flex:none;accent-color:#8b7bff}
+.li .sw{width:14px;height:4px;border-radius:2px;flex:none}
+.li .tx{flex:1;min-width:0}
+.li .tx b{font-weight:600}
+.li .sub{font-size:11px;color:var(--muted);margin-top:2px}
+.li .x{background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:0 6px;font-family:inherit}
+.li .x:hover{color:#ff8a80}
+.empty{color:var(--muted);font-size:13px;text-align:center;padding:16px}
+.ctl5{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
+.keys{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:10px}
+.keys span{display:flex;align-items:center;gap:6px}
+.keys i{display:inline-block;width:18px;height:0;border-top:2px solid}
+.out{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.out h3{font-size:14px;font-weight:600}
+.out h3 small{font-weight:400;color:var(--muted);font-size:12px;margin-left:6px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chip{font-size:11px;padding:3px 9px;border-radius:999px;background:var(--panel2);color:#c8c8cc;white-space:nowrap;font-variant-numeric:tabular-nums}
+.chip.cut{background:rgba(64,120,255,.14);color:#9dbaff}
+.chip.boost{background:rgba(245,165,36,.14);color:#f7c46c}
+.chip.keep{background:transparent;border:1px solid var(--line2);color:var(--muted)}
+@media(max-width:560px){.header h1{font-size:24px}.ctl{grid-template-columns:1fr}}
+</style></head><body><div class='wrap'>
+<div class='header'>
+ <div><h1><b>Room</b> EQ</h1><div class='bar'></div><p>Each speaker's frequency response at your seat, from the Gateway's microphone. <a href='/speakers'>&larr; Speakers</a></p></div>
+ <div class='now'><div class='stat'><label>Microphone</label><span id='st-mic'>&mdash;</span></div><div class='stat'><label>Measurements</label><span id='st-count'>0</span></div></div>
+</div>
+<div class='panel' id='mpanel'>
+ <div class='ptitle'>Measure</div>
+ <div class='ctl'>
+  <div class='fg'><label for='spk'>Speaker</label><select id='spk'><option>Loading&hellip;</option></select></div>
+  <div class='fg'><label for='pos'>Microphone position</label><select id='pos'><option value='1'>1 &middot; main seat</option><option value='2'>2</option><option value='3'>3</option><option value='4'>4</option><option value='5'>5</option></select></div>
+  <div class='fg'><label for='mic'>Microphone</label><select id='mic'><option value='inmp441'>INMP441 &middot; to 16 kHz</option><option value='flat'>Calibrated, flat &middot; to 20 kHz</option></select></div>
+ </div>
+ <div class='opts' style='align-items:center'>
+  <button type='button' class='tog' id='eqbtn' aria-pressed='false'><span class='led'></span>Speaker EQ</button><span id='eqhint' style='color:var(--muted)'></span>
+  <label id='perway-l'><input type='checkbox' id='perway' checked>Bi-amp: each driver on its own</label>
+ </div>
+ <div class='actions'><button class='btn' id='go'>Measure</button><span class='msg' id='msg'></span></div>
+ <div class='cal-bar'><div id='bar'></div></div>
+ <p class='help'>Put the Gateway at the seat with the microphone at ear height, and keep the room quiet. The speaker plays a 2.5 s sweep (one per driver when it is bi-amped, the other output silent), from &minus;30 dBFS up until it is clear of the room noise. With <b>Speaker EQ</b> off (the default) it measures the speaker as it is in the room, for the correction: its filters, level, polarity and delay are left out, only a bi-amp crossover and the subwoofer's low-pass stay (they protect the drivers). Switched on, it measures it as it plays, to compare with the correction. Measure every speaker from two or three positions 40&ndash;60 cm apart. A subwoofer is always measured mono. Nothing changes on the speakers.</p>
+</div>
+<div class='panel'>
+ <div class='prow'><div class='ptitle'>Response</div>
+  <div class='sel'>
+   <select id='smooth' title='Smoothing'><option value='3'>1/3 octave</option><option value='6' selected>1/6 octave</option><option value='12'>1/12 octave</option><option value='24'>1/24 octave</option><option value='48'>1/48 octave</option></select>
+  </div>
+ </div>
+ <svg class='graph' id='graph' viewBox='0 0 1000 440' preserveAspectRatio='xMidYMid meet'></svg>
+ <div class='legend' id='legend'></div>
+ <div class='actions'><button class='btn sec' id='clear'>Delete all</button></div>
+ <p class='help'>The levels are relative to the level played, so speakers, drivers and positions compare directly. The tick boxes choose what the graph shows, and the correction below uses the ones shown. The graph shows what reaches the seat in the 500 ms after the direct sound: the speaker with the room. Measurements with the speaker's EQ on are drawn dashed. The INMP441 is not calibrated and is specified from 60 Hz to 15 kHz, so with it the curves end at 16 kHz. The measurements are kept in this browser only.</p>
+</div>
+<div class='panel' id='cpanel'>
+ <div class='ptitle'>Correction</div>
+ <div class='ctl5'>
+  <div class='fg'><label for='c-spk'>Speaker</label><select id='c-spk'></select></div>
+  <div class='fg'><label for='c-tilt'>Target</label><select id='c-tilt'><option value='0'>Flat</option><option value='-0.5' selected>Gentle slope &middot; &minus;0.5 dB/oct</option><option value='-1'>Room curve &middot; &minus;1 dB/oct</option></select></div>
+  <div class='fg'><label for='c-bass'>Extra bass</label><select id='c-bass'><option value='0' selected>None</option><option value='2'>+2 dB</option><option value='4'>+4 dB</option><option value='6'>+6 dB</option></select></div>
+  <div class='fg'><label for='c-boost'>Boost at most</label><select id='c-boost'><option value='0'>0 dB &middot; cuts only</option><option value='3' selected>+3 dB</option><option value='6'>+6 dB</option></select></div>
+ </div>
+ <div class='actions'><button class='btn' id='c-calc'>Calculate</button><span class='msg' id='c-msg'></span></div>
+ <div id='c-out' style='display:none'>
+  <svg class='graph' id='c-graph' viewBox='0 0 1000 440' preserveAspectRatio='xMidYMid meet' style='margin-top:14px'></svg>
+  <div class='keys' id='c-keys'></div>
+  <div id='c-list'></div>
+  <div class='actions'><button class='btn sec' id='c-apply'>Apply</button><button class='btn' id='c-save'>Apply &amp; Save</button><span class='msg' id='c-amsg'></span></div>
+ </div>
+ <p class='help'>From the measurements of that speaker shown above with its EQ off (several positions are averaged). Below about 500 Hz it works on what you hear in the room and cuts its peaks precisely; dips are left, or raised a little at most, because a dip from a reflection does not fill in with more power. Above about 500 Hz it works on the speaker's own sound (the frequency-dependent window) with broad filters only, since the room's reflections there change with every move of your head. It never corrects below where the speaker itself rolls off, nor above the microphone's range. A subwoofer is corrected up to 300 Hz at most, through the Gateway's crossover. With <b>bi-amp</b> each driver gets its own filters, and the tweeter's level is matched to the woofer's. <b>Apply</b> sends the result to the speaker now, <b>Apply &amp; Save</b> also keeps it after a restart. On the speaker it replaces the EQ bands and levels of its outputs and keeps their high- and low-pass bands; its outputs, crossover, polarity and delay stay as they are. To check: measure again with <b>Speaker EQ</b> switched on; the graph shows it next to the expected result. Afterwards run <b>Calibrate</b> on the <a href='/speakers'>Speakers</a> page, as the correction changes the speaker's level.</p>
+</div>
+</div><script>
+const TITLE={'-1':'Mono mix',0:'Front Left',1:'Front Right',2:'Centre',3:'Subwoofer',4:'Side Left',5:'Side Right',6:'Rear Left',7:'Rear Right'};
+const COLORS=['#8b7bff','#ff3d7f','#3bc9ff','#f5a524','#7ee2a0','#ff8a80','#c4b2ff','#7fe0e0','#ffbd85','#9dbaff'];
+const WINDOWS=[0.5,0.1,0.02,0.005];
+/* The analysis grid: 1/48 octave from 15 Hz. */
+const G0=15,GN=48,GCOUNT=Math.floor(GN*Math.log2(20000/G0))+1;
+const gridF=i=>G0*Math.pow(2,i/GN);
+const KEY='roomeq.v1';
+let meas=[],speakers=[],busy=false,pendingPos=null,stream=false,timer=null;
+function esc(t){return String(t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function load(){try{const v=JSON.parse(localStorage.getItem(KEY)||'[]');if(Array.isArray(v))meas=v;}catch(e){meas=[];}}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(meas));}catch(e){setMsg('Not saved in this browser: '+e.message,'err');}}
+function setMsg(t,c){const m=document.getElementById('msg');m.textContent=t||'';m.className='msg'+(c?' '+c:'');}
+
+/* ---- FFT: iterative radix-2, in place ---- */
+const twCache={};
+function twiddles(n){if(!twCache[n]){const c=new Float64Array(n/2),s=new Float64Array(n/2);for(let i=0;i<n/2;i++){c[i]=Math.cos(2*Math.PI*i/n);s[i]=Math.sin(2*Math.PI*i/n);}twCache[n]=[c,s];}return twCache[n];}
+function fft(re,im,inv){
+ const n=re.length,[ct,st]=twiddles(n);
+ for(let i=1,j=0;i<n;i++){let b=n>>1;for(;j&b;b>>=1)j^=b;j^=b;if(i<j){let t=re[i];re[i]=re[j];re[j]=t;t=im[i];im[i]=im[j];im[j]=t;}}
+ for(let len=2;len<=n;len<<=1){const half=len>>1,step=n/len;
+  for(let i=0;i<n;i+=len){for(let k=0;k<half;k++){const w=k*step,wr=ct[w],wi=inv?st[w]:-st[w];
+   const a=i+k,b=a+half,xr=re[b]*wr-im[b]*wi,xi=re[b]*wi+im[b]*wr;re[b]=re[a]-xr;im[b]=im[a]-xi;re[a]+=xr;im[a]+=xi;}}}
+ if(inv){for(let i=0;i<n;i++){re[i]/=n;im[i]/=n;}}
+}
+const pow2=n=>{let m=1;while(m<n)m<<=1;return m;};
+
+/* The sweep exactly as the speaker plays it (cal_chirp.c). */
+function sweepRef(s,rate){
+ const L=s.length_s/Math.log(s.f1_hz/s.f0_hz),n=Math.ceil(s.length_s*rate),r=new Float64Array(n);
+ for(let i=0;i<n;i++){const t=i/rate;let w=1;
+  if(t<s.fade_in_s)w=0.5-0.5*Math.cos(Math.PI*t/s.fade_in_s);
+  else if(s.length_s-t<s.fade_out_s)w=0.5-0.5*Math.cos(Math.PI*(s.length_s-t)/s.fade_out_s);
+  r[i]=w*Math.sin(2*Math.PI*s.f0_hz*L*Math.expm1(t/L));}
+ return r;
+}
+
+/* The response on the grid (dB re the level played) of the impulse
+ * response re[] in a window of W seconds after its direct sound at p: up to
+ * 2 ms before it (a quarter of a short window), a raised-cosine rise, and a
+ * fall over the last 20 %. */
+function windowMag(re,p,M,W,rate,gain){
+ const pre=Math.min(Math.round(0.002*rate),Math.max(4,Math.round(W*rate/4))),a=Math.max(2,Math.round(pre/2));
+ const start=Math.max(0,p-pre),wn=Math.round(W*rate),end=Math.min(M,p+wn),fall=Math.max(1,Math.round(0.2*wn));
+ const N=pow2(Math.max(W>=0.05?65536:16384,end-start)),wr=new Float64Array(N),wi=new Float64Array(N);
+ for(let i=start;i<end;i++){let w=1;
+  if(i<start+a)w=0.5-0.5*Math.cos(Math.PI*(i-start)/a);
+  else if(end-i<fall)w=0.5-0.5*Math.cos(Math.PI*(end-i)/fall);
+  wr[i-start]=re[i]*w;}
+ fft(wr,wi,false);
+ const df=rate/N,out=new Array(GCOUNT);
+ for(let g=0;g<GCOUNT;g++){const f=gridF(g),lo=Math.ceil(f*Math.pow(2,-1/(2*GN))/df),hi=Math.floor(f*Math.pow(2,1/(2*GN))/df);
+  let sum=0,c=0;for(let k=Math.max(1,lo);k<=hi&&k<N/2;k++){sum+=wr[k]*wr[k]+wi[k]*wi[k];c++;}
+  if(!c){const k=Math.round(f/df);sum=wr[k]*wr[k]+wi[k]*wi[k];c=1;}
+  out[g]=Math.round((10*Math.log10(sum/c+1e-30)+gain)*100)/100;}
+ return out;
+}
+/* Frequency dependent: FDW_CYCLES periods at every frequency, from windows
+ * half an octave apart (500 ms down to 0.5 ms), interpolated in between. */
+const FDW_CYCLES=8,FDW_W=Array.from({length:21},(_,k)=>0.5*Math.pow(2,-k/2));
+/* One sweep in the recording: the impulse response by deconvolution, its
+ * direct sound, then the response in each time window on the grid (dB re
+ * the level played); mags[4] is the frequency-dependent one. */
+function analyse(s,x,b,ref,R,P,eps){
+ const rate=s.rate,M=R[0].length,pre=Math.round(0.05*rate);
+ const s0=Math.round(b.start)-pre,re=new Float64Array(M),im=new Float64Array(M);
+ const n=Math.min(Math.ceil(s.period_s*rate)+pre,M);
+ for(let i=0;i<n;i++){const k=s0+i;re[i]=k>=0&&k<x.length?x[k]:0;}
+ fft(re,im,false);
+ for(let i=0;i<M;i++){const yr=re[i],yi=im[i],rr=R[0][i],ri=R[1][i],d=P[i]+eps;re[i]=(yr*rr+yi*ri)/d;im[i]=(yi*rr-yr*ri)/d;}
+ fft(re,im,true);
+ /* The direct sound: the strongest peak within 0.2 s of the start. */
+ let p=0,pk=0;const lim=Math.min(M,pre+Math.round(0.2*rate));
+ for(let i=0;i<lim;i++){const v=Math.abs(re[i]);if(v>pk){pk=v;p=i;}}
+ const arrival=(p+s0-b.start)/rate*1000;
+ const gain=-s.level_db,mags=WINDOWS.map(W=>windowMag(re,p,M,W,rate,gain));
+ const fm=FDW_W.map((W,k)=>k===0?mags[0]:windowMag(re,p,M,W,rate,gain)),fdw=new Array(GCOUNT);
+ for(let g=0;g<GCOUNT;g++){const W=Math.max(FDW_W[20],Math.min(FDW_W[0],FDW_CYCLES/gridF(g))),x=-2*Math.log2(W/FDW_W[0]),k=Math.min(19,Math.floor(x)),t=x-k;
+  fdw[g]=Math.round((fm[k][g]*(1-t)+fm[k+1][g]*t)*100)/100;}
+ mags.push(fdw);
+ return {arrival_ms:Math.round(arrival*100)/100,mags};
+}
+
+async function importSweep(s){
+ setMsg('Analysing the recording…');
+ const r=await fetch('/api/calibration/sweep?id='+s.id,{cache:'no-store'});
+ if(!r.ok)throw new Error('recording not available (HTTP '+r.status+')');
+ const v=new Int16Array(await r.arrayBuffer());
+ if(v.length!==s.count)throw new Error('recording incomplete');
+ const x=new Float64Array(v.length),k=1/(32767*s.scale);let mean=0;
+ for(let i=0;i<v.length;i++){x[i]=v[i]*k;mean+=x[i];}
+ mean/=v.length;for(let i=0;i<v.length;i++)x[i]-=mean;
+ const ref=sweepRef(s,s.rate),M=pow2(Math.ceil(s.period_s*s.rate)+Math.round(0.05*s.rate)+1);
+ const rr=new Float64Array(M),ri=new Float64Array(M);rr.set(ref.subarray(0,Math.min(ref.length,M)));fft(rr,ri,false);
+ const P=new Float64Array(M);let maxP=0;for(let i=0;i<M;i++){P[i]=rr[i]*rr[i]+ri[i]*ri[i];if(P[i]>maxP)maxP=P[i];}
+ const eps=maxP*1e-6,low=s.kind==='low sweep';
+ const pos=pendingPos||document.getElementById('pos').value,mic=document.getElementById('mic').value;
+ s.bursts.forEach((b,i)=>{
+  const a=analyse(s,x,b,ref,[rr,ri],P,eps);
+  meas.push({key:s.id+'.'+i,id:s.id,t:Date.now(),mac:s.mac,name:s.name,channel:s.channel,way:b.way,outputs:b.outputs,pos:+pos,raw:s.raw,level_db:s.level_db,snr_db:b.snr_db,mic,
+   lo:low?Math.max(20,s.f0_hz*1.4):Math.max(20,s.f0_hz*1.07),hi:low?Math.min(350,s.f1_hz*0.875):Math.min(mic==='flat'?20000:16000,s.f1_hz),arrival_ms:a.arrival_ms,mags:a.mags,on:true,color:COLORS[meas.length%COLORS.length]});
+ });
+ pendingPos=null;save();render();
+}
+
+/* ---- Graph ---- */
+const X0=52,X1=988,Y0=14,Y1=404;
+const fx=f=>X0+(X1-X0)*Math.log10(f/20)/3;
+function smoothed(m,win,oct){
+ const src=m.mags[win],k=Math.floor(GN/(2*oct)),out=new Array(GCOUNT);
+ for(let g=0;g<GCOUNT;g++){let s=0,c=0;for(let j=Math.max(0,g-k);j<=Math.min(GCOUNT-1,g+k);j++){s+=Math.pow(10,src[j]/10);c++;}out[g]=10*Math.log10(s/c);}
+ return out;
+}
+function drawGraph(){
+ const svg=document.getElementById('graph'),win=0,oct=+document.getElementById('smooth').value;
+ const shown=meas.filter(m=>m.on),curves=shown.map(m=>{const w=win===4&&!m.mags[4]?0:win,lo=Math.max(m.lo,w===4?0:1.5/WINDOWS[w]),v=smoothed(m,w,oct),pts=[];
+  for(let g=0;g<GCOUNT;g++){const f=gridF(g);if(f>=lo&&f<=m.hi)pts.push([f,v[g]]);}return {m,pts};});
+ let top=-1e9;curves.forEach(c=>c.pts.forEach(p=>{if(p[1]>top)top=p[1];}));
+ top=top>-1e8?Math.ceil((top+3)/10)*10:0;const span=60,bot=top-span;
+ const fy=d=>Y0+(Y1-Y0)*(top-Math.max(bot,Math.min(top,d)))/span;
+ let h='';
+ [20,30,40,50,60,70,80,90,100,200,300,400,500,600,700,800,900,1000,2000,3000,4000,5000,6000,7000,8000,9000,10000,20000].forEach(f=>{
+  const major=[20,50,100,200,500,1000,2000,5000,10000,20000].includes(f);
+  h+="<line x1='"+fx(f)+"' x2='"+fx(f)+"' y1='"+Y0+"' y2='"+Y1+"' stroke='rgba(255,255,255,"+(major?.1:.04)+")'/>";
+  if(major)h+="<text x='"+fx(f)+"' y='"+(Y1+20)+"' text-anchor='middle'>"+(f>=1000?f/1000+'k':f)+"</text>";});
+ for(let d=top;d>=bot;d-=10){h+="<line x1='"+X0+"' x2='"+X1+"' y1='"+fy(d)+"' y2='"+fy(d)+"' stroke='rgba(255,255,255,.07)'/><text x='"+(X0-8)+"' y='"+(fy(d)+4)+"' text-anchor='end'>"+d+"</text>";}
+ if(!curves.length)h+="<text x='520' y='215' text-anchor='middle'>No measurement shown</text>";
+ curves.forEach(c=>{if(c.pts.length<2)return;h+="<polyline fill='none' stroke='"+c.m.color+"' stroke-width='2'"+(c.m.raw?'':" stroke-dasharray='7 4'")+" stroke-linejoin='round' points='"+c.pts.map(p=>fx(p[0]).toFixed(1)+','+fy(p[1]).toFixed(1)).join(' ')+"'/>";});
+ h+="<text x='"+X0+"' y='"+(Y0+12)+"' dx='6'>dB</text>";
+ svg.innerHTML=h;
+}
+function wayText(m){
+ if(m.way==='tweeter')return 'tweeter ('+m.outputs+' output)';
+ if(m.way==='woofer')return 'woofer ('+m.outputs+' output)';
+ if(m.way==='both')return 'tweeter + woofer';
+ return m.outputs==='both'?'both outputs':m.outputs+' output';
+}
+function render(){
+ document.getElementById('st-count').textContent=meas.length;
+ cSpeakers();
+ const lg=document.getElementById('legend');
+ lg.innerHTML=meas.length?meas.map((m,i)=>{const d=new Date(m.t);
+  return "<div class='li'><input type='checkbox' data-i='"+i+"'"+(m.on?' checked':'')+"><span class='sw' style='background:"+m.color+"'></span><div class='tx'><b>"+esc(TITLE[m.channel]||m.name)+"</b> &middot; "+esc(wayText(m))+" &middot; position "+m.pos+(m.raw?' &middot; EQ off':' &middot; <b>EQ on</b>')+
+   "<div class='sub'>"+esc(m.name)+" &middot; "+m.level_db+" dBFS &middot; "+m.snr_db.toFixed(0)+" dB above noise &middot; direct sound after "+m.arrival_ms.toFixed(1)+" ms &middot; "+d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})+"</div></div><button class='x' data-del='"+i+"' title='Delete'>&times;</button></div>";}).join(''):"<div class='empty'>No measurements yet.</div>";
+ lg.querySelectorAll('input[data-i]').forEach(e=>e.onchange=()=>{meas[+e.dataset.i].on=e.checked;save();drawGraph();});
+ lg.querySelectorAll('button[data-del]').forEach(e=>e.onclick=()=>{meas.splice(+e.dataset.del,1);save();render();});
+ drawGraph();
+}
+
+/* ---- Speakers and the measurement ---- */
+async function loadSpeakers(){
+ try{const r=await fetch('/api/speakers',{cache:'no-store'});const d=await r.json();
+  speakers=(d.speakers||[]).filter(s=>s.channel!==undefined);
+  const sel=document.getElementById('spk'),was=sel.value;
+  sel.innerHTML=speakers.length?speakers.map(s=>"<option value='"+esc(s.mac)+"'>"+esc((TITLE[s.channel]||'Speaker')+' — '+s.name)+"</option>").join(''):'<option value="">No speaker connected</option>';
+  if(speakers.some(s=>s.mac===was))sel.value=was;
+ }catch(e){}
+ buttons();
+}
+let rawMode=true;
+const isSub=mac=>{const s=speakers.find(x=>x.mac===mac);return !!s&&s.channel===3;};
+function buttons(){document.getElementById('go').disabled=busy||!speakers.length;['spk','pos','mic','perway'].forEach(id=>document.getElementById(id).disabled=busy);
+ const eb=document.getElementById('eqbtn');eb.disabled=busy;eb.classList.toggle('on',!rawMode);eb.setAttribute('aria-pressed',String(!rawMode));
+ document.getElementById('eqhint').textContent=rawMode?'off: measures for the correction':'on: measures as it plays, to check the correction';
+ /* A subwoofer plays mono: no drivers to measure on their own. */
+ document.getElementById('perway-l').style.display=isSub(document.getElementById('spk').value)?'none':'';}
+document.getElementById('eqbtn').onclick=()=>{rawMode=!rawMode;buttons();};
+document.getElementById('spk').onchange=buttons;
+try{const v=localStorage.getItem('roomeq.mic');if(v)document.getElementById('mic').value=v;}catch(e){}
+document.getElementById('mic').onchange=()=>{try{localStorage.setItem('roomeq.mic',document.getElementById('mic').value);}catch(e){}};
+async function poll(){
+ clearTimeout(timer);
+ let c;try{const r=await fetch('/api/calibration',{cache:'no-store'});c=await r.json();}catch(e){timer=setTimeout(poll,3000);return;}
+ if(!c.mic_built){setMsg('This Gateway is built without the calibration microphone.','err');document.getElementById('st-mic').textContent='none';busy=true;buttons();return;}
+ if(c.noise_dbfs!==undefined)document.getElementById('st-mic').textContent='noise '+c.noise_dbfs.toFixed(0)+' dBFS';
+ const was=busy;busy=c.state==='busy';stream=c.stream_active;
+ document.getElementById('mpanel').classList.toggle('busy',busy);
+ document.getElementById('bar').style.width=busy?(c.steps?Math.max(5,100*(c.step-0.5)/c.steps):5)+'%':'0';
+ buttons();
+ if(busy){setMsg(c.message||'Measuring…');}
+ else if(c.sweep_run&&c.sweep&&(was||pendingPos)){
+  try{await importSweep(c.sweep);setMsg((c.message||'Measured.')+(c.sender_stopped?' The Apple TV was disconnected: pick the Gateway again as its audio output.':''),'ok');}
+  catch(e){setMsg('The measurement could not be read: '+e.message,'err');}
+ }else if(was){setMsg(c.message||'',c.state==='failed'?'err':'');}
+ timer=setTimeout(poll,busy?1000:4000);
+}
+document.getElementById('go').onclick=async()=>{
+ const mac=document.getElementById('spk').value;if(!mac)return;
+ if(stream&&!confirm('The Apple TV is connected to the Gateway. The measurement disconnects it; afterwards pick the Gateway again as its audio output. Continue?'))return;
+ try{const r=await fetch('/api/calibration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'sweep',mac,raw:rawMode,per_way:document.getElementById('perway').checked&&!isSub(mac)})});
+  const d=await r.json();if(!d.success){setMsg(d.error||'Error','err');return;}
+  pendingPos=document.getElementById('pos').value;busy=true;buttons();setMsg('Starting…');
+ }catch(e){setMsg('Error','err');return;}
+ setTimeout(poll,500);
+};
+document.getElementById('smooth').onchange=drawGraph;
+document.getElementById('clear').onclick=()=>{if(meas.length&&confirm('Delete all measurements kept in this browser?')){meas=[];save();render();}};
+/* ==== Correction ====
+ * Per driver: the measurements of one speaker averaged (power), smoothed
+ * more at high frequencies (1/12 octave below 200 Hz, 1/3 above 1 kHz), a
+ * target (tilt around 1 kHz, optional extra bass), the range the speaker
+ * itself covers (not where it rolls off), then peaking filters one at a
+ * time where the curve is furthest above the target (below it only when a
+ * boost is allowed and the dip is broad), each refined by a coordinate
+ * search, and all of them refined together at the end. */
+const FS=48000,TR=Array.from({length:GCOUNT},(_,g)=>{const w=2*Math.PI*gridF(g)/FS;return[Math.cos(w),Math.sin(w),Math.cos(2*w),Math.sin(2*w)];});
+/* The speaker's biquads (audio_eq.c calc_biquad, as on its EQ page). */
+function bq(t,f,g,q){const K=Math.tan(Math.PI*f/FS),V=Math.pow(10,Math.abs(g)/20),r2=Math.SQRT2,sv=Math.sqrt(2*V),KK=K*K;let n,b0,b1,b2,a1,a2;
+switch(t){case'LP':n=1/(1+K/q+KK);b0=KK*n;b1=2*b0;b2=b0;a1=2*(KK-1)*n;a2=(1-K/q+KK)*n;break;
+case'HP':n=1/(1+K/q+KK);b0=n;b1=-2*b0;b2=b0;a1=2*(KK-1)*n;a2=(1-K/q+KK)*n;break;
+default:if(g>=0){n=1/(1+K/q+KK);b0=(1+V*K/q+KK)*n;b1=2*(KK-1)*n;b2=(1-V*K/q+KK)*n;a1=b1;a2=(1-K/q+KK)*n;}else{n=1/(1+V*K/q+KK);b0=(1+K/q+KK)*n;b1=2*(KK-1)*n;b2=(1-K/q+KK)*n;a1=b1;a2=(1-V*K/q+KK)*n;}}
+return[b0,b1,b2,a1,a2];}
+function magDb(k,j){const c=TR[j],nr=k[0]+k[1]*c[0]+k[2]*c[2],ni=-(k[1]*c[1]+k[2]*c[3]),dr=1+k[3]*c[0]+k[4]*c[2],di=-(k[3]*c[1]+k[4]*c[3]);return 10*Math.log10((nr*nr+ni*ni)/(dr*dr+di*di));}
+function respOf(t,f,g,q,from,to){const k=bq(t,f,g,q),r=new Float64Array(GCOUNT);for(let j=from;j<=to;j++)r[j]=magDb(k,j);return r;}
+const gi=f=>Math.max(0,Math.min(GCOUNT-1,Math.round(GN*Math.log2(f/G0))));
+function avgPower(list){const o=new Float64Array(GCOUNT);for(let g=0;g<GCOUNT;g++){let s=0;list.forEach(m=>s+=Math.pow(10,m[g]/10));o[g]=10*Math.log10(s/list.length);}return o;}
+function varSmooth(v){const o=new Float64Array(GCOUNT);for(let g=0;g<GCOUNT;g++){const f=gridF(g),oct=f<=200?12:f>=1000?3:12*Math.pow(0.25,Math.log(f/200)/Math.log(5)),k=Math.floor(GN/(2*oct));
+ let s=0,c=0;for(let j=Math.max(0,g-k);j<=Math.min(GCOUNT-1,g+k);j++){s+=Math.pow(10,v[j]/10);c++;}o[g]=10*Math.log10(s/c);}return o;}
+const mean=(v,a,b)=>{let s=0,c=0;for(let g=gi(a);g<=gi(b);g++){s+=v[g];c++;}return c?s/c:0;};
+
+/* Peaking filters for one driver: S (smoothed dB), T (target dB), the
+ * correction range [lo, hi], options. */
+function fitFilters(S,T,lo,hi,o,maxf){
+ const a=gi(lo),b=gi(hi),F=new Float64Array(GCOUNT),skip=new Uint8Array(GCOUNT),filters=[];
+ if(b-a<4||maxf<=0)return {filters,F};
+ const lim=f=>f>500?{gmin:-6,gmax:Math.min(o.boost,3),qmin:0.5,qmax:2}:{gmin:-15,gmax:o.boost,qmin:0.5,qmax:12};
+ const err=(base,g,r)=>S[g]+base[g]+(r?r[g]:0)-T[g];
+ const cost=(base,r)=>{let c=0;for(let g=a;g<=b;g++){if(skip[g])continue;const e=err(base,g,r);c+=e>0?e*e:0.3*e*e;}return c;};
+ const clampF=fl=>{const l=lim(fl.f);fl.f=Math.max(lo,Math.min(hi,fl.f));fl.g=Math.max(l.gmin,Math.min(l.gmax,fl.g));fl.q=Math.max(l.qmin,Math.min(l.qmax,fl.q));return fl;};
+ const optimise=(fl,base)=>{let best=cost(base,respOf('PK',fl.f,fl.g,fl.q,a,b)),sf=Math.pow(2,1/12),sq=1.3,sg=1;
+  for(let it=0;it<6;it++){let imp=true,guard=0;
+   while(imp&&guard++<25){imp=false;
+    for(const [p,d] of [['f',sf],['f',1/sf],['q',sq],['q',1/sq],['g',sg],['g',-sg]]){
+     const c2=clampF({...fl});if(p==='g')c2.g+=d;else c2[p]*=d;clampF(c2);
+     const c=cost(base,respOf('PK',c2.f,c2.g,c2.q,a,b));if(c<best-1e-9){best=c;Object.assign(fl,c2);imp=true;}}}
+   sf=Math.sqrt(sf);sq=Math.sqrt(sq);sg/=2;}
+  return best;};
+ const sum=except=>{const base=new Float64Array(GCOUNT);filters.forEach((f,i)=>{if(i!==except)for(let g=a;g<=b;g++)base[g]+=f.r[g];});return base;};
+ for(let tries=0;tries<30&&filters.length<maxf;tries++){
+  const base=sum(-1);let gm=-1,vm=0;
+  for(let g=a;g<=b;g++){if(skip[g])continue;const e=err(base,g);const v=e>0?e:(o.boost>0?-0.7*e:0);if(v>vm){vm=v;gm=g;}}
+  if(gm<0||vm<1)break;
+  const e0=err(base,gm);let gl=gm,gr=gm;
+  while(gl>a&&Math.abs(err(base,gl-1))>Math.abs(e0)/2&&Math.sign(err(base,gl-1))===Math.sign(e0))gl--;
+  while(gr<b&&Math.abs(err(base,gr+1))>Math.abs(e0)/2&&Math.sign(err(base,gr+1))===Math.sign(e0))gr++;
+  const bw=Math.max(1,gr-gl)/GN,q0=Math.sqrt(Math.pow(2,bw))/(Math.pow(2,bw)-1);
+  const fl=clampF({f:gridF(gm),g:-e0,q:q0});
+  const before=cost(base);const after=optimise(fl,base);
+  /* A narrow dip is a cancellation: no boost for it. */
+  const edge=fl.f<lo*Math.pow(2,1/12)||fl.f>hi/Math.pow(2,1/12);
+  if(after>before*0.97||(fl.g>0&&(fl.q>3||edge))||Math.abs(fl.g)<0.5){for(let g=gl;g<=gr;g++)skip[g]=1;continue;}
+  fl.r=respOf('PK',fl.f,fl.g,fl.q,0,GCOUNT-1);filters.push(fl);
+ }
+ for(let pass=0;pass<2;pass++)filters.forEach((fl,i)=>{const base=sum(i);optimise(fl,base);fl.r=respOf('PK',fl.f,fl.g,fl.q,0,GCOUNT-1);});
+ filters.forEach(fl=>{fl.f=Math.round(fl.f*10)/10;fl.g=Math.round(fl.g*10)/10;fl.q=Math.round(fl.q*100)/100;fl.r=respOf('PK',fl.f,fl.g,fl.q,0,GCOUNT-1);});
+ filters.sort((x,y)=>x.f-y.f);
+ for(let g=0;g<GCOUNT;g++){let s=0;filters.forEach(fl=>s+=fl.r[g]);F[g]=s;}
+ return {filters,F};
+}
+/* Where the speaker plays: around its level band, while within 6 dB of
+ * the target. */
+function playRange(S,T,a,b,lo,hi){
+ let l=gi(a),h=gi(b);while(l>gi(lo)&&S[l-1]>=T[l-1]-6)l--;while(h<gi(hi)&&S[h+1]>=T[h+1]-6)h++;
+ return [Math.max(lo,gridF(l)),Math.min(hi,gridF(h))];
+}
+let cur=null; /* the last calculation */
+async function speakerEq(mac,action,body){
+ const r=await fetch('/api/speakers/eq?mac='+mac+'&action='+action,{method:'POST',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):'',cache:'no-store'});
+ const t=await r.text();if(!r.ok)throw new Error(t||('HTTP '+r.status));return JSON.parse(t);
+}
+function cSpeakers(){
+ const sel=document.getElementById('c-spk'),was=sel.value,seen={};
+ meas.forEach(m=>{if(m.raw&&!seen[m.mac])seen[m.mac]=m;});
+ const l=Object.values(seen);
+ sel.innerHTML=l.length?l.map(m=>"<option value='"+esc(m.mac)+"'>"+esc((TITLE[m.channel]||'Speaker')+' — '+m.name)+"</option>").join(''):"<option value=''>Measure a speaker first</option>";
+ if(l.some(m=>m.mac===was))sel.value=was;
+ document.getElementById('c-calc').disabled=!l.length;
+}
+async function calculate(){
+ const mac=document.getElementById('c-spk').value,msg=document.getElementById('c-msg');
+ document.getElementById('c-amsg').textContent='';
+ const use=meas.filter(m=>m.mac===mac&&m.raw&&m.on);
+ if(!use.length){msg.className='msg err';msg.textContent='Show (tick) at least one measurement of it without its EQ.';document.getElementById('c-out').style.display='none';return;}
+ msg.className='msg';msg.textContent='Reading the speaker’s EQ…';
+ let eq;try{eq=await speakerEq(mac,'get');}catch(e){msg.className='msg err';msg.textContent='The speaker’s EQ could not be read: '+e.message;return;}
+ /* Always the whole range: from where the speaker plays up to the
+  * microphone's limit (each measurement keeps the microphone it was made
+  * with), a subwoofer up to 300 Hz. */
+ const o={tilt:+document.getElementById('c-tilt').value,bass:+document.getElementById('c-bass').value,upto:Infinity,boost:+document.getElementById('c-boost').value};
+ const by=w=>use.filter(m=>m.way===w);
+ const tw=by('tweeter'),wf=by('woofer'),full=by('full'),both=by('both');
+ const biamp=eq.output_mode==='biamp',fc=eq.crossover_hz||2500,low=use[0].channel===3;
+ const slope=eq.crossover_slope_db||24,xsecs=slope===12?[0.5]:slope===48?[0.5412,1.3066,0.5412,1.3066]:[0.7071,0.7071];
+ const spk=speakers.find(s=>s.mac===mac);
+ const ways=[];
+ if(biamp&&!tw.length&&!wf.length){msg.className='msg err';msg.textContent='This speaker is bi-amped: measure it with “Bi-amp: each driver on its own”.';return;}
+ if(low&&biamp){msg.className='msg err';msg.textContent='The subwoofer is set to Bi-amp on its EQ page: set it to Mono first.';return;}
+ if(!biamp&&(tw.length||wf.length)){msg.className='msg err';msg.textContent='These measurements are per driver, but the speaker is not bi-amped now.';return;}
+ const outOf=w=>w.outputs==='left'?0:w.outputs==='right'?1:-1;
+ if(biamp){if(wf.length)ways.push({role:'woofer',ms:wf,out:outOf(wf[0])});if(tw.length)ways.push({role:'tweeter',ms:tw,out:outOf(tw[0])});}
+ else ways.push({role:low?'sub':'full',ms:full.length?full:both,out:-1});
+ const tgt=(L,f)=>L+o.tilt*Math.log2(f/1000)+o.bass/(1+Math.pow(f/100,2));
+ const lowpass=spk&&spk.lowpass_hz?spk.lowpass_hz:0,lowHz=lowpass||300;
+ const micHi=use.every(m=>m.mic==='flat')?20000:16000;
+ /* The curve corrected: the room (500 ms) below 350 Hz, above 700 Hz the
+  * speaker's own sound (frequency-dependent window) at the room's level
+  * (matched at 400-800 Hz on the woofer), blended in between. */
+ const room=ms=>avgPower(ms.map(m=>m.mags[0])),direct=ms=>avgPower(ms.map(m=>m.mags[4]||m.mags[0]));
+ const leadMs=ways[0].ms,useFdw=!low;
+ let off=0;
+ if(useFdw&&ways[0].role!=='tweeter'){const r=room(leadMs),d=direct(leadMs);off=mean(r,400,800)-mean(d,400,800);}
+ const blend=ms=>{const r=room(ms);if(!useFdw)return r;const d=direct(ms),o_=new Float64Array(GCOUNT);
+  for(let g=0;g<GCOUNT;g++){const b=Math.max(0,Math.min(1,Math.log2(gridF(g)/350)));o_[g]=(1-b)*r[g]+b*(d[g]+off);}return o_;};
+ let L=null;
+ ways.forEach(w=>{
+  w.B=blend(w.ms);w.S=varSmooth(w.B);
+  const chk=meas.filter(m=>m.mac===mac&&!m.raw&&m.on&&m.way===w.ms[0].way);
+  w.chk=chk.length?varSmooth(blend(chk)):null;
+  w.lo=Math.max(...w.ms.map(m=>m.lo));w.hi=Math.min(micHi,...w.ms.map(m=>m.hi));
+  w.band=w.role==='sub'?[35,Math.min(90,lowHz*0.7)]:w.role==='woofer'?[150,Math.min(1500,fc*0.5)]:w.role==='tweeter'?[Math.max(fc*1.5,2000),Math.min(8000,w.hi)]:[200,2000];
+ });
+ /* One target for the speaker: its level from the woofer (or the only way). */
+ const lead=ways[0],rel=new Float64Array(GCOUNT);
+ for(let g=0;g<GCOUNT;g++)rel[g]=tgt(0,gridF(g));
+ L=mean(lead.S,...lead.band)-mean(rel,...lead.band);
+ ways.forEach(w=>{
+  /* With bi-amp each driver's target is the speaker's through the ideal
+   * crossover (the speaker's own sections): the correction keeps its slopes
+   * and fixes only the driver and the room. */
+  const xo=new Float64Array(GCOUNT);
+  if(w.role==='woofer'||w.role==='tweeter'){const t=w.role==='woofer'?'LP':'HP';
+   xsecs.forEach(q=>{const k=bq(t,fc,0,q);for(let g=0;g<GCOUNT;g++)xo[g]+=magDb(k,g);});}
+  /* The subwoofer through the Gateway's crossover: LR4, two Butterworth
+   * sections (audio_lowpass.h). */
+  if(w.role==='sub'&&lowpass){const k=bq('LP',lowpass,0,Math.SQRT1_2);for(let g=0;g<GCOUNT;g++)xo[g]+=2*magDb(k,g);}
+  w.xo=xo;w.T=new Float64Array(GCOUNT);for(let g=0;g<GCOUNT;g++)w.T[g]=tgt(L,gridF(g))+xo[g];
+  /* Where the crossover leaves the driver within 10 dB of full level. */
+  let x10lo=0,x10hi=GCOUNT-1;
+  if(w.role==='woofer'||w.role==='sub')while(x10hi>0&&xo[x10hi]<-10)x10hi--;
+  if(w.role==='tweeter')while(x10lo<GCOUNT-1&&xo[x10lo]<-10)x10lo++;
+  /* The tweeter's level: what it needs to meet the target (its preamp). */
+  w.level=w.role==='tweeter'?mean(w.T,...w.band)-mean(w.S,...w.band):0;
+  const Tl=w.T.map(v=>v-w.level);
+  let lo=w.lo,hi=w.hi;
+  if(w.role==='woofer'||w.role==='sub')hi=Math.min(hi,gridF(x10hi));
+  if(w.role==='tweeter')lo=Math.max(lo,gridF(x10lo));
+  if(w.role==='sub')hi=Math.min(hi,300);
+  [lo,hi]=playRange(w.S,Tl,w.band[0],w.band[1],lo,hi);
+  w.range=[lo,Math.min(hi,o.upto)];
+  const now=eq[(w.out===1?'right':'left')+'_filters']||[];
+  w.keep=(w.out<0?(eq.left_filters||[]):now).filter(f=>f.enabled&&(f.type==='HP'||f.type==='LP'));
+  const fit=fitFilters(w.S,Tl,w.range[0],w.range[1],o,Math.min(10,24-w.keep.length));
+  w.filters=fit.filters;w.F=fit.F;
+  w.boost=0;for(let g=gi(w.lo);g<=gi(w.hi);g++)w.boost=Math.max(w.boost,w.F[g]);
+ });
+ /* Headroom: no output above 0 dB, the tweeter/woofer balance kept. */
+ const X=Math.max(0,...ways.map(w=>w.level+w.boost));
+ ways.forEach(w=>{w.preamp=Math.max(-24,Math.round((w.level-X)*10)/10);});
+ /* The expected curve smoothed like a measurement: the filters before the
+  * smoothing, as the speaker applies them. */
+ ways.forEach(w=>{const kept=w.keep.map(f=>bq(f.type,f.frequency_hz,f.gain_db,f.q)),v=new Float64Array(GCOUNT);
+  for(let g=0;g<GCOUNT;g++){let k=0;kept.forEach(q=>k+=magDb(q,g));v[g]=w.B[g]+w.F[g]+w.preamp+k;}w.P=varSmooth(v);});
+ cur={mac,eq,ways,biamp,o,X,n:use.length,pos:[...new Set(use.map(m=>m.pos))].sort()};
+ msg.className='msg ok';msg.textContent='From '+use.length+' measurement'+(use.length>1?'s':'')+', position'+(cur.pos.length>1?'s ':' ')+cur.pos.join(', ')+'.';
+ showCorrection();
+}
+const WAYCOL={woofer:'#ff3d7f',tweeter:'#8b7bff',full:'#3bc9ff',sub:'#f5a524'};
+function showCorrection(){
+ const c=cur;document.getElementById('c-out').style.display='';
+ const series=[];
+ c.ways.forEach(w=>{
+  const meas_=[],tgt=[],pred=[],chk=[];
+  for(let g=0;g<GCOUNT;g++){const f=gridF(g);if(f<w.lo||f>w.hi||w.xo[g]<-30)continue;
+   /* As played: the preamps (headroom, tweeter level) included. */
+   meas_.push([f,w.S[g]]);pred.push([f,w.P[g]]);
+   if(w.chk)chk.push([f,w.chk[g]]);
+   if(f>=w.range[0]&&f<=w.range[1])tgt.push([f,w.T[g]-c.X]);}
+  series.push({pts:meas_,color:WAYCOL[w.role],width:1.2,op:0.45},{pts:tgt,color:'#ffffff',width:1.2,dash:'6 5',op:0.7},{pts:pred,color:WAYCOL[w.role],width:2.2,op:1});
+  if(w.chk)series.push({pts:chk,color:'#ffffff',width:1.6,dash:'2 3',op:0.95});
+ });
+ drawSeries('c-graph',series);
+ document.getElementById('c-keys').innerHTML="<span><i style='border-color:rgba(255,255,255,.45)'></i>measured (average)</span><span><i style='border-color:#fff;border-top-style:dashed'></i>target, where it corrects</span><span><i style='border-color:#fff;border-top-width:3px'></i>expected with the correction</span>"+
+  (c.ways.some(w=>w.chk)?"<span><i style='border-color:#fff;border-top-style:dotted'></i>measured with its EQ on</span>":'');
+ const name=w=>w.role==='woofer'?'Woofer':w.role==='tweeter'?'Tweeter':w.role==='sub'?'Subwoofer':'Full range';
+ const outName=w=>w.out===0?'left output':w.out===1?'right output':'both outputs';
+ document.getElementById('c-list').innerHTML=c.ways.map(w=>{
+  const r=w.range[1]>w.range[0]*1.2?'corrects '+Math.round(w.range[0])+'–'+(w.range[1]>=1000?(w.range[1]/1000).toFixed(1)+' kHz':Math.round(w.range[1])+' Hz'):'nothing in range to correct';
+  return "<div class='out'><h3>"+name(w)+"<small>"+outName(w)+" &middot; level "+(w.preamp>0?'+':'')+w.preamp.toFixed(1)+" dB &middot; "+r+"</small></h3><div class='chips'>"+
+   (w.filters.length?w.filters.map(f=>"<span class='chip "+(f.g<0?'cut':'boost')+"'>"+(f.f>=1000?(f.f/1000).toFixed(2)+' kHz':f.f.toFixed(0)+' Hz')+" &middot; "+(f.g>0?'+':'')+f.g.toFixed(1)+" dB &middot; Q "+f.q.toFixed(2)+"</span>").join(''):"<span class='chip'>no filters needed</span>")+
+   w.keep.map(f=>"<span class='chip keep'>keeps "+f.type+' '+Math.round(f.frequency_hz)+" Hz</span>").join('')+"</div></div>";}).join('');
+}
+function drawSeries(id,series){
+ const svg=document.getElementById(id);let top=-1e9;series.forEach(s=>s.pts.forEach(p=>{if(p[1]>top)top=p[1];}));
+ top=top>-1e8?Math.ceil((top+3)/10)*10:0;const span=40,bot=top-span,fy=d=>Y0+(Y1-Y0)*(top-Math.max(bot,Math.min(top,d)))/span;
+ let h='';
+ [20,50,100,200,500,1000,2000,5000,10000,20000].forEach(f=>{h+="<line x1='"+fx(f)+"' x2='"+fx(f)+"' y1='"+Y0+"' y2='"+Y1+"' stroke='rgba(255,255,255,.1)'/><text x='"+fx(f)+"' y='"+(Y1+20)+"' text-anchor='middle'>"+(f>=1000?f/1000+'k':f)+"</text>";});
+ for(let d=top;d>=bot;d-=5){h+="<line x1='"+X0+"' x2='"+X1+"' y1='"+fy(d)+"' y2='"+fy(d)+"' stroke='rgba(255,255,255,"+(d%10?.03:.07)+")'/>"+(d%10?'':"<text x='"+(X0-8)+"' y='"+(fy(d)+4)+"' text-anchor='end'>"+d+"</text>");}
+ series.forEach(s=>{if(s.pts.length<2)return;h+="<polyline fill='none' stroke='"+s.color+"' stroke-opacity='"+s.op+"' stroke-width='"+s.width+"'"+(s.dash?" stroke-dasharray='"+s.dash+"'":'')+" stroke-linejoin='round' points='"+s.pts.map(p=>fx(p[0]).toFixed(1)+','+fy(p[1]).toFixed(1)).join(' ')+"'/>";});
+ h+="<text x='"+X0+"' y='"+(Y0+12)+"' dx='6'>dB</text>";svg.innerHTML=h;
+}
+async function applyCorrection(action){
+ const c=cur,m=document.getElementById('c-amsg');if(!c)return;
+ if(action==='both'&&!confirm('Save this correction on the speaker? It replaces the EQ bands and levels of its outputs (their high- and low-pass bands stay).'))return;
+ const pk=w=>w.keep.map(f=>({enabled:true,type:f.type,frequency_hz:f.frequency_hz,gain_db:f.gain_db,q:f.q})).concat(w.filters.map(f=>({enabled:true,type:'PK',frequency_hz:f.f,gain_db:f.g,q:f.q})));
+ const e=c.eq,body={enabled:true,channel_mode:e.channel_mode||'stereo',left_preamp_db:e.left_preamp_db||0,right_preamp_db:e.right_preamp_db||0,left_filters:e.left_filters||[],right_filters:e.right_filters||[]};
+ c.ways.forEach(w=>{
+  const outs=w.out<0?['left','right']:[w.out===0?'left':'right'];
+  outs.forEach(s=>{body[s+'_filters']=pk(w);body[s+'_preamp_db']=w.preamp;});
+ });
+ m.className='msg';m.textContent='Sending…';
+ try{await speakerEq(c.mac,action,body);m.className='msg ok';m.textContent=action==='both'?'Applied and saved on the speaker.':'Applied (not saved: a restart brings back the saved EQ).';}
+ catch(err){m.className='msg err';m.textContent='Not applied: '+err.message;}
+}
+document.getElementById('c-calc').onclick=calculate;
+['c-tilt','c-bass','c-boost'].forEach(id=>document.getElementById(id).onchange=()=>{if(cur)calculate();});
+document.getElementById('c-spk').onchange=()=>{cur=null;document.getElementById('c-out').style.display='none';document.getElementById('c-msg').textContent='';};
+document.getElementById('c-apply').onclick=()=>applyCorrection('apply');
+document.getElementById('c-save').onclick=()=>applyCorrection('both');
+load();render();loadSpeakers();poll();setInterval(loadSpeakers,15000);
+</script></body></html>

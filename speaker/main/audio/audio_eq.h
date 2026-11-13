@@ -121,6 +121,13 @@ void audio_eq_process(float *pcm, size_t frames, int channels,
  * calculates nor logs there. */
 void audio_eq_prepare(int sample_rate);
 
+/* The room measurement's path instead of audio_eq_process(): none of the
+ * user's filters, preamp, polarity or delay, so the measurement shows the
+ * drivers in the room. With bi-amp the crossover stays (the tweeter never
+ * gets the full range), from the same filter state as audio_eq_process(). */
+void audio_eq_process_raw(float *pcm, size_t frames, int channels,
+                          int sample_rate);
+
 /* Clear biquad delay state only at a real output-chain boundary (new stream/
  * session or play stop). A normal AAC timestamp gap or codec-chain switch is
  * recovered by decoding/muting the first discontinuous block, so the EQ chain

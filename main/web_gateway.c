@@ -8,9 +8,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "airplay_log.h"
 #include "cJSON.h"
+#include "esp_http_client.h"
 #include "esp_http_server.h"
+#include "cal_chirp.h"
 #include "gw_calib.h"
+#include "gw_mic.h"
 #include "gw_fw.h"
 #include "gw_radio.h"
 #include "gw_speakers.h"
@@ -20,9 +24,15 @@
 
 extern const uint8_t web_speakers_start[] asm("_binary_web_speakers_html_start");
 extern const uint8_t web_speakers_end[] asm("_binary_web_speakers_html_end");
+extern const uint8_t web_roomeq_start[] asm("_binary_web_roomeq_html_start");
+extern const uint8_t web_roomeq_end[] asm("_binary_web_roomeq_html_end");
 
 static esp_err_t speakers_page_handler(httpd_req_t *req) {
   return web_serve_page(req, web_speakers_start, web_speakers_end);
+}
+
+static esp_err_t roomeq_page_handler(httpd_req_t *req) {
+  return web_serve_page(req, web_roomeq_start, web_roomeq_end);
 }
 /* ---- Gateway: the Surround speakers and their own settings ---- */
 static esp_err_t speakers_get_handler(httpd_req_t *req) {
@@ -240,6 +250,85 @@ static const char *cal_state_name(gw_cal_state_t st) {
   }
 }
 
+static void mac_str(const uint8_t m[6], char out[18]) {
+  snprintf(out, 18, "%02x:%02x:%02x:%02x:%02x:%02x", m[0], m[1], m[2], m[3], m[4], m[5]);
+}
+
+/* What the Room EQ page needs to deconvolve the recording: the sweep's
+ * definition (cal_chirp.h) and where each one starts in it. */
+static void add_sweep_json(cJSON *r, const gw_cal_sweep_t *sw) {
+  cJSON *j = cJSON_AddObjectToObject(r, "sweep");
+  if (!j) return;
+  char mac[18];
+  mac_str(sw->mac, mac);
+  cal_sweep_def_t d = {0};
+  (void)cal_sweep_def((cal_chirp_kind_t)sw->kind, &d);
+  cJSON_AddNumberToObject(j, "id", sw->id);
+  cJSON_AddStringToObject(j, "mac", mac);
+  cJSON_AddStringToObject(j, "name", sw->name);
+  cJSON_AddNumberToObject(j, "channel", sw->channel);
+  cJSON_AddStringToObject(j, "kind", cal_chirp_name((cal_chirp_kind_t)sw->kind));
+  cJSON_AddBoolToObject(j, "raw", sw->raw);
+  cJSON_AddNumberToObject(j, "level_db", sw->level_db);
+  cJSON_AddNumberToObject(j, "rate", GW_MIC_RATE_HZ);
+  cJSON_AddNumberToObject(j, "count", sw->count);
+  cJSON_AddNumberToObject(j, "scale", sw->scale);
+  cJSON_AddNumberToObject(j, "peak_dbfs", roundf(sw->peak_dbfs * 10.0f) / 10.0f);
+  cJSON_AddNumberToObject(j, "f0_hz", d.f0_hz);
+  cJSON_AddNumberToObject(j, "f1_hz", d.f1_hz);
+  cJSON_AddNumberToObject(j, "length_s", d.length_s);
+  cJSON_AddNumberToObject(j, "fade_in_s", d.fade_in_s);
+  cJSON_AddNumberToObject(j, "fade_out_s", d.fade_out_s);
+  cJSON_AddNumberToObject(j, "period_s", cal_chirp_period_s((cal_chirp_kind_t)sw->kind));
+  cJSON *arr = cJSON_AddArrayToObject(j, "bursts");
+  for (int k = 0; arr && k < sw->n; ++k) {
+    cJSON *b = cJSON_CreateObject();
+    const uint8_t w = sw->way[k];
+    const bool tw = w & SURROUND_CAL_WAY_TWEETER, wf = w & SURROUND_CAL_WAY_WOOFER;
+    cJSON_AddNumberToObject(b, "start", round(sw->start[k] * 100.0) / 100.0);
+    cJSON_AddStringToObject(b, "way", tw && !wf ? "tweeter" : wf && !tw ? "woofer"
+                                                 : tw ? "both" : "full");
+    const bool l = w & SURROUND_CAL_WAY_LEFT, rr = w & SURROUND_CAL_WAY_RIGHT;
+    cJSON_AddStringToObject(b, "outputs", l && rr ? "both" : l ? "left" : rr ? "right" : "none");
+    cJSON_AddNumberToObject(b, "snr_db", roundf(sw->snr_db[k] * 10.0f) / 10.0f);
+    cJSON_AddItemToArray(arr, b);
+  }
+}
+
+/* The sweep recording as 16-bit PCM (little endian, mono, `rate`), scaled
+ * by `scale` (its peak just under full scale). */
+static esp_err_t calibration_sweep_handler(httpd_req_t *req) {
+  char q[32], v[16];
+  uint32_t id = 0;
+  if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK &&
+      httpd_query_key_value(q, "id", v, sizeof(v)) == ESP_OK) {
+    id = (uint32_t)strtoul(v, NULL, 10);
+  }
+  const float *x = NULL;
+  gw_cal_sweep_t sw;
+  if (!gw_calib_sweep_samples(id, &x, &sw)) {
+    httpd_resp_set_status(req, "409 Conflict");
+    return httpd_resp_sendstr(req, "No such sweep recording");
+  }
+  httpd_resp_set_type(req, "application/octet-stream");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  int16_t buf[1024];
+  for (uint32_t i = 0; i < sw.count;) {
+    const uint32_t m = sw.count - i < 1024U ? sw.count - i : 1024U;
+    for (uint32_t k = 0; k < m; ++k) {
+      float f = x[i + k] * sw.scale * 32767.0f;
+      if (f > 32767.0f) f = 32767.0f;
+      if (f < -32768.0f) f = -32768.0f;
+      buf[k] = (int16_t)lrintf(f);
+    }
+    if (httpd_resp_send_chunk(req, (const char *)buf, (ssize_t)(m * sizeof(int16_t))) != ESP_OK) {
+      return ESP_FAIL;
+    }
+    i += m;
+  }
+  return httpd_resp_send_chunk(req, NULL, 0);
+}
+
 static esp_err_t calibration_get_handler(httpd_req_t *req) {
   static gw_cal_status_t st; /* httpd task only */
   gw_calib_get(&st);
@@ -257,6 +346,8 @@ static esp_err_t calibration_get_handler(httpd_req_t *req) {
     cJSON_AddNumberToObject(r, "noise_dbfs", roundf(st.noise_dbfs * 10.0f) / 10.0f);
     cJSON_AddNumberToObject(r, "peak_dbfs", roundf(st.peak_dbfs * 10.0f) / 10.0f);
   }
+  if (st.sweep_run) cJSON_AddBoolToObject(r, "sweep_run", true);
+  if (st.sweep_run && st.sweep.valid) add_sweep_json(r, &st.sweep);
   cJSON *arr = cJSON_AddArrayToObject(r, "speakers");
   for (int i = 0; arr && i < st.count; ++i) {
     const gw_cal_speaker_t *o = &st.spk[i];
@@ -292,7 +383,7 @@ static esp_err_t calibration_get_handler(httpd_req_t *req) {
 
 static esp_err_t calibration_post_handler(httpd_req_t *req) {
   if (!web_admin_ok(req)) return ESP_OK;
-  char b[64];
+  char b[160];
   if (web_recv_json(req, b, sizeof(b)) != ESP_OK) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid body");
     return ESP_FAIL;
@@ -307,6 +398,19 @@ static esp_err_t calibration_post_handler(httpd_req_t *req) {
     e = gw_calib_start(strcmp(action, "test") == 0);
     if (e == ESP_ERR_NOT_SUPPORTED) error = "built without the calibration microphone";
     else if (e == ESP_ERR_INVALID_STATE) error = "a measurement is already running";
+  } else if (strcmp(action, "sweep") == 0) {
+    const cJSON *m = cJSON_GetObjectItem(j, "mac");
+    const cJSON *raw = cJSON_GetObjectItem(j, "raw");
+    const cJSON *per_way = cJSON_GetObjectItem(j, "per_way");
+    uint8_t mac[6];
+    if (!cJSON_IsString(m) || !parse_mac(m->valuestring, mac)) {
+      error = "mac: the speaker's MAC";
+    } else {
+      e = gw_calib_sweep_start(mac, !cJSON_IsFalse(raw), !cJSON_IsFalse(per_way));
+      if (e == ESP_ERR_NOT_SUPPORTED) error = "built without the calibration microphone";
+      else if (e == ESP_ERR_INVALID_STATE) error = "a measurement is already running";
+      else if (e == ESP_ERR_NOT_FOUND) error = "the speaker is not connected";
+    }
   } else if (strcmp(action, "apply") == 0) {
     e = gw_calib_apply(&applied);
     if (e == ESP_ERR_INVALID_STATE) error = "no results to apply";
@@ -315,7 +419,7 @@ static esp_err_t calibration_post_handler(httpd_req_t *req) {
     gw_calib_discard();
     e = ESP_OK;
   } else {
-    error = "action: test, start, apply or discard";
+    error = "action: test, start, sweep, apply or discard";
   }
   if (j) cJSON_Delete(j);
   cJSON *r = cJSON_CreateObject();
@@ -324,6 +428,118 @@ static esp_err_t calibration_post_handler(httpd_req_t *req) {
   if (applied) cJSON_AddNumberToObject(r, "applied", applied);
   web_send_json(req, r);
   return ESP_OK;
+}
+
+/* ---- A speaker's own EQ through the Gateway (the Room EQ page) ----
+ * POST /api/speakers/eq?mac=..&action=get|apply|both: get reads the
+ * speaker's GET /api/eq, apply and both send the body to its POST /api/eq
+ * (apply: now, not saved; both: now and saved). The answer is the speaker's,
+ * passed through; the browser's Authorization goes along (the same admin
+ * password on every board of one build). */
+#define SPK_EQ_BODY_MAX 16384
+
+static esp_err_t speaker_eq_handler(httpd_req_t *req) {
+  if (!web_admin_ok(req)) return ESP_OK;
+  char q[96], mac_s[40] = "", action[8] = "get";
+  if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK) {
+    (void)httpd_query_key_value(q, "mac", mac_s, sizeof(mac_s));
+    (void)httpd_query_key_value(q, "action", action, sizeof(action));
+  }
+  /* The query is not URL-decoded: a ':' may come as %3A. */
+  for (char *r = mac_s, *w = mac_s;; ++r, ++w) {
+    if (r[0] == '%' && r[1] == '3' && (r[2] == 'A' || r[2] == 'a')) {
+      *w = ':';
+      r += 2;
+    } else {
+      *w = *r;
+    }
+    if (!*r) break;
+  }
+  uint8_t mac[6];
+  const bool get = strcmp(action, "get") == 0;
+  if (!parse_mac(mac_s, mac) ||
+      (!get && strcmp(action, "apply") != 0 && strcmp(action, "both") != 0)) {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "mac and action: get, apply or both");
+    return ESP_FAIL;
+  }
+  gw_speaker_info_t *list = malloc(sizeof(gw_speaker_info_t) * SURROUND_MAX_SPEAKERS);
+  char ip[16] = "";
+  const size_t n = list ? gw_speakers_list(list) : 0U;
+  for (size_t i = 0; i < n && !ip[0]; ++i) {
+    if (memcmp(list[i].mac, mac, 6) == 0) strlcpy(ip, list[i].ip, sizeof(ip));
+  }
+  free(list);
+  if (!ip[0]) {
+    httpd_resp_set_status(req, "404 Not Found");
+    return httpd_resp_sendstr(req, "The speaker is not connected");
+  }
+  if (!get && (req->content_len <= 0 || req->content_len > SPK_EQ_BODY_MAX)) {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid EQ body");
+    return ESP_FAIL;
+  }
+  char *buf = malloc(SPK_EQ_BODY_MAX + 1);
+  if (!buf) {
+    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+    return ESP_ERR_NO_MEM;
+  }
+  int len = 0;
+  if (!get) {
+    while (len < (int)req->content_len) {
+      const int r = httpd_req_recv(req, buf + len, req->content_len - len);
+      if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;
+      if (r <= 0) {
+        free(buf);
+        return ESP_FAIL;
+      }
+      len += r;
+    }
+  }
+  char auth[160] = "";
+  const size_t alen = httpd_req_get_hdr_value_len(req, "Authorization");
+  if (alen > 0 && alen < sizeof(auth)) {
+    (void)httpd_req_get_hdr_value_str(req, "Authorization", auth, sizeof(auth));
+  }
+  char url[64];
+  snprintf(url, sizeof(url), "http://%s/api/eq%s%s", ip, get ? "" : "?action=", get ? "" : action);
+  const esp_http_client_config_t cfg = {
+      .url = url,
+      .method = get ? HTTP_METHOD_GET : HTTP_METHOD_POST,
+      .timeout_ms = 5000,
+      .disable_auto_redirect = true,
+  };
+  esp_http_client_handle_t c = esp_http_client_init(&cfg);
+  esp_err_t err = c ? ESP_OK : ESP_ERR_NO_MEM;
+  int status = 0, got = 0;
+  if (err == ESP_OK) {
+    if (!get) esp_http_client_set_header(c, "Content-Type", "application/json");
+    if (auth[0]) esp_http_client_set_header(c, "Authorization", auth);
+    err = esp_http_client_open(c, get ? 0 : len);
+  }
+  if (err == ESP_OK && !get && esp_http_client_write(c, buf, len) != len) err = ESP_FAIL;
+  if (err == ESP_OK && esp_http_client_fetch_headers(c) < 0) err = ESP_FAIL;
+  if (err == ESP_OK) {
+    status = esp_http_client_get_status_code(c);
+    while (got < SPK_EQ_BODY_MAX) {
+      const int r = esp_http_client_read(c, buf + got, SPK_EQ_BODY_MAX - got);
+      if (r <= 0) break;
+      got += r;
+    }
+  }
+  if (c) esp_http_client_cleanup(c);
+  if (err != ESP_OK) {
+    free(buf);
+    AP_LOGW("web_gateway", "EQ of %s: %s", ip, esp_err_to_name(err));
+    httpd_resp_set_status(req, "502 Bad Gateway");
+    return httpd_resp_sendstr(req, "The speaker did not answer");
+  }
+  char st[40];
+  snprintf(st, sizeof(st), "%d %s", status, status == 200 ? "OK" : "Speaker");
+  httpd_resp_set_status(req, st);
+  httpd_resp_set_type(req, status == 200 ? "application/json" : "text/plain");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  const esp_err_t send = httpd_resp_send(req, buf, got);
+  free(buf);
+  return send;
 }
 
 const char *web_role_name(void) { return "gateway"; }
@@ -390,6 +606,9 @@ void web_role_register(httpd_handle_t server) {
   REG("/api/audio/remote", HTTP_POST, remote_post_handler);
   REG("/api/calibration", HTTP_GET, calibration_get_handler);
   REG("/api/calibration", HTTP_POST, calibration_post_handler);
+  REG("/api/calibration/sweep", HTTP_GET, calibration_sweep_handler);
+  REG("/roomeq", HTTP_GET, roomeq_page_handler);
+  REG("/api/speakers/eq", HTTP_POST, speaker_eq_handler);
   REG("/api/speakers/firmware", HTTP_GET, speaker_fw_get_handler);
   REG("/api/speakers/firmware", HTTP_POST, speaker_fw_post_handler);
   REG(SURROUND_FW_PATH, HTTP_GET, speaker_fw_bin_handler);

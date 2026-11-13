@@ -41,6 +41,7 @@
 #include "latency_cal.h"
 #include "cal_playback.h"
 #include "cal_chirp.h"
+#include "surround_proto.h"
 #include "settings.h"
 #include "amp_control.h"
 #include "airplay_log.h"
@@ -3087,13 +3088,15 @@ static void roomcal_take(const audio_playout_completion_t *d, uint32_t rate,
 }
 
 static esp_err_t roomcal_play(cal_chirp_kind_t kind, float gain, int bursts,
-                              float *block, int64_t *emit_us, int *n_emit) {
+                              bool raw, const uint8_t *way, float *block,
+                              int64_t *emit_us, int *n_emit) {
   const uint32_t rate = audio_playout_get_rate();
   const uint32_t frames = AUDIO_PLAYOUT_FRAMES;
   const uint32_t period_blocks = (uint32_t)ceil(cal_chirp_period_s(kind) * rate / frames);
   const uint32_t chirp_blocks = (uint32_t)ceil(cal_chirp_length_s(kind) * rate / frames);
   const uint32_t total = ROOMCAL_LEAD_BLOCKS + (uint32_t)bursts * period_blocks +
                          ROOMCAL_TAIL_BLOCKS;
+  const bool sweep = cal_chirp_is_sweep(kind);
   *n_emit = 0;
 
   if (!playout_flush_checked("room-cal")) return ESP_FAIL;
@@ -3109,21 +3112,35 @@ static esp_err_t roomcal_play(cal_chirp_kind_t kind, float gain, int bursts,
   audio_playout_completion_t d;
   for (uint32_t idx = AUDIO_PLAYOUT_DMA_BLOCKS; idx < total; ++idx) {
     const uint32_t rel = idx - ROOMCAL_LEAD_BLOCKS;
-    const uint32_t burst = rel / period_blocks;
+    const uint32_t burst = idx >= ROOMCAL_LEAD_BLOCKS ? rel / period_blocks : 0U;
     const uint32_t off = rel % period_blocks;
     const bool chirp = idx >= ROOMCAL_LEAD_BLOCKS && burst < (uint32_t)bursts &&
                        off < chirp_blocks;
-    for (uint32_t f = 0; f < frames; ++f) {
-      const float v =
-          chirp ? gain * cal_chirp_value(kind, (double)(off * frames + f) / rate) : 0.0f;
-      block[2U * f] = v;
-      block[2U * f + 1U] = v;
+    if (!chirp) {
+      memset(block, 0, (size_t)frames * 2U * sizeof(float));
+    } else if (sweep) {
+      cal_sweep_fill(kind, off * frames, rate, gain, block, frames, 2U);
+      for (uint32_t f = 0; f < frames; ++f) block[2U * f + 1U] = block[2U * f];
+    } else {
+      for (uint32_t f = 0; f < frames; ++f) {
+        const float v = gain * cal_chirp_value(kind, (double)(off * frames + f) / rate);
+        block[2U * f] = v;
+        block[2U * f + 1U] = v;
+      }
     }
     /* Silence too, so the filters ring out naturally after each chirp. The
      * subwoofer's crossover is in the path, so its delay is measured. */
     lfe_lowpass_apply(block, frames, (int)rate);
-    audio_eq_process(block, frames, 2, (int)rate);
-    const uint32_t muted = sound_engine_get_output_mute_mask();
+    if (raw) {
+      audio_eq_process_raw(block, frames, 2, (int)rate);
+    } else {
+      audio_eq_process(block, frames, 2, (int)rate);
+    }
+    /* The outputs this burst does not use stay silent from its start to the
+     * next one's (its echoes and the filters' ringing included). */
+    const uint32_t b = burst < (uint32_t)bursts ? burst : (uint32_t)bursts - 1U;
+    const uint32_t muted = sound_engine_get_output_mute_mask() |
+                           (~(uint32_t)way[b] & (SURROUND_CAL_WAY_LEFT | SURROUND_CAL_WAY_RIGHT));
     for (uint32_t f = 0; muted && f < frames; ++f) {
       if (muted & 1U) block[2U * f] = 0.0f;
       if (muted & 2U) block[2U * f + 1U] = 0.0f;
@@ -3150,9 +3167,32 @@ static esp_err_t roomcal_play(cal_chirp_kind_t kind, float gain, int bursts,
   return *n_emit == bursts ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
+/* What each burst plays: both outputs, or with PER_WAY and bi-amp outputs
+ * one sweep per driver, the tweeter first; never for the subwoofer's sweep
+ * (a subwoofer plays mono). Returns the burst count. */
+static int roomcal_ways(cal_chirp_kind_t kind, int bursts, uint8_t flags,
+                        uint8_t *way) {
+  const uint8_t both = SURROUND_CAL_WAY_LEFT | SURROUND_CAL_WAY_RIGHT;
+  const int tweeter = audio_eq_tweeter_output();
+  if (tweeter >= 0 && cal_chirp_is_sweep(kind) && !cal_chirp_is_low(kind) &&
+      (flags & SURROUND_CAL_PER_WAY)) {
+    const uint8_t tw = tweeter ? SURROUND_CAL_WAY_RIGHT : SURROUND_CAL_WAY_LEFT;
+    way[0] = tw | SURROUND_CAL_WAY_TWEETER;
+    way[1] = (uint8_t)(both & ~tw) | SURROUND_CAL_WAY_WOOFER;
+    return 2;
+  }
+  const uint8_t all = tweeter >= 0
+                          ? both | SURROUND_CAL_WAY_TWEETER | SURROUND_CAL_WAY_WOOFER
+                          : both;
+  for (int i = 0; i < bursts; ++i) way[i] = all;
+  return bursts;
+}
+
 esp_err_t sound_engine_play_cal_chirps(int kind, int level_db, int bursts,
-                                         int64_t *emit_us, int *n_emit) {
-  if (!emit_us || !n_emit || bursts < 1) return ESP_ERR_INVALID_ARG;
+                                       uint8_t flags, int64_t *emit_us,
+                                       uint8_t *way, int *n_emit) {
+  if (!emit_us || !way || !n_emit || bursts < 1) return ESP_ERR_INVALID_ARG;
+  if (bursts > SURROUND_CAL_BURSTS_MAX) bursts = SURROUND_CAL_BURSTS_MAX;
   *n_emit = 0;
   if (__atomic_load_n(&s.rx_running, __ATOMIC_ACQUIRE) ||
       realtime_receiver_is_running()) {
@@ -3163,24 +3203,26 @@ esp_err_t sound_engine_play_cal_chirps(int kind, int level_db, int bursts,
   }
   if (level_db > 0) level_db = 0;
   if (level_db < -60) level_db = -60;
+  const cal_chirp_kind_t k = cal_chirp_kind(kind);
+  const bool raw = (flags & SURROUND_CAL_RAW) != 0U;
+  bursts = roomcal_ways(k, bursts, flags, way);
   float *block = malloc(AUDIO_PLAYOUT_FRAMES * 2U * sizeof(float));
   esp_err_t err = block ? sound_engine_release_for_wifi_scan() : ESP_ERR_NO_MEM;
   if (err == ESP_OK) err = audio_playout_init();
   if (err == ESP_OK) {
     amp_control_session_connected();
     vTaskDelay(pdMS_TO_TICKS(400)); /* amplifier start-up / anti-pop time */
-    err = roomcal_play(kind == CAL_CHIRP_LOW ? CAL_CHIRP_LOW : CAL_CHIRP_WIDE,
-                       powf(10.0f, (float)level_db / 20.0f), bursts, block,
-                       emit_us, n_emit);
+    err = roomcal_play(k, powf(10.0f, (float)level_db / 20.0f), bursts, raw, way,
+                       block, emit_us, n_emit);
     amp_control_session_disconnected();
   }
   free(block);
   /* Whatever happened, the engine is needed for the next stream. */
   const esp_err_t init_err = sound_engine_init();
   __atomic_store_n(&s_roomcal_busy, false, __ATOMIC_RELEASE);
-  AP_LOGI(TAG, "ROOM CAL %s chirps at %d dBFS: %s, %d emitted",
-          kind == CAL_CHIRP_LOW ? "low" : "wide", level_db, esp_err_to_name(err),
-          *n_emit);
+  AP_LOGI(TAG, "ROOM CAL %s at %d dBFS%s, %d x 0x%02x: %s, %d emitted",
+          cal_chirp_name(k), level_db, raw ? " without EQ" : "", bursts,
+          (unsigned)way[0], esp_err_to_name(err), *n_emit);
   return err != ESP_OK ? err : init_err;
 }
 
