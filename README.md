@@ -116,6 +116,12 @@ Click an image to open it full size.
       <br><sub>One tile per speaker: role, level, delay and live sync</sub>
     </td>
   </tr>
+  <tr>
+    <td align="center" colspan="2">
+      <a href="images/roomeq-page.png"><img src="images/roomeq-page.png" alt="Room EQ page: measured response of a 2-way speaker, its target and the expected result, with the filters for the woofer and the tweeter" width="100%"></a>
+      <br><sub><b>Room EQ:</b> a 2-way speaker measured with the Gateway's microphone, and the filters that correct its woofer and tweeter (<a href="#room-eq">more</a>)</sub>
+    </td>
+  </tr>
 </table>
 
 ## Apple Home (HomeKit)
@@ -664,6 +670,33 @@ chirps one after another (so you hear that each one works), and the panel
 says nothing was measured.
 
 <a href="images/speakers-page-calibration.png"><img src="images/speakers-page-calibration.png" alt="Room calibration panel after a run without a microphone: every speaker played its chirps, nothing measured" width="100%"></a>
+
+### Room EQ
+
+**Room EQ** (`/roomeq` on the Gateway, the button on the speakers page)
+uses the same microphone to measure one speaker's **frequency response**
+and correct it with the speaker's EQ:
+
+- The speaker plays a 2.5 s sweep (30 Hz–21 kHz, the subwoofer
+  15–400 Hz), at −30 dBFS first and louder until it is clear of the room
+  noise. Several microphone positions are averaged.
+- The browser computes the response: below 500 Hz the room as you hear it
+  at the seat, above it mostly the speaker's own sound.
+- It fits **peaking filters** towards a target, from where the speaker
+  plays up to the microphone's limit (16 kHz for the INMP441), a
+  subwoofer up to 300 Hz. With a **bi-amp** speaker each driver (woofer,
+  tweeter) gets its own filters through its crossover, and the tweeter's
+  level is matched to the woofer's.
+- The chart shows the measurement, the target and the expected result.
+  **Apply** sends the filters to the speaker now, **Apply & Save** also
+  keeps them after a restart. They replace the EQ bands and levels of its
+  outputs; the high- and low-pass bands, crossover, polarity and delay
+  stay as they are.
+- To check, measure again with **Speaker EQ** on: the chart shows it next
+  to the expected result. Afterwards run **Calibrate** on the speakers
+  page, as the correction changes the speaker's level.
+
+<a href="images/roomeq-page.png"><img src="images/roomeq-page.png" alt="Room EQ page: measured response of a 2-way speaker, its target and the expected result, with the filters for the woofer and the tweeter" width="100%"></a>
 
 ### Other pages (every board)
 
