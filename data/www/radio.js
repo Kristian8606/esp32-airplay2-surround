@@ -1,7 +1,7 @@
 /* Web radio controls for the Speakers page (gw_radio.c serves this file).
- * Adds a Radio button to the header while nothing plays, a player bar above
- * the Room while the radio plays, and a Stations panel. While AirPlay plays
- * none of it shows. Station lists and search: Radio Browser
+ * Adds a Radio button to the header while the radio does not play, a player
+ * bar above the Room while it plays, and a Stations panel. A station started
+ * while AirPlay plays disconnects the AirPlay sender first. Station lists and search: Radio Browser
  * (radio-browser.info), straight from this browser; the country tab starts at
  * the browser's own country and names the countries in its language. The
  * Gateway keeps only the favourites and the volume. */
@@ -229,7 +229,7 @@ async function toggleFav(s) {
   show(tab);
 }
 async function play(s) {
-  setMsg('Starting ' + (s.name || s.url) + '…');
+  setMsg((cur && cur.airplay ? 'Stopping AirPlay, starting ' : 'Starting ') + (s.name || s.url) + '…');
   try {
     const d = await fetchJ('/api/radio/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: s.url, name: s.name || '', logo: s.logo || '' }) });
     render(d); close();
@@ -249,9 +249,10 @@ bStop.onclick = async () => { bStop.disabled = true; try { render(await fetchJ('
 
 /* ---- volume: live while dragging, kept on the Gateway ---- */
 let volT0 = 0, volTimer = null;
-const sendVol = () => fetch('/api/radio/volume?db=' + vol.value, { method: 'POST', cache: 'no-store' }).catch(() => {});
-vol.oninput = () => { dragging = true; volT.textContent = vol.value + ' dB'; const n = Date.now(); clearTimeout(volTimer); if (n - volT0 > 250) { volT0 = n; sendVol(); } else volTimer = setTimeout(sendVol, 250); };
-vol.onchange = () => { clearTimeout(volTimer); sendVol(); setTimeout(() => { dragging = false; }, 600); };
+/* live: still dragging, the Gateway only plays it; the last value it also saves. */
+const sendVol = (live) => fetch('/api/radio/volume?db=' + vol.value + (live ? '&live=1' : ''), { method: 'POST', cache: 'no-store' }).catch(() => {});
+vol.oninput = () => { dragging = true; volT.textContent = vol.value + ' dB'; const n = Date.now(); clearTimeout(volTimer); if (n - volT0 > 250) { volT0 = n; sendVol(true); } else volTimer = setTimeout(() => sendVol(true), 250); };
+vol.onchange = () => { clearTimeout(volTimer); sendVol(false); setTimeout(() => { dragging = false; }, 600); };
 
 /* ---- what the Gateway says ---- */
 const rate = r => r ? (r % 1000 ? (r / 1000).toFixed(1) : r / 1000) : '';
@@ -260,10 +261,10 @@ function render(d) {
   cur = d;
   const active = d.active || ['starting', 'playing', 'buffering', 'stopping'].includes(d.state);
   const air = !!d.airplay;
-  pill.style.display = !air && !active ? '' : 'none';
+  pill.style.display = !active ? '' : 'none';
   pill.classList.toggle('err', d.state === 'failed');
-  pill.title = d.state === 'failed' && d.message ? 'Last station: ' + d.message : 'Play web radio';
-  bar.style.display = active && !air ? '' : 'none';
+  pill.title = d.state === 'failed' && d.message ? 'Last station: ' + d.message : air ? 'Play web radio (AirPlay stops)' : 'Play web radio';
+  bar.style.display = active ? '' : 'none';
   if (!active) return;
   const name = d.name || hostOf(d.url);
   if (d.url !== lastUrl || bLogo.dataset.logo !== (d.logo || '')) { logoInto(bLogo, name, d.logo); bLogo.dataset.logo = d.logo || ''; lastUrl = d.url; }

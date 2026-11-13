@@ -30,8 +30,9 @@
 esp_err_t gw_radio_start(const char *url, const char *name, const char *logo,
                          int volume_db);
 
-/* The radio's volume (-60..0 dB), kept for the next start. */
-void gw_radio_set_volume(int volume_db);
+/* The radio's volume (-60..0 dB). save: also kept for the next start (NVS);
+ * false while a slider is still moving, so the flash is written once. */
+void gw_radio_set_volume(int volume_db, bool save);
 
 /* Stops the radio and waits until it let go of the speakers (at most a few
  * seconds). Nothing when it does not play. Not from the radio's own task. */

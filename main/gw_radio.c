@@ -946,13 +946,13 @@ static void save_volume(int db) {
 
 static int clamp_db(int db) { return db > 0 ? 0 : db < -60 ? -60 : db; }
 
-void gw_radio_set_volume(int volume_db) {
+void gw_radio_set_volume(int volume_db, bool save) {
   volume_db = clamp_db(volume_db);
   taskENTER_CRITICAL(&s_mux);
   s_st.volume_db = volume_db;
   taskEXIT_CRITICAL(&s_mux);
   if (atomic_load(&s_owns)) sound_engine_set_volume_q15(db_to_q15(volume_db));
-  save_volume(volume_db);
+  if (save) save_volume(volume_db);
 }
 
 esp_err_t gw_radio_start(const char *url, const char *name, const char *logo,
@@ -1084,12 +1084,16 @@ static esp_err_t stop_handler(httpd_req_t *req) {
 
 static esp_err_t volume_handler(httpd_req_t *req) {
   if (!web_admin_ok(req)) return ESP_OK;
-  char q[32], v[8];
+  char q[48], v[8], live[4];
   if (httpd_req_get_url_query_str(req, q, sizeof(q)) != ESP_OK ||
       httpd_query_key_value(q, "db", v, sizeof(v)) != ESP_OK) {
-    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Usage: POST /api/radio/volume?db=-30");
+    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                               "Usage: POST /api/radio/volume?db=-30[&live=1]");
   }
-  gw_radio_set_volume(atoi(v));
+  /* live=1: the slider is still moving; the last value comes without it. */
+  const bool moving = httpd_query_key_value(q, "live", live, sizeof(live)) == ESP_OK &&
+                      strcmp(live, "1") == 0;
+  gw_radio_set_volume(atoi(v), !moving);
   return send_status(req);
 }
 
