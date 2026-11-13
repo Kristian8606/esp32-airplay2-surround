@@ -55,6 +55,20 @@ system.
 > Features, defaults and wiring may still change, and this README is updated
 > with every change. See [Limitations](#limitations).
 
+> [!IMPORTANT]
+> **Soon: 16 MB flash modules (ESP32-S3 N16R8).** The 8 MB flash of the
+> N8R8 boards is nearly full. The Gateway keeps a copy of the speaker
+> firmware to update the speakers, and that copy has only about 117 KB of
+> room left. To add more features, the project will move to **N16R8**
+> boards (16 MB flash, 8 MB PSRAM). **If you buy boards now, buy N16R8.**
+> The move brings a new partition table, so every board is flashed once
+> over USB; after that, updates work over Wi-Fi as before.
+>
+> **Planned:**
+> - 💾 Music from a **USB drive** on the Gateway.
+> - 🔊 **USB sound card** support.
+> - 📺 **DLNA**: play to the system from DLNA / UPnP apps, not only AirPlay.
+
 ## Contents
 
 - [Gallery](#gallery)
