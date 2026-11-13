@@ -188,7 +188,15 @@ esp_err_t gw_mic_start(uint32_t max_seconds) {
 void gw_mic_stop(void) {
   if (!s_rx) return;
   s_running = false;
-  for (int i = 0; s_task && i < 50; ++i) vTaskDelay(pdMS_TO_TICKS(10));
+  /* The channel is deleted only once the reader is gone: deleting it under a
+   * read in progress frees the handle the read still uses. A read returns
+   * within its 100 ms timeout, so this wait ends. */
+  for (uint32_t waited_ms = 0; s_task; waited_ms += 10U) {
+    if (waited_ms > 0U && waited_ms % 1000U == 0U) {
+      ESP_LOGW(TAG, "reader still running after %u ms", (unsigned)waited_ms);
+    }
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
   i2s_channel_disable(s_rx);
   i2s_del_channel(s_rx);
   s_rx = NULL;
