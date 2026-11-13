@@ -517,12 +517,9 @@ const char *web_role_name(void) { return "speaker"; }
 
 /* Before the audio engine is released, the link to the Gateway drops, so no
  * forwarded call reaches the released engine; it reconnects afterwards. */
-esp_err_t web_role_source_stop(void) {
-  spk_link_suspend();
-  return ESP_OK;
-}
+esp_err_t web_role_source_stop(void) { return spk_link_suspend(); }
 
-bool web_role_source_idle(void) { return true; }
+bool web_role_source_idle(void) { return spk_link_idle(); }
 
 esp_err_t web_role_source_start(void) {
   spk_link_resume();

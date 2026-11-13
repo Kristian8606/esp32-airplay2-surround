@@ -14,8 +14,11 @@ esp_err_t spk_link_start(void);
 
 /* Web page (Wi-Fi scan, latency test): drop the link, stop the stream and
  * stay away until spk_link_resume(), so the audio engine can be released.
- * The speaker then reconnects and joins like a late speaker. */
-void spk_link_suspend(void);
+ * The speaker then reconnects and joins like a late speaker.
+ * ESP_ERR_TIMEOUT: the link task has not settled within 3 s yet. */
+esp_err_t spk_link_suspend(void);
+/* No link and no stream. */
+bool spk_link_idle(void);
 void spk_link_resume(void);
 
 /* A setting the Gateway shows (the role) changed on this speaker's own page:

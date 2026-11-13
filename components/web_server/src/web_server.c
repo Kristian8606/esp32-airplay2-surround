@@ -159,6 +159,19 @@ static esp_err_t ota_update_post(httpd_req_t *req) {
   if (err != ESP_OK) {
     ESP_LOGW(TAG, "OTA: stopping the audio source: %s", esp_err_to_name(err));
   }
+  /* The image is written only once nothing plays any more. */
+  if (!web_source_wait_idle()) {
+    ESP_LOGE(TAG, "OTA: the audio source did not stop; update refused");
+    esp_err_t start_err = web_role_source_start();
+    if (start_err != ESP_OK) {
+      ESP_LOGE(TAG, "OTA: restarting the audio source: %s",
+               esp_err_to_name(start_err));
+    }
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_sendstr(req, "The audio source did not stop; try again\n");
+    return ESP_OK;
+  }
   err = ota_start_from_http(req);
   if (err == ESP_OK) {
     httpd_resp_sendstr(req, "Firmware update complete, rebooting now!\n");

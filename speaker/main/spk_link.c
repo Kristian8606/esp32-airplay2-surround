@@ -765,14 +765,18 @@ static void link_task(void *arg) {
   }
 }
 
-void spk_link_suspend(void) {
+esp_err_t spk_link_suspend(void) {
   s_suspend = true;
   const int fd = s_link_fd;
   if (fd >= 0) shutdown(fd, SHUT_RDWR); /* run_link returns at once */
   /* The link task stops the stream when the link ends; wait for that. */
   for (int i = 0; !s_idle && i < 300; ++i) vTaskDelay(pdMS_TO_TICKS(10));
-  if (!s_idle) ESP_LOGW(TAG, "link task did not settle within 3 s");
+  if (s_idle) return ESP_OK;
+  ESP_LOGW(TAG, "link task did not settle within 3 s");
+  return ESP_ERR_TIMEOUT;
 }
+
+bool spk_link_idle(void) { return s_idle; }
 
 void spk_link_resume(void) {
   s_suspend = false;

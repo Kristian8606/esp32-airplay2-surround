@@ -154,6 +154,16 @@ void web_log_memory(const char *where) {
                       1024));
 }
 
+bool web_source_wait_idle(void) {
+  for (uint32_t waited = 0; !web_role_source_idle(); waited += SOURCE_POLL_MS) {
+    if (waited >= SOURCE_WAIT_MS) {
+      return false;
+    }
+    vTaskDelay(pdMS_TO_TICKS(SOURCE_POLL_MS));
+  }
+  return true;
+}
+
 esp_err_t web_audio_pause(httpd_req_t *req, const char *what, bool *paused) {
   bool unused;
   if (paused == NULL) {
@@ -172,19 +182,16 @@ esp_err_t web_audio_pause(httpd_req_t *req, const char *what, bool *paused) {
     ESP_LOGW(TAG, "%s: stopping the audio source: %s", what,
              esp_err_to_name(err));
   }
-  for (uint32_t waited = 0; !web_role_source_idle(); waited += SOURCE_POLL_MS) {
-    if (waited >= SOURCE_WAIT_MS) {
-      ESP_LOGE(TAG, "%s: audio source did not stop; restarting", what);
-      httpd_resp_set_status(req, "503 Service Unavailable");
-      httpd_resp_set_type(req, "text/plain");
-      httpd_resp_sendstr(req,
-                         "AirPlay clients are still stopping; recovering "
-                         "service");
-      vTaskDelay(pdMS_TO_TICKS(FAIL_RESTART_DELAY_MS));
-      esp_restart();
-      return ESP_FAIL;
-    }
-    vTaskDelay(pdMS_TO_TICKS(SOURCE_POLL_MS));
+  if (!web_source_wait_idle()) {
+    ESP_LOGE(TAG, "%s: audio source did not stop; restarting", what);
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_sendstr(req,
+                       "AirPlay clients are still stopping; recovering "
+                       "service");
+    vTaskDelay(pdMS_TO_TICKS(FAIL_RESTART_DELAY_MS));
+    esp_restart();
+    return ESP_FAIL;
   }
 
   err = sound_engine_release_for_wifi_scan();

@@ -30,6 +30,8 @@ void web_log_memory(const char *where);
  * was running. Not ESP_OK: a response has been sent; return from the
  * handler. */
 esp_err_t web_audio_pause(httpd_req_t *req, const char *what, bool *paused);
+/* After web_role_source_stop(): waits up to 30 s for the source to be idle. */
+bool web_source_wait_idle(void);
 /* Undo web_audio_pause(). Not ESP_OK: a response has been sent and the ESP
  * reboots. */
 esp_err_t web_audio_resume(httpd_req_t *req, const char *what);
