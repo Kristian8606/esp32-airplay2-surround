@@ -56,8 +56,12 @@ static const char *TAG = "gw_relay";
 #define GW_RELAY_RETRY_MS    1000
 #define GW_RELAY_STALL_LOG_MS 5000
 /* A playing speaker takes audio at least at real time: one that took none
- * for this long while another went further is stuck (gw_relay.h). */
+ * for this long while another went further is stuck (gw_relay.h)... */
 #define GW_RELAY_STALL_DROP_MS  10000
+/* ...but it is dropped only once it holds a buffer with less than this
+ * free (or an eighth of the frame index): until then it holds back nobody,
+ * and a Wi-Fi gap of 10 s cost a speaker 70 s of silence (v4.5.72). */
+#define GW_RELAY_STALL_ROOM_BYTES (512U * 1024U)
 /* ...and is connected again after this. */
 #define GW_RELAY_STALL_RETRY_MS 30000
 /* Send pacing. The sender sends a new track's audio as fast as the network
@@ -580,6 +584,12 @@ static bool other_ahead(size_t self) {
   return false;
 }
 
+/* The buffer is nearly full: the sender's audio will soon wait for room. */
+static bool buffer_low(void) {
+  return GW_RELAY_RING_BYTES - (s.head - s.tail) < GW_RELAY_STALL_ROOM_BYTES ||
+         GW_RELAY_INDEX - (s.ix_head - s.ix_tail) < GW_RELAY_INDEX / 8U;
+}
+
 static void check_targets(int64_t now_us) {
   const bool playing = __atomic_load_n(&s.playing, __ATOMIC_ACQUIRE);
   if (playing && !s.was_playing) s.playing_since_us = now_us;
@@ -612,11 +622,15 @@ static void check_targets(int64_t now_us) {
      * progress and the start of playing (a resume after a pause). */
     const int64_t since = t->blocked_since_us > s.playing_since_us
                               ? t->blocked_since_us : s.playing_since_us;
+    /* Dropped only when it is what fills the buffer (the oldest frame kept
+     * is its own): otherwise it may still catch up without a gap. */
     if (playing && now_us - since > GW_RELAY_STALL_DROP_MS * 1000LL &&
-        other_ahead(i)) {
-      AP_LOGW(TAG, "speaker %s took no audio for %d s while the others did: "
-                   "dropped from the stream so they keep playing, again in %d s",
-              t->want.name, GW_RELAY_STALL_DROP_MS / 1000,
+        other_ahead(i) && t->ix == s.ix_tail && buffer_low()) {
+      AP_LOGW(TAG, "speaker %s took no audio for %" PRId64 " s while the others "
+                   "did and fills the buffer (%u KiB): dropped from the stream "
+                   "so they keep playing, again in %d s",
+              t->want.name, (now_us - since) / 1000000LL,
+              (unsigned)((s.head - s.tail) / 1024U),
               GW_RELAY_STALL_RETRY_MS / 1000);
       close_target(t, "stalled", true);
       t->since_us = now_us + GW_RELAY_STALL_RETRY_MS * 1000LL;

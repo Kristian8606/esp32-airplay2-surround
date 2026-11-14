@@ -34,11 +34,13 @@ void gw_relay_stop(void);
 bool gw_relay_is_idle(void);
 
 /* The sender plays (gw_proxy.c, from SET_PLAYING / PAUSE / STOP). Only while
- * it plays must every speaker take audio: then one that took none for
- * GW_RELAY_STALL_DROP_MS while the others took theirs is dropped from the
- * stream (connected again after GW_RELAY_STALL_RETRY_MS), so it does not
- * hold back the rest until their buffers run dry. While paused full FIFOs
- * are normal. */
+ * it plays must every speaker take audio: one that took none for
+ * GW_RELAY_STALL_DROP_MS while the others took theirs, and whose audio fills
+ * the Gateway's buffer (less than GW_RELAY_STALL_ROOM_BYTES free), is dropped
+ * from the stream (connected again after GW_RELAY_STALL_RETRY_MS), so it
+ * does not hold back the rest until their buffers run dry. Until the buffer
+ * fills it is waited for, and a short Wi-Fi gap stays unheard. While paused
+ * full FIFOs are normal. */
 void gw_relay_set_playing(bool playing);
 
 /* An immediate FLUSH (FLUSHBUFFERED without a start): the frames before
