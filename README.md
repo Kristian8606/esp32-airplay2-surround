@@ -118,6 +118,12 @@ Click an image to open it full size.
   </tr>
   <tr>
     <td align="center" colspan="2">
+      <a href="images/speakers-page-calibration-5.png"><img src="images/speakers-page-calibration-5.png" alt="Room calibration: distance, delay and level of five speakers measured from the seat" width="100%"></a>
+      <br><sub><b>Room calibration:</b> five speakers measured from the seat with the Gateway's microphone, distance, delay and level each (<a href="#room-calibration">more</a>)</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2">
       <a href="images/roomeq-page.png"><img src="images/roomeq-page.png" alt="Room EQ page: measured response of a 2-way speaker, its target and the expected result, with the filters for the woofer and the tweeter" width="100%"></a>
       <br><sub><b>Room EQ:</b> a 2-way speaker measured with the Gateway's microphone, and the filters that correct its woofer and tweeter (<a href="#room-eq">more</a>)</sub>
     </td>
@@ -669,6 +675,11 @@ WS → GPIO 6. Without a microphone signal the speakers still play their
 chirps one after another (so you hear that each one works), and the panel
 says nothing was measured.
 
+<a href="images/speakers-page-calibration-5.png"><img src="images/speakers-page-calibration-5.png" alt="Room calibration panel after a run with the microphone: distance, delay and level of five speakers, all on the same firmware" width="100%"></a>
+
+*A run with the microphone: five speakers of a 5.1 setup measured, their
+distances, delays and levels ready to apply.* Without a microphone signal:
+
 <a href="images/speakers-page-calibration.png"><img src="images/speakers-page-calibration.png" alt="Room calibration panel after a run without a microphone: every speaker played its chirps, nothing measured" width="100%"></a>
 
 ### Room EQ
@@ -682,11 +693,27 @@ and correct it with the speaker's EQ:
   noise. Several microphone positions are averaged.
 - The browser computes the response: below 500 Hz the room as you hear it
   at the seat, above it mostly the speaker's own sound.
-- It fits **peaking filters** towards a target, from where the speaker
-  plays up to the microphone's limit (16 kHz for the INMP441), a
-  subwoofer up to 300 Hz. With a **bi-amp** speaker each driver (woofer,
-  tweeter) gets its own filters through its crossover, and the tweeter's
-  level is matched to the woofer's.
+- It fits **peaking filters** to a target line, the way REW's EQ does:
+  - **Target level** places the line (dB on the chart's scale, at 1 kHz).
+    By default it is the speaker's own level between 200 Hz and 2 kHz,
+    smoothed over one octave; type another value to move it. It is kept
+    for each speaker in the browser.
+  - Everything **above** the line is cut down to it.
+  - **Below** it, a dip no deeper than **Individual max boost** is raised
+    towards the line, and a deeper one is left as it is. **Overall max
+    boost** limits all filters together (by default the same value): with
+    a high individual and a low overall limit, deeper dips are raised
+    partly. A narrow dip is never raised.
+  - **Flatness target** (±1, ±2 or ±3 dB) sets how close it goes; a wider
+    one gives fewer, broader filters.
+  - It corrects from where the curve first reaches the line to where it
+    last does, so a speaker's own roll-off is never boosted; at most up to
+    the microphone's limit (16 kHz for the INMP441), a subwoofer up to
+    300 Hz. Above 500 Hz the filters are broad, since they correct the
+    speaker's own sound, not the room's reflections there.
+  - With a **bi-amp** speaker each driver (woofer, tweeter) gets its own
+    filters through its crossover, and the tweeter's level is matched to
+    the woofer's, raised by at most the overall max boost.
 - The chart shows the measurement, the target and the expected result.
   **Apply** sends the filters to the speaker now, **Apply & Save** also
   keeps them after a restart. They replace the EQ bands and levels of its

@@ -34,6 +34,11 @@ a{color:var(--accent);text-decoration:none}
 select{width:100%;padding:10px 12px;background:#0a0a0b;border:1px solid var(--line2);border-radius:10px;color:var(--text);font-size:14px;font-family:inherit}
 select:focus{outline:none;border-color:var(--accent)}
 select:disabled{opacity:.45}
+.lvl{display:flex;gap:6px;align-items:center}
+.lvl input{width:100%;min-width:0;padding:9px 10px;background:#0a0a0b;border:1px solid var(--line2);border-radius:10px;color:var(--text);font-size:14px;font-family:inherit;font-variant-numeric:tabular-nums}
+.lvl input:focus{outline:none;border-color:var(--accent)}
+.lvl .btn{padding:9px 12px;flex:none}
+.lvl-hint{font-size:11px;color:var(--muted);margin-top:4px}
 .opts{display:flex;gap:18px;flex-wrap:wrap;margin-top:14px;font-size:13px}
 .opts label{display:flex;align-items:center;gap:8px;cursor:pointer}
 .opts input{width:16px;height:16px;accent-color:#8b7bff}
@@ -114,7 +119,10 @@ svg.graph text{font-size:11px;fill:var(--muted);font-family:inherit}
   <div class='fg'><label for='c-spk'>Speaker</label><select id='c-spk'></select></div>
   <div class='fg'><label for='c-tilt'>Target</label><select id='c-tilt'><option value='0'>Flat</option><option value='-0.5' selected>Gentle slope &middot; &minus;0.5 dB/oct</option><option value='-1'>Room curve &middot; &minus;1 dB/oct</option></select></div>
   <div class='fg'><label for='c-bass'>Extra bass</label><select id='c-bass'><option value='0' selected>None</option><option value='2'>+2 dB</option><option value='4'>+4 dB</option><option value='6'>+6 dB</option></select></div>
-  <div class='fg'><label for='c-boost'>Boost at most</label><select id='c-boost'><option value='0'>0 dB &middot; cuts only</option><option value='3' selected>+3 dB</option><option value='6'>+6 dB</option></select></div>
+  <div class='fg'><label for='c-boost'>Individual max boost</label><select id='c-boost'><option value='0'>0 dB &middot; cuts only</option><option value='3' selected>+3 dB</option><option value='6'>+6 dB</option><option value='9'>+9 dB</option><option value='12'>+12 dB</option></select></div>
+  <div class='fg'><label for='c-overall'>Overall max boost</label><select id='c-overall'><option value='-1' selected>Same as individual</option><option value='0'>0 dB</option><option value='1'>+1 dB</option><option value='2'>+2 dB</option><option value='3'>+3 dB</option><option value='4'>+4 dB</option><option value='6'>+6 dB</option></select></div>
+  <div class='fg'><label for='c-flat'>Flatness target</label><select id='c-flat'><option value='1' selected>&plusmn;1 dB &middot; closest</option><option value='2'>&plusmn;2 dB</option><option value='3'>&plusmn;3 dB &middot; fewest filters</option></select></div>
+  <div class='fg'><label for='c-level'>Target level</label><div class='lvl'><input id='c-level' type='number' step='0.5' inputmode='decimal' placeholder='Auto'><button class='btn sec' id='c-lauto' type='button'>Auto</button></div><div class='lvl-hint' id='c-lhint'></div></div>
  </div>
  <div class='actions'><button class='btn' id='c-calc'>Calculate</button><span class='msg' id='c-msg'></span></div>
  <div id='c-out' style='display:none'>
@@ -123,7 +131,7 @@ svg.graph text{font-size:11px;fill:var(--muted);font-family:inherit}
   <div id='c-list'></div>
   <div class='actions'><button class='btn sec' id='c-apply'>Apply</button><button class='btn' id='c-save'>Apply &amp; Save</button><span class='msg' id='c-amsg'></span></div>
  </div>
- <p class='help'>From the measurements of that speaker shown above with its EQ off (several positions are averaged). Below about 500 Hz it works on what you hear in the room and cuts its peaks precisely; dips are left, or raised a little at most, because a dip from a reflection does not fill in with more power. Above about 500 Hz it works on the speaker's own sound (the frequency-dependent window) with broad filters only, since the room's reflections there change with every move of your head. It never corrects below where the speaker itself rolls off, nor above the microphone's range. A subwoofer is corrected up to 300 Hz at most, through the Gateway's crossover. With <b>bi-amp</b> each driver gets its own filters, and the tweeter's level is matched to the woofer's. <b>Apply</b> sends the result to the speaker now, <b>Apply &amp; Save</b> also keeps it after a restart. On the speaker it replaces the EQ bands and levels of its outputs and keeps their high- and low-pass bands; its outputs, crossover, polarity and delay stay as they are. To check: measure again with <b>Speaker EQ</b> switched on; the graph shows it next to the expected result. Afterwards run <b>Calibrate</b> on the <a href='/speakers'>Speakers</a> page, as the correction changes the speaker's level.</p>
+ <p class='help'>From the measurements of that speaker shown above with its EQ off (several positions are averaged). Below about 500 Hz it works on what you hear in the room and cuts its peaks precisely. As in REW, everything above the target line is cut down to it; below it, a dip no deeper than <b>Individual max boost</b> is raised towards the line, and a deeper one is left as it is, because a deep dip from a reflection does not fill in with more power. No single filter raises more than <b>Individual max boost</b> (0 dB: cuts only), and all filters together raise no frequency by more than <b>Overall max boost</b>: with a high individual limit (say +12 dB) and a low overall one (say +3 dB) deeper dips are raised too, but only partly. A narrow dip is never raised. <b>Flatness target</b> is how close it goes: it stops once nothing is further than that from the line, and drops a filter of less than half of it; &plusmn;2 or &plusmn;3 dB gives fewer, broader filters that depend less on where the microphone was. Above about 500 Hz it works on the speaker's own sound (the frequency-dependent window) with broad filters only, since the room's reflections there change with every move of your head. It corrects only from where the curve first reaches the target line up to where it last does (as REW does), so a speaker's own roll-off is never boosted, and never above the microphone's range. <b>Target level</b> is where the target line sits at 1 kHz, on the graph's scale (dB re the level played): by default the speaker's own level between 200 Hz and 2 kHz (its woofer's with bi-amp), smoothed over one octave as REW does; type another one to move the line, as in REW, and everything above it is cut, below it raised within the max boost limits. It is kept for each speaker in this browser; <b>Auto</b> goes back to the default. The graph shows the target and the expected curve on the measurement's scale; the level of each output below includes the cut that keeps headroom for the boosts. A subwoofer is corrected up to 300 Hz at most, through the Gateway's crossover. With <b>bi-amp</b> each driver gets its own filters, and the tweeter's level is matched to the woofer's, raised by at most <b>Overall max boost</b> (filters and level together). <b>Apply</b> sends the result to the speaker now, <b>Apply &amp; Save</b> also keeps it after a restart. On the speaker it replaces the EQ bands and levels of its outputs and keeps their high- and low-pass bands; its outputs, crossover, polarity and delay stay as they are. To check: measure again with <b>Speaker EQ</b> switched on; the graph shows it next to the expected result. Afterwards run <b>Calibrate</b> on the <a href='/speakers'>Speakers</a> page, as the correction changes the speaker's level.</p>
 </div>
 </div><script>
 const TITLE={'-1':'Mono mix',0:'Front Left',1:'Front Right',2:'Centre',3:'Subwoofer',4:'Side Left',5:'Side Right',6:'Rear Left',7:'Rear Right'};
@@ -136,6 +144,10 @@ const KEY='roomeq.v1';
 let meas=[],speakers=[],busy=false,pendingPos=null,stream=false,timer=null;
 function esc(t){return String(t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function load(){try{const v=JSON.parse(localStorage.getItem(KEY)||'[]');if(Array.isArray(v))meas=v;}catch(e){meas=[];}}
+/* Target level set by hand, per speaker (MAC): dB at 1 kHz on the graph. */
+let levels={};
+try{const v=JSON.parse(localStorage.getItem('roomeq.levels')||'{}');if(v&&typeof v==='object')levels=v;}catch(e){levels={};}
+function saveLevels(){try{localStorage.setItem('roomeq.levels',JSON.stringify(levels));}catch(e){}}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(meas));}catch(e){setMsg('Not saved in this browser: '+e.message,'err');}}
 function setMsg(t,c){const m=document.getElementById('msg');m.textContent=t||'';m.className='msg'+(c?' '+c:'');}
 
@@ -341,19 +353,42 @@ function magDb(k,j){const c=TR[j],nr=k[0]+k[1]*c[0]+k[2]*c[2],ni=-(k[1]*c[1]+k[2
 function respOf(t,f,g,q,from,to){const k=bq(t,f,g,q),r=new Float64Array(GCOUNT);for(let j=from;j<=to;j++)r[j]=magDb(k,j);return r;}
 const gi=f=>Math.max(0,Math.min(GCOUNT-1,Math.round(GN*Math.log2(f/G0))));
 function avgPower(list){const o=new Float64Array(GCOUNT);for(let g=0;g<GCOUNT;g++){let s=0;list.forEach(m=>s+=Math.pow(10,m[g]/10));o[g]=10*Math.log10(s/list.length);}return o;}
+/* Smoothed over one octave (power): REW sets the target level from this. */
+function octSmooth(v){const o=new Float64Array(GCOUNT),k=Math.floor(GN/2);for(let g=0;g<GCOUNT;g++){let s=0,c=0;
+ for(let j=Math.max(0,g-k);j<=Math.min(GCOUNT-1,g+k);j++){s+=Math.pow(10,v[j]/10);c++;}o[g]=10*Math.log10(s/c);}return o;}
 function varSmooth(v){const o=new Float64Array(GCOUNT);for(let g=0;g<GCOUNT;g++){const f=gridF(g),oct=f<=200?12:f>=1000?3:12*Math.pow(0.25,Math.log(f/200)/Math.log(5)),k=Math.floor(GN/(2*oct));
  let s=0,c=0;for(let j=Math.max(0,g-k);j<=Math.min(GCOUNT-1,g+k);j++){s+=Math.pow(10,v[j]/10);c++;}o[g]=10*Math.log10(s/c);}return o;}
 const mean=(v,a,b)=>{let s=0,c=0;for(let g=gi(a);g<=gi(b);g++){s+=v[g];c++;}return c?s/c:0;};
 
 /* Peaking filters for one driver: S (smoothed dB), T (target dB), the
- * correction range [lo, hi], options. */
-function fitFilters(S,T,lo,hi,o,maxf){
+ * correction range [lo, hi], options, at most maxf filters, and REW's two
+ * boost limits: cap, the most one filter raises (and the deepest dip that
+ * is raised at all), and all, the most the filters together raise any
+ * frequency. As in REW: everything above the target is cut down to it;
+ * below it, a dip no deeper than cap is raised towards it (up to all), a
+ * deeper one is left as it is. */
+function fitFilters(S,T,lo,hi,o,maxf,cap,all){
  const a=gi(lo),b=gi(hi),F=new Float64Array(GCOUNT),skip=new Uint8Array(GCOUNT),filters=[];
  if(b-a<4||maxf<=0)return {filters,F};
- const lim=f=>f>500?{gmin:-6,gmax:Math.min(o.boost,3),qmin:0.5,qmax:2}:{gmin:-15,gmax:o.boost,qmin:0.5,qmax:12};
+ cap=Math.max(0,cap);all=Math.max(0,all);
+ /* Each dip of the curve below the target, judged as measured: deeper
+  * than cap, it stays untouched. */
+ const keep=new Uint8Array(GCOUNT);
+ for(let g=a;g<=b;){if(S[g]>=T[g]){g++;continue;}let h=g,d=0;while(h<=b&&S[h]<T[h]){d=Math.max(d,T[h]-S[h]);h++;}
+  if(cap<=0||d>cap+0.05)for(let j=g;j<h;j++)keep[j]=1;g=h;}
+ const lim=f=>f>500?{gmin:-6,gmax:Math.min(cap,3),qmin:0.5,qmax:2}:{gmin:-15,gmax:cap,qmin:0.5,qmax:12};
  const err=(base,g,r)=>S[g]+base[g]+(r?r[g]:0)-T[g];
- const cost=(base,r)=>{let c=0;for(let g=a;g<=b;g++){if(skip[g])continue;const e=err(base,g,r);c+=e>0?e*e:0.3*e*e;}return c;};
- const clampF=fl=>{const l=lim(fl.f);fl.f=Math.max(lo,Math.min(hi,fl.f));fl.g=Math.max(l.gmin,Math.min(l.gmax,fl.g));fl.q=Math.max(l.qmin,Math.min(l.qmax,fl.q));return fl;};
+ const cost=(base,r)=>{let c=0;for(let g=a;g<=b;g++){const d=base[g]+(r?r[g]:0);
+  /* Never more than all up, anywhere, all filters together. */
+  if(d>all+0.01)c+=1e3*(d-all)*(d-all);
+  if(skip[g])continue;
+  /* A dip left as it is: the filters should not change it. */
+  if(keep[g]){c+=d>0?d*d:0.3*d*d;continue;}
+  const e=err(base,g,r);c+=e>0?e*e:0.3*e*e;}return c;};
+ /* As in REW: a filter's frequency stays within 10% of where it was
+  * placed, and a boost is never narrow (Q at most 3). */
+ const clampF=fl=>{const l=lim(fl.f);fl.f=Math.max(lo,fl.f0/1.1,Math.min(hi,fl.f0*1.1,fl.f));fl.g=Math.max(l.gmin,Math.min(l.gmax,fl.g));
+  fl.q=Math.max(l.qmin,Math.min(fl.g>0?Math.min(3,l.qmax):l.qmax,fl.q));return fl;};
  const optimise=(fl,base)=>{let best=cost(base,respOf('PK',fl.f,fl.g,fl.q,a,b)),sf=Math.pow(2,1/12),sq=1.3,sg=1;
   for(let it=0;it<6;it++){let imp=true,guard=0;
    while(imp&&guard++<25){imp=false;
@@ -365,29 +400,31 @@ function fitFilters(S,T,lo,hi,o,maxf){
  const sum=except=>{const base=new Float64Array(GCOUNT);filters.forEach((f,i)=>{if(i!==except)for(let g=a;g<=b;g++)base[g]+=f.r[g];});return base;};
  for(let tries=0;tries<30&&filters.length<maxf;tries++){
   const base=sum(-1);let gm=-1,vm=0;
-  for(let g=a;g<=b;g++){if(skip[g])continue;const e=err(base,g);const v=e>0?e:(o.boost>0?-0.7*e:0);if(v>vm){vm=v;gm=g;}}
-  if(gm<0||vm<1)break;
+  for(let g=a;g<=b;g++){if(skip[g])continue;const e=err(base,g);const v=e>0?e:(cap>0&&all>0&&!keep[g]?-0.7*e:0);if(v>vm){vm=v;gm=g;}}
+  if(gm<0||vm<o.flat)break;
   const e0=err(base,gm);let gl=gm,gr=gm;
   while(gl>a&&Math.abs(err(base,gl-1))>Math.abs(e0)/2&&Math.sign(err(base,gl-1))===Math.sign(e0))gl--;
   while(gr<b&&Math.abs(err(base,gr+1))>Math.abs(e0)/2&&Math.sign(err(base,gr+1))===Math.sign(e0))gr++;
   const bw=Math.max(1,gr-gl)/GN,q0=Math.sqrt(Math.pow(2,bw))/(Math.pow(2,bw)-1);
-  const fl=clampF({f:gridF(gm),g:-e0,q:q0});
+  const fl=clampF({f:gridF(gm),f0:gridF(gm),g:-e0,q:q0});
   const before=cost(base);const after=optimise(fl,base);
   /* A narrow dip is a cancellation: no boost for it. */
   const edge=fl.f<lo*Math.pow(2,1/12)||fl.f>hi/Math.pow(2,1/12);
-  if(after>before*0.97||(fl.g>0&&(fl.q>3||edge))||Math.abs(fl.g)<0.5){for(let g=gl;g<=gr;g++)skip[g]=1;continue;}
+  if(after>before*0.97||(fl.g>0&&(fl.q>3||edge))||Math.abs(fl.g)<o.flat/2){for(let g=gl;g<=gr;g++)skip[g]=1;continue;}
   fl.r=respOf('PK',fl.f,fl.g,fl.q,0,GCOUNT-1);filters.push(fl);
  }
  for(let pass=0;pass<2;pass++)filters.forEach((fl,i)=>{const base=sum(i);optimise(fl,base);fl.r=respOf('PK',fl.f,fl.g,fl.q,0,GCOUNT-1);});
+ /* As REW: a filter left under half the flatness target is dropped. */
+ for(let i=filters.length-1;i>=0;i--)if(Math.abs(filters[i].g)<o.flat/2)filters.splice(i,1);
  filters.forEach(fl=>{fl.f=Math.round(fl.f*10)/10;fl.g=Math.round(fl.g*10)/10;fl.q=Math.round(fl.q*100)/100;fl.r=respOf('PK',fl.f,fl.g,fl.q,0,GCOUNT-1);});
  filters.sort((x,y)=>x.f-y.f);
  for(let g=0;g<GCOUNT;g++){let s=0;filters.forEach(fl=>s+=fl.r[g]);F[g]=s;}
  return {filters,F};
 }
-/* Where the speaker plays: around its level band, while within 6 dB of
- * the target. */
-function playRange(S,T,a,b,lo,hi){
- let l=gi(a),h=gi(b);while(l>gi(lo)&&S[l-1]>=T[l-1]-6)l--;while(h<gi(hi)&&S[h+1]>=T[h+1]-6)h++;
+/* As in REW: from where the curve first reaches the target to where it
+ * last does, so a natural roll-off at either end is never boosted. */
+function matchRange(S,T,lo,hi){
+ let l=gi(lo),h=gi(hi);while(l<h&&S[l]<T[l])l++;while(h>l&&S[h]<T[h])h--;
  return [Math.max(lo,gridF(l)),Math.min(hi,gridF(h))];
 }
 let cur=null; /* the last calculation */
@@ -414,6 +451,10 @@ async function calculate(){
   * microphone's limit (each measurement keeps the microphone it was made
   * with), a subwoofer up to 300 Hz. */
  const o={tilt:+document.getElementById('c-tilt').value,bass:+document.getElementById('c-bass').value,upto:Infinity,boost:+document.getElementById('c-boost').value};
+ /* REW's overall max boost; "same as individual" by default. */
+ const ov=+document.getElementById('c-overall').value;o.all=ov<0?o.boost:ov;
+ /* REW's flatness target: filters stop once the curve is this close. */
+ o.flat=+document.getElementById('c-flat').value||1;
  const by=w=>use.filter(m=>m.way===w);
  const tw=by('tweeter'),wf=by('woofer'),full=by('full'),both=by('both');
  const biamp=eq.output_mode==='biamp',fc=eq.crossover_hz||2500,low=use[0].channel===3;
@@ -449,7 +490,14 @@ async function calculate(){
  /* One target for the speaker: its level from the woofer (or the only way). */
  const lead=ways[0],rel=new Float64Array(GCOUNT);
  for(let g=0;g<GCOUNT;g++)rel[g]=tgt(0,gridF(g));
- L=mean(lead.S,...lead.band)-mean(rel,...lead.band);
+ /* As REW sets it: the best fit of the target's shape to the response
+  * smoothed over one octave, in the speaker's level band. */
+ const Lauto=mean(octSmooth(lead.B),...lead.band)-mean(rel,...lead.band);
+ /* Set by hand (as in REW), or from the speaker's own level band. */
+ const Lset=typeof levels[mac]==='number'&&isFinite(levels[mac])?levels[mac]:null;
+ L=Lset!==null?Lset:Lauto;
+ document.getElementById('c-level').value=L.toFixed(1);
+ document.getElementById('c-lhint').textContent=(Lset!==null?'Set by hand · auto ':'Auto · ')+Lauto.toFixed(1)+' dB';
  ways.forEach(w=>{
   /* With bi-amp each driver's target is the speaker's through the ideal
    * crossover (the speaker's own sections): the correction keeps its slopes
@@ -465,18 +513,21 @@ async function calculate(){
   let x10lo=0,x10hi=GCOUNT-1;
   if(w.role==='woofer'||w.role==='sub')while(x10hi>0&&xo[x10hi]<-10)x10hi--;
   if(w.role==='tweeter')while(x10lo<GCOUNT-1&&xo[x10lo]<-10)x10lo++;
-  /* The tweeter's level: what it needs to meet the target (its preamp). */
-  w.level=w.role==='tweeter'?mean(w.T,...w.band)-mean(w.S,...w.band):0;
+  /* The tweeter's level: what it needs to meet the target (its preamp),
+   * raised by at most the overall max boost, which then leaves the less
+   * for its filters. */
+  w.level=w.role==='tweeter'?Math.min(o.all,mean(w.T,...w.band)-mean(w.S,...w.band)):0;
   const Tl=w.T.map(v=>v-w.level);
   let lo=w.lo,hi=w.hi;
   if(w.role==='woofer'||w.role==='sub')hi=Math.min(hi,gridF(x10hi));
   if(w.role==='tweeter')lo=Math.max(lo,gridF(x10lo));
   if(w.role==='sub')hi=Math.min(hi,300);
-  [lo,hi]=playRange(w.S,Tl,w.band[0],w.band[1],lo,hi);
+  [lo,hi]=matchRange(w.S,Tl,lo,hi);
   w.range=[lo,Math.min(hi,o.upto)];
   const now=eq[(w.out===1?'right':'left')+'_filters']||[];
   w.keep=(w.out<0?(eq.left_filters||[]):now).filter(f=>f.enabled&&(f.type==='HP'||f.type==='LP'));
-  const fit=fitFilters(w.S,Tl,w.range[0],w.range[1],o,Math.min(10,24-w.keep.length));
+  const up=Math.max(0,w.level);
+  const fit=fitFilters(w.S,Tl,w.range[0],w.range[1],o,Math.min(10,24-w.keep.length),o.boost-up,o.all-up);
   w.filters=fit.filters;w.F=fit.F;
   w.boost=0;for(let g=gi(w.lo);g<=gi(w.hi);g++)w.boost=Math.max(w.boost,w.F[g]);
  });
@@ -498,10 +549,13 @@ function showCorrection(){
  c.ways.forEach(w=>{
   const meas_=[],tgt=[],pred=[],chk=[];
   for(let g=0;g<GCOUNT;g++){const f=gridF(g);if(f<w.lo||f>w.hi||w.xo[g]<-30)continue;
-   /* As played: the preamps (headroom, tweeter level) included. */
-   meas_.push([f,w.S[g]]);pred.push([f,w.P[g]]);
-   if(w.chk)chk.push([f,w.chk[g]]);
-   if(f>=w.range[0]&&f<=w.range[1])tgt.push([f,w.T[g]-c.X]);}
+   /* On the measurement's scale, as REW draws it: the target where its
+    * level puts it; the expected curve (and a check made with this
+    * correction applied) without the common level cut c.X for headroom,
+    * which each output's level below includes. */
+   meas_.push([f,w.S[g]]);pred.push([f,w.P[g]+c.X]);
+   if(w.chk)chk.push([f,w.chk[g]+c.X]);
+   if(f>=w.range[0]&&f<=w.range[1])tgt.push([f,w.T[g]]);}
   series.push({pts:meas_,color:WAYCOL[w.role],width:1.2,op:0.45},{pts:tgt,color:'#ffffff',width:1.2,dash:'6 5',op:0.7},{pts:pred,color:WAYCOL[w.role],width:2.2,op:1});
   if(w.chk)series.push({pts:chk,color:'#ffffff',width:1.6,dash:'2 3',op:0.95});
  });
@@ -539,8 +593,13 @@ async function applyCorrection(action){
  catch(err){m.className='msg err';m.textContent='Not applied: '+err.message;}
 }
 document.getElementById('c-calc').onclick=calculate;
-['c-tilt','c-bass','c-boost'].forEach(id=>document.getElementById(id).onchange=()=>{if(cur)calculate();});
-document.getElementById('c-spk').onchange=()=>{cur=null;document.getElementById('c-out').style.display='none';document.getElementById('c-msg').textContent='';};
+['c-tilt','c-bass','c-boost','c-overall','c-flat'].forEach(id=>document.getElementById(id).onchange=()=>{if(cur)calculate();});
+document.getElementById('c-level').onchange=()=>{const mac=document.getElementById('c-spk').value,v=parseFloat(document.getElementById('c-level').value);
+ if(!mac)return;if(isFinite(v))levels[mac]=Math.round(v*2)/2;else delete levels[mac];saveLevels();if(cur)calculate();};
+document.getElementById('c-lauto').onclick=()=>{const mac=document.getElementById('c-spk').value;if(!mac)return;delete levels[mac];saveLevels();
+ document.getElementById('c-level').value='';document.getElementById('c-lhint').textContent='';if(cur)calculate();};
+document.getElementById('c-spk').onchange=()=>{const m=document.getElementById('c-spk').value;
+ document.getElementById('c-level').value=typeof levels[m]==='number'?levels[m].toFixed(1):'';document.getElementById('c-lhint').textContent='';cur=null;document.getElementById('c-out').style.display='none';document.getElementById('c-msg').textContent='';};
 document.getElementById('c-apply').onclick=()=>applyCorrection('apply');
 document.getElementById('c-save').onclick=()=>applyCorrection('both');
 load();render();loadSpeakers();poll();setInterval(loadSpeakers,15000);
