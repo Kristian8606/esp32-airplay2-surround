@@ -64,13 +64,12 @@ system.
 > with every change. See [Limitations](#limitations).
 
 > [!IMPORTANT]
-> **Soon: 16 MB flash modules (ESP32-S3 N16R8).** The 8 MB flash of the
-> N8R8 boards is nearly full. The Gateway keeps a copy of the speaker
-> firmware to update the speakers, and that copy has only about 117 KB of
-> room left. To add more features, the project will move to **N16R8**
-> boards (16 MB flash, 8 MB PSRAM). **If you buy boards now, buy N16R8.**
-> The move brings a new partition table, so every board is flashed once
-> over USB; after that, updates work over Wi-Fi as before.
+> **16 MB flash modules (ESP32-S3 N16R8).** The 8 MB flash of the N8R8
+> boards is nearly full: the Gateway keeps a copy of the speaker firmware to
+> update the speakers, and that copy has only about 117 KB of room left. A
+> board with 16 MB can already use its full flash
+> ([16 MB flash](#16-mb-flash)); new features will need it. **If you buy
+> boards now, buy N16R8.** 8 MB boards build and update as before.
 >
 > **Planned:**
 > - 💾 Music from a **USB drive** on the Gateway.
@@ -443,6 +442,30 @@ the same menus; some options matter for one firmware only:
 Every speaker runs the same firmware: its role is set later on the Gateway's
 page.
 
+#### 16 MB flash
+
+By default both firmwares are built for **8 MB** flash (`partitions.csv`).
+A board with **16 MB** (N16R8) uses all of it with `partitions_16mb.csv`:
+
+1. `idf.py menuconfig` → **Serial flasher config → Flash size** → **16 MB**.
+2. **Partition Table → Custom partition CSV file** →
+   `partitions_16mb.csv` (in `speaker/`: `../partitions_16mb.csv`).
+3. `idf.py build flash` **over USB, once**: a partition table reaches the
+   board only so, not with an update over Wi-Fi. Afterwards updates work
+   over Wi-Fi as before.
+
+| Partition | 8 MB | 16 MB |
+|---|---|---|
+| nvs (settings, Wi-Fi, HomeKit), otadata, phy | as is | the same place and size, so the settings stay |
+| ota_0, ota_1 (the firmware, twice for updates) | 3 MB each | the same |
+| storage (the speaker firmware the Gateway hands out) | 1.9 MB | 3 MB, as large as a speaker's own slot |
+| userdata (for later features) | — | 6.9 MB |
+
+The 16 MB table does not fit an 8 MB flash: ESP-IDF stops the build. A
+16 MB flash with the 8 MB table builds and runs, with a warning that the
+rest is unused. The Gateway matters most (it keeps the speaker firmware);
+speakers can stay on the 8 MB table, their firmware fits their slot.
+
 ### 5. Build and flash
 
 Connect a board over USB.
@@ -473,7 +496,8 @@ Later versions are installed **over Wi-Fi**:
 - **Speakers, all at once:** on the Gateway's **speakers page**, panel
   **Speaker firmware** → **Choose .bin** →
   `speaker/build/airplay-speaker_<version>.bin` → **Upload**. The Gateway
-  keeps it in its otherwise unused `storage` partition (1.9 MB) and every
+  keeps it in its otherwise unused `storage` partition (1.9 MB, 3 MB with
+  [16 MB flash](#16-mb-flash)) and every
   speaker with another build installs it by itself: one at a time and right
   away, also a speaker that was switched off and comes back later. A speaker
   that is playing stops its stream for the update (the others play on),

@@ -30,3 +30,6 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # The project name is also the generated .bin basename:
 # build/airplay-speaker_vX.Y.Z.bin.
 project("airplay-speaker_${AIRPLAY_PROJECT_VERSION}")
+
+# 16 MB flash with the 8 MB partition table: a warning (see the file).
+include("${AIRPLAY_ROOT}/common/cmake/flash_layout.cmake")

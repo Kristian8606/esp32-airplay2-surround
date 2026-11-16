@@ -114,6 +114,16 @@ menu "AirPlay Receiver"
             speakers remain connected through the private surround protocol.
             AAC 5.1/7.1 support and speaker channel assignments are retained.
 
+    config AIRPLAY_SENDER_TAKES_ON_PLAY
+        bool "A second sender takes over only when it plays"
+        depends on AIRPLAY_HOMEKIT
+        default y
+        help
+            While one sender plays (an Apple TV), another one that connects
+            (an iPhone opening Control Center) only listens: the first keeps
+            playing and its volume stays; the second takes over when it starts
+            playing. Off: it takes over as soon as it connects.
+
     config AIRPLAY_HOMEKIT_MANUFACTURER
         string "HomeKit manufacturer"
         depends on AIRPLAY_HOMEKIT

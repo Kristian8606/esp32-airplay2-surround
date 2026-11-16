@@ -1,0 +1,13 @@
+# Name,   Type, SubType,  Offset,   Size,    Flags
+# The 16 MB layout (ESP32-S3 N16R8): the same as partitions.csv up to
+# 0x620000, so the apps and the settings stay where they are; storage (the
+# speaker firmware the Gateway hands out) is as large as a speaker's app
+# slot, and userdata keeps the rest for later features.
+nvs,      data, nvs,      0x9000,   0x10000,
+otadata,  data, ota,      0x19000,  0x2000,
+phy_init, data, phy,      0x1B000,  0x1000,
+nvs_key,  data, nvs_keys, 0x1C000,  0x1000,
+ota_0,    app,  ota_0,    0x20000,  0x300000,
+ota_1,    app,  ota_1,    0x320000, 0x300000,
+storage,  data, spiffs,   0x620000, 0x300000,
+userdata, data, spiffs,   0x920000, 0x6E0000,

@@ -9,8 +9,8 @@ dependencies:
   ap2_core:
     git: https://github.com/Kristian8606/esp-airplay2-core.git
     path: components/ap2_core
-    version: v1.0.0
+    version: v1.2.0
   apple_clock:
     git: https://github.com/Kristian8606/esp-airplay2-core.git
     path: components/apple_clock
-    version: v1.0.0
+    version: v1.2.0
