@@ -701,16 +701,25 @@ and correct it with the speaker's EQ:
   - Everything **above** the line is cut down to it.
   - **Below** it, a dip no deeper than **Individual max boost** is raised
     towards the line, and a deeper one is left as it is. **Overall max
-    boost** limits all filters together (by default the same value): with
+    boost** limits all filters together (+3 dB by default): with
     a high individual and a low overall limit, deeper dips are raised
     partly. A narrow dip is never raised.
-  - **Flatness target** (±1, ±2 or ±3 dB) sets how close it goes; a wider
+  - **Flatness target** (±1 to ±6 dB) sets how close it goes; a wider
     one gives fewer, broader filters.
-  - It corrects from where the curve first reaches the line to where it
-    last does, so a speaker's own roll-off is never boosted; at most up to
-    the microphone's limit (16 kHz for the INMP441), a subwoofer up to
-    300 Hz. Above 500 Hz the filters are broad, since they correct the
-    speaker's own sound, not the room's reflections there.
+  - **Match range** limits where filters may go; inside it, it corrects
+    from where the curve first reaches the line to where it last does, so a
+    speaker's own roll-off is never boosted; at most up to the
+    microphone's limit (16 kHz for the INMP441), a subwoofer up to 300 Hz.
+  - **Allow low shelf** / **Allow high shelf** (off by default) add a shelf
+    at that end of the range when the curve stays above or below the line
+    for at least half an octave there, as REW does.
+  - How narrow a filter may be is set as in REW: **Allow narrow filters
+    below 200 Hz** allows Q up to 10 there, Q 5 above; **Vary max Q above
+    200 Hz** lets it fall from 10 at 200 Hz to 3 at 10 kHz instead. Without
+    narrow filters Q is 5 at most. It may use all 24 bands of an output,
+    but for the high- and low-pass bands it keeps (a bi-amp crossover is
+    apart from them). Above 500 Hz it works on the speaker's own sound (a
+    frequency-dependent window), not on the room's reflections there.
   - With a **bi-amp** speaker each driver (woofer, tweeter) gets its own
     filters through its crossover, and the tweeter's level is matched to
     the woofer's, raised by at most the overall max boost.
@@ -719,9 +728,13 @@ and correct it with the speaker's EQ:
   keeps them after a restart. They replace the EQ bands and levels of its
   outputs; the high- and low-pass bands, crossover, polarity and delay
   stay as they are.
-- To check, measure again with **Speaker EQ** on: the chart shows it next
-  to the expected result. Afterwards run **Calibrate** on the speakers
-  page, as the correction changes the speaker's level.
+- After **Apply & Save** it offers a check: the speaker is measured again
+  with its new EQ, at the same microphone position, and that curve is drawn
+  over the one before, without calculating anything again. A bi-amp
+  speaker is checked driver by driver and then with both together, which
+  shows a dip or a peak at the crossover. Afterwards run
+  **Calibrate** on the speakers page, as the correction changes the
+  speaker's level.
 
 <a href="images/roomeq-page.png"><img src="images/roomeq-page.png" alt="Room EQ page: measured response of a 2-way speaker, its target and the expected result, with the filters for the woofer and the tweeter" width="100%"></a>
 
