@@ -37,9 +37,16 @@ system.
 - 🎤 **Room calibration** with an optional INMP441 microphone on the
   Gateway: distance, delay and level of every speaker measured from your
   seat, applied with one click.
+- 📈 **Room EQ** with the same microphone: each speaker's frequency
+  response measured from your seat and corrected with its own EQ, with
+  settings like REW's.
+- 📻 **Web radio** on the Gateway: stations of your country, a search, your
+  favourites or any stream address (MP3 or AAC over HTTP / HTTPS), played on
+  all speakers like an AirPlay stream. AirPlay always takes over.
 - 🎛️ **One page for all speakers**: role, level and delay of every speaker,
   and a live view of what each one plays. Each speaker keeps its own
-  2 × 24-band parametric EQ / crossover, loudness and latency settings.
+  2 × 24-band parametric EQ, mono or **bi-amp** (woofer + tweeter through a
+  Linkwitz-Riley crossover), loudness and latency settings.
 - 🔀 **Format changes on the fly**: the Apple TV can switch between stereo and
   surround from track to track; the speakers follow without reconnecting.
 - ⚡ About **a third of one CPU core** per speaker for 7.1, thanks to a patched
@@ -50,8 +57,9 @@ system.
   branch.)
 
 > [!NOTE]
-> **The project is under active development.** A Gateway and two speakers
-> play a 7.1 stream from an Apple TV, each its own channel, audibly in sync.
+> **The project is under active development.** A Gateway and five speakers
+> (front pair, centre, side pair) play 5.1 and 7.1 from an Apple TV and
+> stereo from an iPhone, each speaker its own channel, audibly in sync.
 > Features, defaults and wiring may still change, and this README is updated
 > with every change. See [Limitations](#limitations).
 
@@ -173,7 +181,8 @@ and shares it with the speakers:
    not an AirPlay receiver: it finds the Gateway by mDNS, decrypts the stream
    with the key the Gateway passed on and plays its channel
    on **both outputs** of its DAC or amplifier (L = R), so you can drive one
-   speaker, two drivers (woofer + tweeter) or a subwoofer amplifier.
+   speaker or a subwoofer amplifier, or, in **bi-amp** mode, the woofer on one
+   output and the tweeter on the other through its crossover.
 4. **One two-way Apple clock for all.** The Gateway measures both directions
    of the PTP path with Sync / Follow_Up and Delay_Req / Delay_Resp, then
    publishes one smooth clock line. Every board on the same access point
@@ -232,8 +241,10 @@ network.
 | **5.1** (films, series) | own channel | own channel | LFE channel | Side L/R; Rear plays Side | all except LFE |
 | **Stereo** (music, YouTube) | left / right | silent | mix of L and R | silent | mix of L and R |
 
-With stereo the subwoofer gets the full-range mix; a low-pass on its EQ page
-(or the subwoofer amplifier's own crossover) keeps the bass.
+The subwoofer plays below its **Crossover** set on the speakers page (80,
+100, 120 or 150 Hz, 120 Hz by default, or Off when its amplifier has its own),
+the stereo mix and the LFE channel alike. Do not add a low-pass on its own EQ
+page as well, or the bass is cut twice.
 
 ## What you need
 
@@ -241,7 +252,7 @@ With stereo the subwoofer gets the full-range mix; a low-pass on its EQ page
 
 | Part | Notes |
 |---|---|
-| **One ESP32-S3 board**, the same type as the speakers (N8R8) | It has no audio output: no DAC, no amplifier, no wiring. A USB supply is all it needs. |
+| **One ESP32-S3 board**, the same type as the speakers (N8R8, or N16R8: see the note at the top) | It has no audio output: no DAC, no amplifier, no wiring. A USB supply is all it needs. |
 | **A place with a good signal** | It receives the stream from the Apple TV and sends it again to every speaker, so it carries the most Wi-Fi traffic. Near the access point is best. |
 | *Optional:* **INMP441 I2S microphone** | For [room calibration](#room-calibration): VDD → 3V3, GND and L/R → GND, SCK → GPIO 5, WS → GPIO 6, SD → GPIO 4 (changeable in `menuconfig`). |
 
@@ -249,7 +260,7 @@ With stereo the subwoofer gets the full-range mix; a low-pass on its EQ page
 
 | Part | Notes |
 |---|---|
-| **ESP32-S3 board with 8 MB flash and 8 MB PSRAM** (N8R8), e.g. ESP32-S3-DevKitC-1 N8R8 | PSRAM is required: the stream buffer alone takes 6 MB. Boards without PSRAM (or with 2 MB) will not work. |
+| **ESP32-S3 board with 8 MB flash and 8 MB PSRAM** (N8R8), e.g. ESP32-S3-DevKitC-1 N8R8, or with 16 MB flash (N16R8, see the note at the top) | PSRAM is required: the stream buffer alone takes 6 MB. Boards without PSRAM (or with 2 MB) will not work. |
 | **Audio output**, one of: | |
 | &nbsp;&nbsp;• an **I2S amplifier** such as **MAX98357A** | Simplest: digital in, speaker out, about 3 W. Good for small satellites and surrounds. |
 | &nbsp;&nbsp;• an **I2S DAC** such as **PCM5102A** + **any analogue amplifier** | Any size: mini (PAM8403, 2 × 3 W), medium or powerful (TPA3110 / TPA3116, TDA7498, a plate amplifier for a subwoofer…), **one- or two-channel**. |
@@ -333,23 +344,26 @@ you use **any amplifier, small or powerful, one- or two-channel**:
 
 | Amplifier | Connection | Setup on the speaker's EQ page |
 |---|---|---|
-| **One channel** (mono amp, a single side of a stereo amp, a subwoofer plate amp) | L OUT → amp input | nothing; for a subwoofer add a low-pass filter if the amp has none |
+| **One channel** (mono amp, a single side of a stereo amp, a subwoofer plate amp) | L OUT → amp input | nothing; a subwoofer's low-pass is its **Crossover** on the Gateway's speakers page |
 | **Two channels, one full-range speaker** | L OUT → amp, use one channel | nothing |
-| **Two channels, active 2-way (woofer + tweeter)** | L OUT → CH1 → **woofer**, R OUT → CH2 → **tweeter** | a crossover: low-pass on the **Left output**, high-pass on the **Right output** |
+| **Two channels, active 2-way (woofer + tweeter)** | L OUT → CH1 → **woofer**, R OUT → CH2 → **tweeter** | **Bi-amp** mode, with its crossover |
 | **Powered speaker / active subwoofer** | L/R OUT → its line input | nothing |
 
-**Active 2-way crossover** (one example, adjust to your drivers):
+**Active 2-way speaker** (bi-amp):
 
 1. Open `http://<speaker-ip>/eq` and tick **Enable EQ and preamp**.
-2. **Left Output Filters** (woofer): two **LP** filters at the crossover
-   frequency (e.g. 2500 Hz), **Q 0.707** each. Two stacked Butterworth
-   filters make a 24 dB/oct Linkwitz-Riley slope.
-3. **Right Output Filters** (tweeter): two **HP** filters at the same
-   frequency, **Q 0.707** each.
-4. Tweeters are usually louder: lower the **Right preamp** until both
-   drivers sound balanced. Add peak or shelf filters to correct each
-   driver's response.
-5. **Apply & Save**: the change is live and stored, no restart needed.
+2. Switch the output mode to **Bi-amp** and choose which output drives the
+   tweeter (the other one drives the woofer).
+3. Set the **crossover**: frequency 800–8000 Hz (2500 Hz by default) and
+   slope **LR2**, **LR4** (24 dB/oct, the default) or **LR8**
+   (48 dB/oct). The tweeter's output stays silent whenever its high-pass
+   cannot run.
+4. Per output: a **level** (tweeters are usually louder: turn it down until
+   both drivers sound balanced), a **Delay** of up to 2 ms and **Invert
+   polarity**, to make the two drivers add up at the crossover; then up to
+   24 bands each to correct the driver, or let [Room EQ](#room-eq) do it.
+5. **Apply & Save**: the change is live and stored, no restart needed. A
+   change of layout fades out and back in (about 25 ms).
 
 > [!WARNING]
 > Always set the tweeter's high-pass **before** playing loud. Full-range
@@ -571,12 +585,28 @@ Below it, one tile per connected speaker, side by side:
 | **Role** | which channel it plays: Front Left … Rear Right, or Mono mix |
 | **Level (dB)** | trim from −30 to 0 dB; turn the louder speakers down, the quietest stays at 0 dB |
 | **Delay (ms)** | 0–50 ms; about **2.9 ms per metre** a speaker is closer to the listener than the farthest one |
+| **Crossover (low-pass)** | subwoofer only: Off, 80, 100, 120 (default) or 150 Hz, a 24 dB/oct Linkwitz-Riley low-pass for everything it plays |
+| **LFE gain (5.1/7.1)** | subwoofer only: 0, +5 or +10 dB on the LFE channel of surround streams |
 | **Live status** | coloured tags: format, rate and bits (`AAC · 48 kHz · 24-bit`), layout (`7.1`, `5.1`, `Stereo`), the channel actually played, buffered or realtime stream, playout sync and I2S correction, buffer fill, TSF quality |
 | **Links** | the speaker's own page and its **EQ** |
 
 Every speaker keeps its settings in its own flash and applies a change at
 once, also while playing. A warning shows when two speakers have the same
 role.
+
+**Web radio.** The **Radio** button in the page's header opens the
+stations: **Favourites**, your **country** (the browser's own at first, any
+other to choose), **Search** and **URL** for any stream address. The station
+lists come from [Radio Browser](https://www.radio-browser.info), straight
+from your browser; the Gateway keeps only the favourites and the volume.
+While the radio plays, a player bar above the room shows the station, the
+song title, the format (`MP3 128 → ALAC 44.1/16`), the volume and **Stop**.
+The Gateway reads the station (MP3 or AAC, HTTP or HTTPS), encodes it to
+ALAC (48 kHz streams at 48 kHz / 24-bit, others at their own rate, 16-bit)
+and plays it to the speakers as a buffered sender of its own, so they play
+it like music from an iPhone (the front pair and the subwoofer). A station
+started while AirPlay plays disconnects the AirPlay sender first; an AirPlay
+sender that connects stops the radio. HLS streams are not supported yet.
 
 ### Speaker: main page (`http://<speaker-ip>/`)
 
@@ -594,7 +624,8 @@ role.
 |---|---|
 | **Surround speaker (5.1 / 7.1)** | role of this speaker (the same setting as on the Gateway's page; a change here shows there too) |
 | **Loudness** | ISO 226 loudness compensation: restores bass and treble at low volume |
-| **Left / Right Output Filters** | two independent chains of up to **24 biquad filters** each: peak, low-pass, high-pass, band-pass, notch, low shelf, high shelf; a **preamp** and a **mute** button per output |
+| **Output mode** | **Mono**: both outputs play the speaker's channel full range. **Bi-amp**: one output the tweeter, the other the woofer, through an LR2 / LR4 / LR8 crossover at 800–8000 Hz, with a delay (up to 2 ms) and polarity per output (see [Option B](#option-b--dac--any-amplifier)). A subwoofer is Mono only. |
+| **Output filters** | per output a chain of up to **24 biquad filters**: peak, low-pass, high-pass, band-pass, notch, low shelf, high shelf; a curve and sliders with Hz / Q, a headroom check, a **preamp** and a **mute** button |
 | **Apply & Save** | applies live and stores in flash |
 
 ### Room calibration
@@ -814,7 +845,7 @@ are never touched by this.
    volume (the Apple TV's volume, then the speaker's level trim).
 3. **I2S** with 32-bit samples at the stream's rate: 44.1 or 48 kHz for
    stereo, 48 kHz for surround. The selected speaker goes to **both slots**
-   (L = R).
+   (L = R), or in bi-amp mode its woofer and tweeter ways to their outputs.
 
 ### Synchronisation
 
@@ -961,7 +992,7 @@ separate from Apple clock acquisition.
 
 | Stream | How the Gateway passes it on |
 |---|---|
-| **Buffered** (type 103: music, films) | one TCP connection per speaker, a copy of the sender's. The Gateway reads the sender whenever its 4 MiB PSRAM buffer has room and sends each speaker from it; when the buffer is full (a speaker keeps old audio longest), the sender waits. Speakers keep up to ~90 s of compressed audio. Sending is paced at twice real time after a 2 s start: at full speed to every speaker at once it kept the Wi-Fi so busy that the sender's clock packets arrived late. At an immediate FLUSH (an iPhone's track change) each speaker's stream skips to the new track at its next frame boundary; read and sent at paced speed only to be dropped, the old track took 2-4 s per change. |
+| **Buffered** (type 103: music, films) | one TCP connection per speaker, a copy of the sender's. The Gateway reads the sender whenever its 4 MiB PSRAM buffer has room and sends each speaker from it; when the buffer is full (a speaker keeps old audio longest), the sender waits. A speaker that takes no audio for a while (a Wi-Fi gap) is waited for and goes on without a gap; it is dropped from the stream only once its audio fills the buffer (less than 512 KiB free), and connected again 30 s later. Speakers keep up to ~90 s of compressed audio. Sending is paced at twice real time after a 2 s start: at full speed to every speaker at once it kept the Wi-Fi so busy that the sender's clock packets arrived late. At an immediate FLUSH (an iPhone's track change) each speaker's stream skips to the new track at its next frame boundary; read and sent at paced speed only to be dropped, the old track took 2-4 s per change. |
 | **Realtime** (type 96: screen mirroring, system audio) | every UDP audio and sync packet is copied to each speaker's ports. A speaker that misses a packet asks the Gateway; several requests for the same packet reach the Apple TV once. |
 
 A speaker that connects in the middle of a session gets the session's
@@ -975,14 +1006,14 @@ once.
 | | Gateway | Speaker (one channel of 7.1) |
 |---|---|---|
 | CPU | relays only, no decoding (not yet measured) | ~31–34 % of one core (measured on a rear speaker) |
-| Audio buffer | none (TCP backpressure) | 6 MB compressed stream buffer in PSRAM |
+| Audio buffer | 4 MiB relay buffer in PSRAM | 6 MB compressed stream buffer in PSRAM |
 | Decode task stack | — | 20 KiB in PSRAM (deepest use ~11 KiB) |
 | Free PSRAM during 7.1 | — | ~400 KiB |
-| Firmware image | ~1.26 MB | ~1.79 MB (no AirPlay receiver code) |
+| Firmware image | ~1.77 MB | ~1.76 MB (no AirPlay receiver code) |
 
 | Board | Core 0 | Core 1 |
 |---|---|---|
-| Gateway | RTSP, PTP | Wi-Fi, LwIP, buffered and realtime relays |
+| Gateway | RTSP, PTP, web radio (decode, ALAC encode) | Wi-Fi, LwIP, buffered and realtime relays, speaker links |
 | Speaker | AAC decoding | Wi-Fi, LwIP, stream reader, I2S playout, status / LED / log tasks |
 
 The FDK changes (single-channel synthesis, 32-bit output, hardware bit
@@ -1013,7 +1044,9 @@ are listed in
 | Speaker link | `speaker/main/spk_link.c` | finds the Gateway, runs every forwarded call locally (`CMD …`) |
 | Protocol | `common/surround/surround_proto.h` | message types and payloads, versioned |
 | Audio engine | `speaker/main/audio` | FIFO, FDK AAC / ALAC decode, PCM store, I2S playout and servo |
-| Room calibration | `main/gw_calib.c`, `main/gw_mic.c`, `common/surround/cal_chirp.c` | microphone capture, chirp search, suggestions (`gw_calib` in the log); the speaker side plays the chirps (`ROOM CAL …`) |
+| Room calibration and Room EQ | `main/gw_calib.c`, `main/gw_mic.c`, `common/surround/cal_chirp.c`, `data/www/roomeq.html` | microphone capture, chirp search and level / delay suggestions; the sweeps of Room EQ, whose response and filters the browser computes (`gw_calib` in the log); the speaker side plays the chirps and sweeps (`ROOM CAL …`) |
+| Web radio | `main/gw_radio.c`, `data/www/radio.js` | reads a station, decodes MP3 / AAC, encodes ALAC and sends it to the buffered relay like an Apple sender (`gw_radio` in the log); the stations panel and player bar |
+| Speaker EQ | `speaker/main/audio/audio_eq.c`, `data/www/eq.html` | 24 biquads per output, mono or bi-amp with a Linkwitz-Riley crossover, delay and polarity per output |
 
 ## Measuring sync
 
@@ -1034,9 +1067,10 @@ are listed in
 
 ## Limitations
 
-- **Experimental.** Tested with one Apple TV, a Gateway and two speakers
-  playing together (three connected): 7.1 and stereo AAC, skip, seek, pause,
-  volume, role and level changes while playing, a second sender taking over.
+- **Experimental.** Tested with one Apple TV and an iPhone, a Gateway and
+  five speakers playing together: 5.1, 7.1 and stereo AAC, skip, seek,
+  pause, volume, role and level changes while playing, a second sender
+  taking over, web radio.
 - **Room calibration** is tested with an INMP441 and up to six speakers.
   An echo more than 12 dB louder than the direct sound (a speaker behind an
   obstacle) still misleads its timing, and the subwoofer's level is left
@@ -1044,7 +1078,7 @@ are listed in
   microphone's low cut (about 1 ms in the simulation), so check it by ear.
 - **Not yet tested:** realtime (screen mirroring, system audio) through the
   Gateway, the stereo routing to front pair and subwoofer, oscilloscope
-  measurements, more than three speakers, a weak Wi-Fi signal.
+  measurements, more than five speakers, a weak Wi-Fi signal.
 - **Late joins:** a speaker that connects during a film waits for the next
   skip or seek; until then it stays silent.
 - **One access point.** All boards must be associated with the same access
