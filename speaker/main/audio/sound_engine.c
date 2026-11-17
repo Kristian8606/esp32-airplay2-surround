@@ -15,6 +15,9 @@
 #include "audio_format_log.h"
 #include "alac_decoder.h"
 #include "airplay_audio_formats.h"
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+#include "surround_player_formats.h"
+#endif
 #include "audio_eq.h"
 #include "audio_fade.h"
 #include "audio_loudness.h"
@@ -166,6 +169,24 @@ static const char *STATUS_TAG = "audio_status";
 
 static void apply_stereo_route(float *block, uint32_t frames,
                                bool multichannel);
+
+/* The payload format of a buffered block by its SSRC: Apple's table first,
+ * then (CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) the Gateway player's lane
+ * formats, which are never advertised to Apple. */
+static const airplay_audio_format_t *payload_format_by_ssrc(uint32_t ssrc) {
+  const airplay_audio_format_t *f = airplay_audio_format_by_ssrc(ssrc);
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+  if (!f) f = surround_player_format_by_ssrc(ssrc);
+#endif
+  return f;
+}
+
+static bool payload_format_supported(const airplay_audio_format_t *f) {
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+  if (surround_player_format_is(f)) return true;
+#endif
+  return airplay_audio_format_supported(f, SOUND_STREAM_BUFFERED);
+}
 
 /* Updated by RTSP control on Core0, consumed by playout on Core1. */
 static volatile int32_t s_volume_target_q15 = 32768;
@@ -1997,7 +2018,7 @@ static void ap2_buffered_processor_task(void *arg) {
      * block is simply consumed. Recognised encodings for which this build
      * has no decoder are skipped too. */
     const airplay_audio_format_t *payload_format =
-        airplay_audio_format_by_ssrc(packet.ssrc);
+        payload_format_by_ssrc(packet.ssrc);
     if (!payload_format) {
       (void)buffered_consume_head(&head, &decision, NULL);
       early_hold_since_us = 0;
@@ -2009,7 +2030,7 @@ static void ap2_buffered_processor_task(void *arg) {
       continue;
     }
 
-    if (!airplay_audio_format_supported(payload_format, SOUND_STREAM_BUFFERED)) {
+    if (!payload_format_supported(payload_format)) {
       (void)buffered_consume_head(&head, &decision, NULL);
       early_hold_since_us = 0;
       if ((++unsupported_skipped & 0xFFU) == 1U)
@@ -2048,7 +2069,7 @@ static void ap2_buffered_processor_task(void *arg) {
         continue;
       }
       const airplay_audio_format_t *previous =
-          airplay_audio_format_by_ssrc(current_ssrc);
+          payload_format_by_ssrc(current_ssrc);
       ESP_LOGI(TAG, "AUDIO FORMAT %s -> %s; SSRC 0x%08" PRIx32
                     " -> 0x%08" PRIx32 ", seq=%" PRIu32 ", block=%d frames",
                previous ? previous->name : "SETUP/initial",
@@ -2358,8 +2379,13 @@ static void ap2_buffered_processor_task(void *arg) {
      * and a 5.1/7.1 <-> stereo change must not route the blocks of the
      * other format still waiting there. The decoder's status right after
      * this decode is this block's. */
-    apply_stereo_route(s.pcm_f32, (uint32_t)frames,
-                       is_aac && aac_decoder_get_mc_status(NULL, NULL, NULL, 0));
+    bool multichannel_block = is_aac && aac_decoder_get_mc_status(NULL, NULL, NULL, 0);
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+    /* A player lane of a 5.1/7.1 file says so in its SSRC (per block). */
+    if (!is_aac && surround_player_format_is(payload_format))
+      multichannel_block = surround_player_format_multichannel(payload_format);
+#endif
+    apply_stereo_route(s.pcm_f32, (uint32_t)frames, multichannel_block);
     const pcm_store_result_t stored = pcm_store_with_backpressure(
         pcm_rtp, s.pcm_f32, (size_t)frames, channels,
         snap.pcm_generation, packet.seq, packet.stream_epoch);
@@ -2369,6 +2395,11 @@ static void ap2_buffered_processor_task(void *arg) {
           audio_log_stereo_playback(TAG, payload_format->codec,
                                     payload_format->sample_rate,
                                     payload_format->bits_per_sample, "buffered");
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+        else if (payload_format->channels == 1)
+          ESP_LOGI(TAG, "PLAYING buffered %s (player lane, both slots)",
+                   payload_format->name);
+#endif
         playback_announced = true;
       }
       expected_timestamp = packet.rtp + (uint32_t)frames;
@@ -4441,11 +4472,20 @@ esp_err_t sound_engine_start_buffered(uint16_t port) {
   snapshot_state(&fmt_snap);
   const int codec_type = strcmp(fmt_snap.format.codec, "AAC") == 0 ? 4 :
       strcmp(fmt_snap.format.codec, "ALAC") == 0 ? 2 : -1;
-  if (!airplay_audio_format_resolve(SOUND_STREAM_BUFFERED, 0, codec_type,
-                                    fmt_snap.format.sample_rate,
-                                    fmt_snap.format.frame_size,
-                                    fmt_snap.format.bits_per_sample,
-                                    fmt_snap.format.channels)) {
+  bool format_ok = airplay_audio_format_resolve(SOUND_STREAM_BUFFERED, 0, codec_type,
+                                               fmt_snap.format.sample_rate,
+                                               fmt_snap.format.frame_size,
+                                               fmt_snap.format.bits_per_sample,
+                                               fmt_snap.format.channels) != NULL;
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+  /* A player lane format (one channel), never one of Apple's. */
+  if (!format_ok && codec_type == 2)
+    format_ok = surround_player_format_find(fmt_snap.format.sample_rate,
+                                            fmt_snap.format.bits_per_sample,
+                                            fmt_snap.format.channels,
+                                            fmt_snap.format.frame_size) != NULL;
+#endif
+  if (!format_ok) {
     ESP_LOGE(TAG,
              "Buffered format rejected codec=%s sr=%d ch=%d bits=%d frame=%d",
              fmt_snap.format.codec, fmt_snap.format.sample_rate,

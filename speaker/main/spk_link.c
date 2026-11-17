@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include "aac_decoder.h"
+#include "alac_decoder.h"
 #include "airplay_log.h"
 #include "amp_control.h"
 #include "sound_engine.h"
@@ -625,6 +626,15 @@ static void dispatch(int fd, uint8_t type, const uint8_t *p, size_t len) {
       sound_engine_set_playout_latency_samples(m.latency_samples);
       break;
     }
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+    case SURROUND_MSG_SET_ALAC_CONFIG: {
+      PAYLOAD(surround_alac_config_t, m);
+      AP_LOGI(TAG, "CMD set_alac_config %u bit, %u ch, pb/mb/kb %u/%u/%u",
+              m.config[5], m.config[9], m.config[6], m.config[7], m.config[8]);
+      alac_decoder_set_player_config(m.config);
+      break;
+    }
+#endif
     default:
       AP_LOGW(TAG, "unknown message 0x%02x (%u bytes)", type, (unsigned)len);
       break;

@@ -573,6 +573,41 @@ endmenu
 
 menu "USB Player (experimental)"
 
+    config AIRPLAY_SURROUND_PLAYER_STREAMS
+        bool "Player streams: one channel per speaker (ALAC)"
+        default n
+        help
+            ROADMAP_USB_PLAYER.md, phase 1. Speaker: also takes the
+            Gateway player's lane formats (common/surround/
+            surround_player_formats.h): ALAC 44.1/48 kHz, 16/24 bit, one
+            channel, written to both output slots, so the stereo route, EQ
+            and bi-amp see what a LEFT/RIGHT route gives today. Apple and
+            radio streams are untouched. Off: those SSRCs are skipped as
+            unknown, as today.
+
+    config GATEWAY_PLAYER_TEST_RADIO_ONE_CHANNEL
+        bool "Test: the web radio sends one channel to all speakers"
+        depends on AIRPLAY_ROLE_GATEWAY && AIRPLAY_SURROUND_PLAYER_STREAMS
+        default n
+        help
+            Phase 1 test only. Instead of stereo ALAC the web radio sends
+            one channel, 0.5 * (L + R), in the player's lane format to
+            every speaker (the format announced stays the radio's stereo
+            one). Each speaker plays it in both slots: L, R and the
+            subwoofer hear the same mono signal, centre and surrounds stay
+            silent as with any stereo source. Needs speakers built with
+            AIRPLAY_SURROUND_PLAYER_STREAMS. Leave off.
+
+    config GATEWAY_PLAYER_TEST_RADIO_MULTICHANNEL
+        bool "Test: mark that channel as one of a 5.1/7.1 file"
+        depends on GATEWAY_PLAYER_TEST_RADIO_ONE_CHANNEL
+        default n
+        help
+            Phase 1 test only. The radio's one channel goes out as a lane of
+            a 5.1/7.1 file: the speakers skip their stereo route (centre and
+            surrounds play it too) and the subwoofer applies its LFE gain,
+            as with a 5.1/7.1 AAC stream. Leave off.
+
     config GATEWAY_PLAYER_BENCH
         bool "ALAC encoder bench at boot (measurements only)"
         depends on AIRPLAY_ROLE_GATEWAY

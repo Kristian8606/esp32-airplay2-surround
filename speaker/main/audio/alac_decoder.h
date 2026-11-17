@@ -28,3 +28,10 @@ int alac_decoder_decode_float(alac_decoder_t *decoder, const uint8_t *input,
                               size_t input_len, float *output,
                               size_t output_capacity_frames,
                               alac_decode_info_t *info);
+
+/* USB player (SURROUND_MSG_SET_ALAC_CONFIG, CONFIG_AIRPLAY_SURROUND_PLAYER_
+ * STREAMS): the lane encoder's 24-byte ALACSpecificConfig. Only a
+ * one-channel decoder whose frame length, depth, channel count and rate
+ * match it takes it, when it is created; every other stream builds the
+ * reference cookie (40/10/14) as before. */
+void alac_decoder_set_player_config(const uint8_t config[24]);

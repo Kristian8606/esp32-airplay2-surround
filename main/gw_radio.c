@@ -50,6 +50,20 @@
 #include "sound_engine.h"
 #include "web_server_internal.h"
 #include "airplay_audio_formats.h"
+#if CONFIG_GATEWAY_PLAYER_TEST_RADIO_ONE_CHANNEL
+/* Phase 1 test (off by default): one channel, 0.5 * (L + R), in the
+ * player's lane format to every speaker. See Kconfig. */
+#include "gw_speakers.h"
+#include "surround_player_formats.h"
+#define RADIO_CH 1
+#if CONFIG_GATEWAY_PLAYER_TEST_RADIO_MULTICHANNEL
+#define RADIO_TEST_MC true
+#else
+#define RADIO_TEST_MC false
+#endif
+#else
+#define RADIO_CH 2
+#endif
 
 static const char *TAG = "gw_radio";
 
@@ -450,8 +464,24 @@ static void anchor_now(stream_t *o) {
   o->need_anchor = false;
 }
 
+
 /* Encode, seal and send the full frame in o->pcm. */
 static bool send_frame(stream_t *o) {
+#if CONFIG_GATEWAY_PLAYER_TEST_RADIO_ONE_CHANNEL
+  if (o->bits == 16) {
+    int16_t *d = (int16_t *)o->in;
+    for (size_t i = 0; i < RADIO_FRAME; ++i)
+      d[i] = (int16_t)(((int32_t)o->pcm[2 * i] + o->pcm[2 * i + 1]) >> 1);
+  } else { /* 24 bit: (L + R) * 128, exact */
+    uint8_t *d = o->in;
+    for (size_t i = 0; i < RADIO_FRAME; ++i) {
+      const int32_t v = ((int32_t)o->pcm[2 * i] + o->pcm[2 * i + 1]) * 128;
+      *d++ = (uint8_t)v;
+      *d++ = (uint8_t)(v >> 8);
+      *d++ = (uint8_t)(v >> 16);
+    }
+  }
+#else
   const size_t n = RADIO_FRAME * 2U;
   if (o->bits == 16) {
     memcpy(o->in, o->pcm, n * sizeof(int16_t));
@@ -464,6 +494,7 @@ static bool send_frame(stream_t *o) {
       *d++ = (uint8_t)(v >> 8);
     }
   }
+#endif
   esp_audio_enc_in_frame_t in = {.buffer = o->in, .len = (uint32_t)o->in_size};
   esp_audio_enc_out_frame_t out = {.buffer = o->out, .len = (uint32_t)o->out_size};
   if (esp_alac_enc_process(o->enc, &in, &out) != ESP_AUDIO_ERR_OK ||
@@ -516,10 +547,23 @@ static bool session_open(stream_t *o, int src_rate, int volume_db) {
     return false;
   }
   o->ssrc = f->ssrc;
+#if CONFIG_GATEWAY_PLAYER_TEST_RADIO_ONE_CHANNEL
+  /* The session stays the radio's stereo format; the blocks carry the
+   * player lane SSRC, and each speaker switches to it on the first one. */
+  const airplay_audio_format_t *lane =
+      surround_player_lane_format(o->rate, o->bits, RADIO_TEST_MC);
+  if (!lane) {
+    st_set(R_FAILED, "No player lane format for %d Hz / %d bit", o->rate, o->bits);
+    return false;
+  }
+  o->ssrc = lane->ssrc;
+  ESP_LOGW(TAG, "TEST: one channel 0.5(L+R) to every speaker as %s (SSRC 0x%08" PRIx32 ")",
+           lane->name, lane->ssrc);
+#endif
 
   esp_alac_enc_config_t ec = ESP_ALAC_ENC_CONFIG_DEFAULT();
   ec.sample_rate = o->rate;
-  ec.channel = 2;
+  ec.channel = RADIO_CH;
   ec.bits_per_sample = (uint8_t)o->bits;
   ec.fast_mode = true;
   ec.frame_samples = RADIO_FRAME;
@@ -566,6 +610,15 @@ static bool session_open(stream_t *o, int src_rate, int volume_db) {
   sound_engine_set_format(&fmt);
   sound_engine_set_encryption(&ciph);
   memset(&ciph, 0, sizeof(ciph));
+#if CONFIG_GATEWAY_PLAYER_TEST_RADIO_ONE_CHANNEL
+  /* Phase 1.2 test: the encoder's own cookie, as the player will send it. */
+  if (ei.codec_spec_info && ei.spec_info_len >= 24) {
+    surround_alac_config_t ac;
+    memcpy(ac.config, ei.codec_spec_info + (ei.spec_info_len - 24), sizeof(ac.config));
+    gw_speakers_send(SURROUND_MSG_SET_ALAC_CONFIG, &ac, sizeof(ac));
+    ESP_LOGW(TAG, "TEST: SET_ALAC_CONFIG sent to the speakers");
+  }
+#endif
   if (sound_engine_start_buffered(0) != ESP_OK) {
     st_set(R_FAILED, "The relay did not start");
     return false;

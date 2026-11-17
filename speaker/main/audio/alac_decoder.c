@@ -8,6 +8,11 @@
 #include "esp_audio_dec.h"
 #include "esp_log.h"
 #include "airplay_log.h"
+#include "sdkconfig.h"
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#endif
 
 #define ALAC_COOKIE_LEN 24U
 
@@ -41,6 +46,42 @@ static void put_be32(uint8_t *p, uint32_t v) {
  * depth, channel count and sample rate. The ALAC reference defaults are
  * pb=40, mb=10, kb=14, maxRun=255. maxFrameBytes/avgBitRate may be zero when
  * unknown. Multi-byte fields in the cookie are big-endian. */
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+static portMUX_TYPE s_player_mux = portMUX_INITIALIZER_UNLOCKED;
+static uint8_t s_player_config[ALAC_COOKIE_LEN];
+static bool s_player_config_valid;
+
+void alac_decoder_set_player_config(const uint8_t config[24]) {
+  taskENTER_CRITICAL(&s_player_mux);
+  memcpy(s_player_config, config, sizeof(s_player_config));
+  s_player_config_valid = true;
+  taskEXIT_CRITICAL(&s_player_mux);
+}
+
+static uint32_t get_be32(const uint8_t *p) {
+  return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
+}
+
+/* The Gateway's lane cookie, when it describes this decoder's stream. */
+static bool player_cookie(alac_decoder_t *d) {
+  uint8_t c[ALAC_COOKIE_LEN];
+  bool valid;
+  taskENTER_CRITICAL(&s_player_mux);
+  valid = s_player_config_valid;
+  memcpy(c, s_player_config, sizeof(c));
+  taskEXIT_CRITICAL(&s_player_mux);
+  if (!valid || d->config.channels != 1 || c[9] != 1U ||
+      get_be32(c) != (uint32_t)d->config.frame_size ||
+      c[5] != (uint8_t)d->config.bits_per_sample ||
+      get_be32(c + 20) != (uint32_t)d->config.sample_rate)
+    return false;
+  memcpy(d->cookie, c, sizeof(d->cookie));
+  ESP_LOGI(TAG, "ALAC cookie from the Gateway: %u bit, pb/mb/kb %u/%u/%u, maxRun %u",
+           c[5], c[6], c[7], c[8], (unsigned)((c[10] << 8) | c[11]));
+  return true;
+}
+#endif
+
 static void make_cookie(alac_decoder_t *d) {
   memset(d->cookie, 0, sizeof(d->cookie));
   put_be32(d->cookie + 0, (uint32_t)d->config.frame_size);
@@ -63,6 +104,9 @@ static bool open_decoder(alac_decoder_t *d) {
   }
 
   make_cookie(d);
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+  (void)player_cookie(d); /* a lane of the Gateway's player: its own cookie */
+#endif
   esp_alac_dec_cfg_t cfg = ESP_ALAC_DEC_CONFIG_DEFAULT();
   cfg.codec_spec_info = d->cookie;
   cfg.spec_info_len = sizeof(d->cookie);
@@ -200,7 +244,13 @@ int alac_decoder_decode_float(alac_decoder_t *decoder, const uint8_t *input,
                               size_t input_len, float *output,
                               size_t output_capacity_frames,
                               alac_decode_info_t *info) {
-  if (!decoder || decoder->config.channels != 2 || !output) {
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+  /* A player lane: one channel, written to both slots (stereo output). */
+  const bool one_channel = decoder && decoder->config.channels == 1;
+#else
+  const bool one_channel = false;
+#endif
+  if (!decoder || (decoder->config.channels != 2 && !one_channel) || !output) {
     return -1;
   }
   int frames = decode_pcm(decoder, input, input_len, output_capacity_frames, info);
@@ -212,6 +262,18 @@ int alac_decoder_decode_float(alac_decoder_t *decoder, const uint8_t *input,
   const float scale = sample_bytes == 3 ? 0x1p-23f : 0x1p-15f;
   const int32_t sign = sample_bytes == 3 ? 0x800000 : 0x8000;
   const uint8_t *sample_data = decoder->pcm;
+  if (one_channel) {
+    for (size_t f = 0; f < (size_t)frames; ++f, sample_data += sample_bytes) {
+      int32_t sample = (int32_t)sample_data[0] | ((int32_t)sample_data[1] << 8);
+      if (sample_bytes == 3) sample |= (int32_t)sample_data[2] << 16;
+      if (sample & sign) sample -= sign * 2;
+      const float v = (float)sample * scale;
+      output[2 * f] = v;
+      output[2 * f + 1] = v;
+    }
+    if (info) info->channels = 2; /* the layout written to output */
+    return frames;
+  }
   for (size_t sample_index = 0; sample_index < (size_t)frames * 2;
        ++sample_index, sample_data += sample_bytes) {
     int32_t sample = (int32_t)sample_data[0] | ((int32_t)sample_data[1] << 8);

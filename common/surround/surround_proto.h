@@ -18,8 +18,18 @@
 #include <assert.h>
 #include <stdint.h>
 
+#include "sdkconfig.h"
+
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+/* 13: USB player lanes (surround_player_formats.h) and SET_ALAC_CONFIG. Only
+ * with the experimental option, on both sides: a speaker that cannot play
+ * the player's lanes does not join a Gateway that sends them, and gets the
+ * Gateway's firmware through FW_UPDATE as for any version change. */
+#define SURROUND_PROTO_VERSION   13
+#else
 #define SURROUND_PROTO_VERSION   12 /* 10: crossover, 11: LFE gain in CONFIG,
                                      * 12: room EQ sweeps in CAL_PLAY */
+#endif
 /* The first version whose speakers install firmware from the Gateway
  * (FW_UPDATE). A Gateway keeps updating a speaker of any version from this
  * one on, also when their versions differ: HELLO and FW_UPDATE never change
@@ -88,6 +98,10 @@ typedef enum {
   SURROUND_MSG_REALTIME_FLUSH_TO_RTP = 0x1f,
   SURROUND_MSG_REALTIME_FLUSH_WAIT_ANCHOR = 0x20,
   SURROUND_MSG_REALTIME_ANCHOR = 0x21,
+  /* USB player (version 13): the ALACSpecificConfig of the lane encoder,
+   * before START_BUFFERED. Optional: without it the speaker builds the
+   * reference cookie (pb/mb/kb 40/10/14) as for every ALAC stream. */
+  SURROUND_MSG_SET_ALAC_CONFIG = 0x22,
 
   /* Gateway -> speaker: link */
   SURROUND_MSG_PING = 0x30,
@@ -138,6 +152,13 @@ typedef struct __attribute__((packed)) {
 typedef struct __attribute__((packed)) {
   uint8_t stream_type; /* sound_stream_t */
 } surround_stream_type_t;
+
+/* The 24-byte ALACSpecificConfig, big-endian fields as in the MP4 'alac'
+ * atom: frameLength(4) compatibleVersion(1) bitDepth(1) pb mb kb (1 each)
+ * numChannels(1) maxRun(2) maxFrameBytes(4) avgBitRate(4) sampleRate(4). */
+typedef struct __attribute__((packed)) {
+  uint8_t config[24];
+} surround_alac_config_t;
 
 typedef struct __attribute__((packed)) {
   char codec[16];
@@ -333,6 +354,7 @@ static_assert(sizeof(surround_status_t) <= SURROUND_MAX_PAYLOAD, "status");
 static_assert(sizeof(surround_config_t) <= SURROUND_MAX_PAYLOAD, "config");
 static_assert(sizeof(surround_time_t) <= SURROUND_MAX_PAYLOAD, "time");
 static_assert(sizeof(surround_format_t) <= SURROUND_MAX_PAYLOAD, "format");
+static_assert(sizeof(surround_alac_config_t) == 24, "ALACSpecificConfig");
 static_assert(sizeof(surround_encryption_t) <= SURROUND_MAX_PAYLOAD, "key");
 static_assert(sizeof(surround_deferred_flush_t) <= SURROUND_MAX_PAYLOAD,
               "flush");
