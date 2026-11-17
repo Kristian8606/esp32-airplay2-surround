@@ -20,6 +20,9 @@
 #include "gw_speakers.h"
 #include "apple_clock.h"
 #include "socket_utils.h"
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+#include <sys/uio.h>
+#endif
 
 static const char *TAG = "gw_relay";
 
@@ -163,10 +166,19 @@ static struct {
   bool playing;
   bool was_playing;
   int64_t playing_since_us;
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+  /* This sender connection is the Gateway's own player in lane mode
+   * (latched at accept from s_lanes_next): every frame carries its lane in
+   * the RTP header and each speaker gets only its own. */
+  bool lanes;
+#endif
 } s = {.listen_sock = -1, .client_sock = -1};
 
 static portMUX_TYPE s_flush_mux = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t s_flush_req_gen, s_flush_req_seq;
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+static bool s_lanes_next; /* gw_relay_set_lanes(): for the next connection */
+#endif
 
 static uint32_t read_be32(const uint8_t *p) {
   return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
@@ -187,6 +199,38 @@ static uint64_t frame_start(uint64_t i) {
 static uint64_t frame_end(uint64_t i) {
   return i + 1U < s.ix_head ? fx(i + 1U)->off : s.frames_end;
 }
+
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+/* ---- lane mode (USB player, ROADMAP_USB_PLAYER.md phase 2) ----
+ * The player writes one sub-frame per lane for every RTP frame, with the
+ * same seq and RTP time. The lane is in the RTP header's CC bits (byte 0,
+ * low nibble): the speakers read only the 23-bit sequence number from that
+ * word and the cipher authenticates bytes 4..11 only, so the frame goes to
+ * the speaker unchanged. Lane = role + 2 (mono mix 1, L 2 ... Rrs 9); 0 =
+ * every speaker. FLUSH, pacing, hold, joining and stall handling are the
+ * shared stream's, as for Apple; a speaker just skips the other lanes. */
+#define GW_RELAY_LANE_IOV 16
+
+static uint8_t frame_lane(uint64_t i) {
+  return s.ring[(fx(i)->off + 2U) & GW_RELAY_RING_MASK] & 0x0FU;
+}
+
+static bool lane_frame_for(const relay_target_t *t, uint64_t i) {
+  const uint8_t lane = frame_lane(i);
+  return lane == 0U || lane == (uint8_t)(t->want.channel + 2);
+}
+
+/* At a frame boundary, past the released frames of other lanes: a speaker
+ * never waits for (or holds the buffer with) frames it does not get. */
+static void lane_skip(relay_target_t *t) {
+  if (t->state != TGT_LIVE) return;
+  while (t->pos == frame_start(t->ix) && t->ix < s.release_ix &&
+         !lane_frame_for(t, t->ix)) {
+    t->ix++;
+    t->pos = frame_start(t->ix);
+  }
+}
+#endif
 
 static const char *tgt_state_name(tgt_state_t st) {
   switch (st) {
@@ -533,13 +577,102 @@ static void join_targets(int64_t now_us) {
     t->flush_gen = s.release_flush_gen == s.flush_gen ? s.flush_gen
                                                       : s.flush_gen - 1U;
     t->blocked_since_us = now_us;
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+    if (s.lanes) lane_skip(t);
+#endif
     AP_LOGI(TAG, "speaker %s audio starts at the next frame boundary",
             t->want.name);
   }
 }
 
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+/* Lane mode: the speaker's own frames from pos up to the limit, gathered
+ * into one sendmsg(); pos then stays inside an own frame or moves to the
+ * next one. */
+static void send_pending_lanes(relay_target_t *t, int64_t now_us) {
+  target_flush(t);
+  lane_skip(t);
+  const uint64_t limit = target_limit(t);
+  if (t->pos >= limit) {
+    t->blocked_since_us = now_us; /* nothing to send: not stalled */
+    return;
+  }
+  struct iovec iov[GW_RELAY_LANE_IOV];
+  uint64_t seg_end[GW_RELAY_LANE_IOV]; /* stream offset where segment k ends */
+  uint64_t seg_ix[GW_RELAY_LANE_IOV];  /* its frame */
+  int nseg = 0;
+  uint64_t j = t->ix, from = t->pos;
+  while (j < s.ix_head && nseg < GW_RELAY_LANE_IOV) {
+    const uint64_t end = frame_end(j);
+    if (end > limit) break;
+    if (from == frame_start(j) && !lane_frame_for(t, j)) {
+      j++;
+      from = frame_start(j);
+      continue;
+    }
+    /* [from, end) of frame j, split where the ring wraps */
+    while (from < end && nseg < GW_RELAY_LANE_IOV) {
+      const size_t at = (size_t)(from & GW_RELAY_RING_MASK);
+      size_t len = (size_t)(end - from);
+      if (len > GW_RELAY_RING_BYTES - at) len = GW_RELAY_RING_BYTES - at;
+      iov[nseg].iov_base = s.ring + at;
+      iov[nseg].iov_len = len;
+      from += len;
+      seg_end[nseg] = from;
+      seg_ix[nseg] = j;
+      nseg++;
+    }
+    if (from < end) break; /* out of segments inside this frame */
+    j++;
+    from = frame_start(j);
+  }
+  if (nseg == 0) {
+    t->blocked_since_us = now_us;
+    return;
+  }
+  struct msghdr msg = {.msg_iov = iov, .msg_iovlen = nseg};
+  const int n = sendmsg(t->fd, &msg, MSG_DONTWAIT);
+  if (n > 0) {
+    uint64_t left = (uint64_t)n;
+    for (int k = 0; k < nseg; ++k) {
+      const uint64_t seg_start = seg_end[k] - iov[k].iov_len;
+      t->ix = seg_ix[k];
+      if (left < iov[k].iov_len) {
+        t->pos = seg_start + left;
+        left = 0;
+        break;
+      }
+      left -= iov[k].iov_len;
+      t->pos = seg_end[k];
+    }
+    while (t->ix < s.ix_head && frame_end(t->ix) <= t->pos) t->ix++;
+    if (t->ix < s.ix_head && t->pos < frame_start(t->ix)) t->pos = frame_start(t->ix);
+    lane_skip(t);
+    t->total_bytes += (uint64_t)n;
+    t->win_bytes += (uint32_t)n;
+    if (t->stall_logged) {
+      AP_LOGI(TAG, "speaker %s takes audio again after %" PRId64 " ms",
+              t->want.name, (now_us - t->blocked_since_us) / 1000LL);
+      t->stall_logged = false;
+    }
+    t->blocked_since_us = now_us;
+  } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK ||
+                       errno == EINTR)) {
+    /* Its FIFO or the network is full: it waits, the others go on. */
+  } else {
+    close_target(t, "send failed", true);
+  }
+}
+#endif
+
 static void send_pending(relay_target_t *t, int64_t now_us) {
   if (t->state != TGT_LIVE) return;
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+  if (s.lanes) {
+    send_pending_lanes(t, now_us);
+    return;
+  }
+#endif
   target_flush(t);
   const uint64_t limit = target_limit(t);
   if (t->pos >= limit) {
@@ -572,6 +705,9 @@ static void send_pending(relay_target_t *t, int64_t now_us) {
 static bool wants_write(relay_target_t *t) {
   if (t->state != TGT_LIVE) return false;
   target_flush(t);
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+  if (s.lanes) lane_skip(t);
+#endif
   return t->pos < target_limit(t);
 }
 
@@ -602,6 +738,9 @@ static void check_targets(int64_t now_us) {
       continue;
     }
     if (t->state != TGT_LIVE) continue;
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+    if (s.lanes) lane_skip(t);
+#endif
     if (t->pos >= target_limit(t)) {
       /* Nothing to send is not a stall: the sender sends in bursts (6 s
        * apart from the iPhone, 102 s at the end of a track on the board,
@@ -664,6 +803,10 @@ static void accept_client(void) {
   close_client("replaced by a new connection");
   s.client_sock = c;
   stream_reset();
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+  s.lanes = __atomic_load_n(&s_lanes_next, __ATOMIC_ACQUIRE);
+  if (s.lanes) AP_LOGI(TAG, "sender is the Gateway's player: lane mode");
+#endif
   for (size_t i = 0; i < SURROUND_MAX_SPEAKERS; ++i) {
     s.tgt[i].hold = true;
     s.tgt[i].since_us = 0;
@@ -716,6 +859,10 @@ static void relay_task(void *arg) {
     }
     advance_release(now_us);
     join_targets(now_us);
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+    if (s.lanes)
+      for (size_t i = 0; i < SURROUND_MAX_SPEAKERS; ++i) lane_skip(&s.tgt[i]);
+#endif
     advance_tail();
     const int sel_client = connected && can_receive() ? s.client_sock : -1;
 
@@ -853,6 +1000,9 @@ esp_err_t gw_relay_start(uint16_t requested_port, uint16_t *bound_port) {
 }
 
 void gw_relay_stop(void) {
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+  __atomic_store_n(&s_lanes_next, false, __ATOMIC_RELEASE);
+#endif
   s.running = false;
   for (int i = 0; s.task && i < GW_RELAY_STOP_WAIT_MS / 10; ++i) {
     vTaskDelay(pdMS_TO_TICKS(10));
@@ -867,6 +1017,12 @@ bool gw_relay_is_idle(void) { return !s.running && !s.task; }
 void gw_relay_set_playing(bool playing) {
   __atomic_store_n(&s.playing, playing, __ATOMIC_RELEASE);
 }
+
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+void gw_relay_set_lanes(bool lanes) {
+  __atomic_store_n(&s_lanes_next, lanes, __ATOMIC_RELEASE);
+}
+#endif
 
 void gw_relay_flush(uint32_t until_seq) {
   taskENTER_CRITICAL(&s_flush_mux);

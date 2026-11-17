@@ -20,6 +20,8 @@ set(GATEWAY_SRCS
 )
 if(CONFIG_GATEWAY_PLAYER_BENCH)
     list(APPEND GATEWAY_SRCS "gw_bench.c" "gw_bench_alac_lite.c")
+elseif(CONFIG_GATEWAY_PLAYER_TEST_RADIO_LANES)
+    list(APPEND GATEWAY_SRCS "gw_bench_alac_lite.c")
 endif()
 if(CONFIG_AIRPLAY_HARDWARE_BUTTONS)
     list(APPEND GATEWAY_SRCS "playback_buttons.c")

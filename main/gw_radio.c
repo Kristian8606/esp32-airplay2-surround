@@ -64,6 +64,17 @@
 #else
 #define RADIO_CH 2
 #endif
+#if CONFIG_GATEWAY_PLAYER_TEST_RADIO_LANES
+/* Phase 2 test (off by default): one lane per speaker role, as the player
+ * will send. See Kconfig. */
+#include "gw_bench_alac_lite.h"
+#include "gw_relay.h"
+#include "surround_player_formats.h"
+#define RADIO_LANES 4
+/* The light ALAC encoder (order 4): four esp_alac_enc lanes took ~50 % of
+ * Core 0 and the radio fell behind real time (2026-11-18). */
+#define RADIO_LANE_ORDER 4
+#endif
 
 static const char *TAG = "gw_radio";
 
@@ -378,6 +389,19 @@ typedef struct {
   int64_t anchor_ns; /* local time of anchor_rtp */
   uint32_t anchor_rtp;
   int64_t log_us;
+#if CONFIG_GATEWAY_PLAYER_TEST_RADIO_LANES
+  struct {
+    uint8_t tag;   /* lane in the RTP header: role + 2 */
+    bool mix;      /* 0.5 * (L + R) instead of one side */
+    uint8_t side;  /* 0 = L, 1 = R when !mix */
+    int bits;
+    uint32_t ssrc;
+    alac_lite_t enc;
+    bool open;
+    size_t out_size;
+    uint8_t *out;
+  } lane[RADIO_LANES];
+#endif
 } stream_t;
 
 static int64_t lead_ns(const stream_t *o) {
@@ -464,9 +488,90 @@ static void anchor_now(stream_t *o) {
   o->need_anchor = false;
 }
 
+#if CONFIG_GATEWAY_PLAYER_TEST_RADIO_LANES
+/* Phase 2 test: one sub-frame per lane, same seq and RTP time, a nonce of
+ * its own each (one counter over all lanes, one key). */
+static bool send_frame_lanes(stream_t *o) {
+  if (o->need_anchor) anchor_now(o);
+  for (int k = 0; k < RADIO_LANES; ++k) {
+    typeof(o->lane[0]) *l = &o->lane[k];
+    if (!l->open) continue;
+    int32_t x[RADIO_FRAME];
+    for (size_t i = 0; i < RADIO_FRAME; ++i) {
+      const int32_t a = o->pcm[2 * i], b = o->pcm[2 * i + 1];
+      x[i] = l->mix ? (a + b) * 128 : (l->bits == 16 ? (l->side ? b : a) : (l->side ? b : a) * 256);
+    }
+    struct { uint32_t encoded_bytes; } out = {
+        (uint32_t)alac_lite_encode(&l->enc, x, RADIO_FRAME, l->out, l->out_size, NULL)};
+    if (out.encoded_bytes == 0) {
+      taskENTER_CRITICAL(&s_mux);
+      s_st.enc_errors++;
+      taskEXIT_CRITICAL(&s_mux);
+      continue; /* this lane skips the frame, the others play it */
+    }
+    const size_t wire = 2U + 12U + out.encoded_bytes + RADIO_TAG_LEN + RADIO_NONCE_TAIL;
+    uint8_t *p = o->pkt;
+    p[0] = (uint8_t)(wire >> 8);
+    p[1] = (uint8_t)wire;
+    uint8_t *h = p + 2;
+    put_be32(h, 0x80000000U | ((uint32_t)l->tag << 24) | (o->seq & RADIO_SEQ_MASK));
+    put_be32(h + 4, o->rtp);
+    put_be32(h + 8, l->ssrc);
+    uint8_t nonce[12] = {0};
+    memcpy(nonce + 4, &o->nonce, 8);
+    o->nonce++;
+    unsigned long long clen = 0;
+    crypto_aead_chacha20poly1305_ietf_encrypt(h + 12, &clen, l->out, out.encoded_bytes,
+                                              h + 4, 8, NULL, nonce, o->key);
+    memcpy(h + 12 + clen, nonce + 4, RADIO_NONCE_TAIL);
+    if (!send_all(o->sock, p, wire)) return false;
+  }
+  o->seq = (o->seq + 1U) & RADIO_SEQ_MASK;
+  o->rtp += RADIO_FRAME;
+  return true;
+}
+
+static bool lanes_open(stream_t *o) {
+  static const struct { uint8_t tag; bool mix; uint8_t side; bool wide; } k_lanes[RADIO_LANES] = {
+      {2, false, 0, false}, /* L */
+      {3, false, 1, false}, /* R */
+      {5, true, 0, true},   /* LFE: 0.5 (L + R), 24 bit */
+      {1, true, 0, true},   /* mono mix: 0.5 (L + R), 24 bit */
+  };
+  for (int k = 0; k < RADIO_LANES; ++k) {
+    typeof(o->lane[0]) *l = &o->lane[k];
+    l->tag = k_lanes[k].tag;
+    l->mix = k_lanes[k].mix;
+    l->side = k_lanes[k].side;
+    l->bits = k_lanes[k].wide ? 24 : o->bits;
+    const airplay_audio_format_t *f = surround_player_lane_format(o->rate, l->bits, false);
+    if (!f) return false;
+    l->ssrc = f->ssrc;
+    alac_lite_init(&l->enc, l->bits, RADIO_LANE_ORDER);
+    l->out_size = RADIO_FRAME * 3U + 64U;
+    l->out = heap_caps_malloc(l->out_size, MALLOC_CAP_SPIRAM);
+    if (!l->out) return false;
+    l->open = true;
+    ESP_LOGW(TAG, "TEST: lane %u (%s) as %s, SSRC 0x%08" PRIx32, (unsigned)l->tag,
+             l->tag == 2 ? "L" : l->tag == 3 ? "R" : l->tag == 5 ? "LFE" : "mono mix",
+             f->name, f->ssrc);
+  }
+  return true;
+}
+
+static void lanes_close(stream_t *o) {
+  for (int k = 0; k < RADIO_LANES; ++k) {
+    free(o->lane[k].out);
+    memset(&o->lane[k], 0, sizeof(o->lane[k]));
+  }
+}
+#endif
 
 /* Encode, seal and send the full frame in o->pcm. */
 static bool send_frame(stream_t *o) {
+#if CONFIG_GATEWAY_PLAYER_TEST_RADIO_LANES
+  return send_frame_lanes(o);
+#endif
 #if CONFIG_GATEWAY_PLAYER_TEST_RADIO_ONE_CHANNEL
   if (o->bits == 16) {
     int16_t *d = (int16_t *)o->in;
@@ -627,6 +732,13 @@ static bool session_open(stream_t *o, int src_rate, int volume_db) {
   sound_engine_set_playout_latency_samples(0);
   const uint16_t port = sound_engine_get_buffered_port();
 
+#if CONFIG_GATEWAY_PLAYER_TEST_RADIO_LANES
+  if (!lanes_open(o)) {
+    st_set(R_FAILED, "TEST: lane encoders not available");
+    return false;
+  }
+  gw_relay_set_lanes(true); /* this connection: lane mode */
+#endif
   o->sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
   struct sockaddr_in a = {.sin_family = AF_INET, .sin_port = htons(port),
                           .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
@@ -664,6 +776,9 @@ static void session_close(stream_t *o) {
   }
   if (o->enc) esp_alac_enc_close(o->enc);
   o->enc = NULL;
+#if CONFIG_GATEWAY_PLAYER_TEST_RADIO_LANES
+  lanes_close(o);
+#endif
   free(o->in);
   free(o->out);
   free(o->pkt);

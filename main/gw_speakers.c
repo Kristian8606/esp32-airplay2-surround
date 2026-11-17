@@ -493,8 +493,15 @@ static void handle_message(gw_speaker_t *sp, uint8_t type, const uint8_t *p,
       break;
     case SURROUND_MSG_CONFIG: {
       if (len != sizeof(sp->config)) break;
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+      /* A new role is a new lane: the relay follows it at once. */
+      const int8_t old_channel = sp->config_valid ? sp->config.channel : sp->hello.channel;
+#endif
       memcpy(&sp->config, p, sizeof(sp->config));
       sp->config_valid = true;
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+      if (sp->config.channel != old_channel) audio_changed();
+#endif
       AP_LOGI(TAG, "speaker %s: channel %d, trim %.1f dB, delay %" PRId32
                    " us, crossover %u Hz, LFE gain +%u dB",
               spk_label(sp), (int)sp->config.channel,
@@ -900,6 +907,9 @@ void gw_speakers_audio_targets(gw_audio_target_t out[SURROUND_MAX_SPEAKERS]) {
     t->pending = sp->audio_pending;
     t->pending_since_us = sp->audio_pending_since_us;
     strlcpy(t->name, spk_label(sp), sizeof(t->name));
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+    t->channel = sp->config_valid ? sp->config.channel : sp->hello.channel;
+#endif
   }
   xSemaphoreGive(s_lock);
 }

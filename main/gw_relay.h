@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "sdkconfig.h"
 
 /* Gateway side of the AirPlay 2 buffered (type 103) audio TCP stream.
  *
@@ -46,3 +47,11 @@ void gw_relay_set_playing(bool playing);
 /* An immediate FLUSH (FLUSHBUFFERED without a start): the frames before
  * until_seq are not sent to the speakers any more (they drop them as well). */
 void gw_relay_flush(uint32_t until_seq);
+
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+/* USB player: the next sender connection is the Gateway's own player in
+ * lane mode (one sub-frame per lane, lane in the RTP header CC bits; each
+ * speaker gets only its role's lane). Call before connecting; cleared by
+ * gw_relay_stop(). An Apple sender's connection is never in lane mode. */
+void gw_relay_set_lanes(bool lanes);
+#endif

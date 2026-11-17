@@ -598,6 +598,18 @@ menu "USB Player (experimental)"
             silent as with any stereo source. Needs speakers built with
             AIRPLAY_SURROUND_PLAYER_STREAMS. Leave off.
 
+    config GATEWAY_PLAYER_TEST_RADIO_LANES
+        bool "Test: the web radio sends one lane per speaker role"
+        depends on AIRPLAY_ROLE_GATEWAY && AIRPLAY_SURROUND_PLAYER_STREAMS && !GATEWAY_PLAYER_TEST_RADIO_ONE_CHANNEL
+        default n
+        help
+            Phase 2 test only. The web radio goes out in the relay's lane
+            mode, as the player will send: four lanes with the same seq
+            and RTP time, L to the left speaker and R to the right one bit
+            for bit, 0.5 * (L + R) as 24 bit to the subwoofer and to a mono
+            mix speaker. Each speaker gets only its own lane. Needs speakers
+            built with AIRPLAY_SURROUND_PLAYER_STREAMS. Leave off.
+
     config GATEWAY_PLAYER_TEST_RADIO_MULTICHANNEL
         bool "Test: mark that channel as one of a 5.1/7.1 file"
         depends on GATEWAY_PLAYER_TEST_RADIO_ONE_CHANNEL

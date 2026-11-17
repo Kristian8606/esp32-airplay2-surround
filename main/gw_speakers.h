@@ -89,6 +89,11 @@ typedef struct {
   bool pending;
   int64_t pending_since_us;
   char name[24];
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+  /* Its role (aac_speaker_t, -1 = mono mix): the player's lane it takes
+   * (gw_relay.c lane mode). */
+  int8_t channel;
+#endif
 } gw_audio_target_t;
 
 /* Changes whenever any entry of gw_speakers_audio_targets() changes. */
