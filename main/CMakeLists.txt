@@ -18,6 +18,9 @@ set(GATEWAY_SRCS
     "gw_calib.c"
     "gw_radio.c"
 )
+if(CONFIG_GATEWAY_PLAYER_BENCH)
+    list(APPEND GATEWAY_SRCS "gw_bench.c" "gw_bench_alac_lite.c")
+endif()
 if(CONFIG_AIRPLAY_HARDWARE_BUTTONS)
     list(APPEND GATEWAY_SRCS "playback_buttons.c")
 endif()

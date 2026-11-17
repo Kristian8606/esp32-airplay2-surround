@@ -570,3 +570,18 @@ menu "RGB Audio/VU LED"
             bool "Steady dim green"
     endchoice
 endmenu
+
+menu "USB Player (experimental)"
+
+    config GATEWAY_PLAYER_BENCH
+        bool "ALAC encoder bench at boot (measurements only)"
+        depends on AIRPLAY_ROLE_GATEWAY
+        default n
+        help
+            Phase 0 of ROADMAP_USB_PLAYER.md. About 20 s after boot one task
+            on Core 0 times the ALAC encoder (mono, 44.1/16, 48/16, 48/24,
+            fast_mode on and off, one and eight encoders), logs the encoder's
+            cookie, bytesShifted and a bit-exact decode round trip, then the
+            same for a light mono ALAC encoder of the bench (phase 0b), all
+            as "BENCH" log lines, and ends. Nothing else changes. Leave off.
+endmenu

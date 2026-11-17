@@ -5,6 +5,9 @@
 #include "audio_diag.h"
 #include "amp_control.h"
 #include "gw_fw.h"
+#if CONFIG_GATEWAY_PLAYER_BENCH
+#include "gw_bench.h"
+#endif
 #include "apple_clock.h"
 #include "gw_speakers.h"
 #include "ap2_hap.h"
@@ -121,6 +124,9 @@ void app_main(void) {
     /* Speaker firmware to hand out; without it speakers update by hand. */
     (void)gw_fw_init();
     /* Without the listener AirPlay still works; speakers just cannot join. */
+#if CONFIG_GATEWAY_PLAYER_BENCH
+    gw_bench_start(); /* phase 0 measurements, off by default */
+#endif
     esp_err_t gw_err = gw_speakers_start();
     if (gw_err != ESP_OK) {
       ESP_LOGE(TAG, "Speaker control link unavailable: %s", esp_err_to_name(gw_err));
