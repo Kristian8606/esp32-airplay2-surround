@@ -49,13 +49,13 @@ set(AIRPLAY_COMMON_PRIV_REQUIRES
     web_server
 )
 
-# Embed web pages (data/www/<page>.html) into the OTA application image.
+# Embed web pages (web/<page>.html) into the OTA application image.
 # File changes automatically regenerate the embedded data; no separate
 # filesystem upload is needed. Call after idf_component_register().
 function(airplay_embed_web_pages)
     foreach(page ${ARGN})
         target_add_binary_data(${COMPONENT_LIB}
-            "${AIRPLAY_COMMON_DIR}/../data/www/${page}.html" BINARY
+            "${AIRPLAY_COMMON_DIR}/../web/${page}.html" BINARY
             RENAME_TO "web_${page}_html")
     endforeach()
 endfunction()

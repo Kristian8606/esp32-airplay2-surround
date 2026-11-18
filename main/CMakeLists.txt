@@ -42,11 +42,11 @@ idf_component_register(
 
 airplay_embed_web_pages(index logs speedtest speakers roomeq)
 # The Speakers page's radio controls (gw_radio.c serves /radio.js).
-target_add_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_LIST_DIR}/../data/www/radio.js"
+target_add_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_LIST_DIR}/../web/radio.js"
     BINARY RENAME_TO "web_radio_js")
 if(CONFIG_GATEWAY_USB_PLAYER)
     # The Speakers page's player controls (gw_player.c serves /player.js).
-    target_add_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_LIST_DIR}/../data/www/player.js"
+    target_add_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_LIST_DIR}/../web/player.js"
         BINARY RENAME_TO "web_player_js")
 endif()
 airplay_link_ap2_core()

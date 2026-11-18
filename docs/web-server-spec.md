@@ -17,7 +17,7 @@ Sources: **[black box]** the current web server run on a computer against
 a fake HTTP server and fakes of the firmware, recording every call and
 response; **[board]** `curl` against a running Gateway (v4.5.61,
 2026-11-07); **[pages]** the browser pages that call these APIs
-(`data/www/index.html`, `speedtest.html`); **[callers]** the code that
+(`web/index.html`, `speedtest.html`); **[callers]** the code that
 calls the helpers; **[ESP-IDF]** ESP-IDF v6.1 (`esp_http_server`).
 Rules marked "decided" were chosen where the current behaviour was a flaw
 or is not seen.

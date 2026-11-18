@@ -63,6 +63,9 @@ static const char *gpio_conflict(int pin) {
 #if defined(CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG_ENABLED) || defined(CONFIG_ESP_CONSOLE_USB_CDC)
   if (pin == 19 || pin == 20) return "USB console";
 #endif
+#ifdef CONFIG_GATEWAY_USB_PLAYER_USB
+  if (pin == 19 || pin == 20) return "USB drive";
+#endif
 #endif
 #ifdef CONFIG_ESP_CONSOLE_UART_CUSTOM
   if (pin == CONFIG_ESP_CONSOLE_UART_TX_GPIO || pin == CONFIG_ESP_CONSOLE_UART_RX_GPIO)

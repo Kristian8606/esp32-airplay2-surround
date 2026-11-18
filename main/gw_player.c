@@ -3346,7 +3346,7 @@ static esp_err_t files_handler(httpd_req_t *req) {
 }
 #endif
 
-/* The Speakers page's player controls (data/www/player.js, phase 5). */
+/* The Speakers page's player controls (web/player.js, phase 5). */
 extern const uint8_t web_player_js_start[] asm("_binary_web_player_js_start");
 extern const uint8_t web_player_js_end[] asm("_binary_web_player_js_end");
 
@@ -3358,6 +3358,9 @@ static esp_err_t player_js_handler(httpd_req_t *req) {
 }
 
 void gw_player_register_web(httpd_handle_t server) {
+  /* /api/player/cover?id=N: the browser keeps a cover a day, so the numbers
+   * start somewhere new after every restart, never at an old track's id */
+  s_cover_id = esp_random();
   const httpd_uri_t uris[] = {
       {.uri = "/api/player", .method = HTTP_GET, .handler = status_handler},
       {.uri = "/api/player", .method = HTTP_POST, .handler = control_handler},

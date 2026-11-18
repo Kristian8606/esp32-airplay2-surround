@@ -140,9 +140,13 @@ Click an image to open it full size.
     </td>
   </tr>
   <tr>
-    <td align="center" colspan="2">
+    <td align="center" width="50%">
       <a href="images/player-bar.png"><img src="images/player-bar.png" alt="USB player bar on the speakers page: cover, title and album, a FLAC bit for bit on the front pair" width="100%"></a>
       <br><sub><b>USB player:</b> an album from the USB stick with its cover, bit for bit on the front pair (<a href="#usb-player-experimental">more</a>)</sub>
+    </td>
+    <td align="center" width="50%">
+      <a href="images/player-library.png"><img src="images/player-library.png" alt="USB player Library: the stick's folders and FLAC files, Play folder and + to the queue" width="100%"></a>
+      <br><sub>The Library: the stick's folders and files, <b>Play folder</b>, <b>+</b> to the queue</sub>
     </td>
   </tr>
 </table>
@@ -427,7 +431,7 @@ cd esp32-airplay2-surround
 |---|---|
 | the Gateway's own (proxy, relays, speaker registry, speakers page); its AirPlay receiver (mDNS, pairing, RTSP) is `ap2_core` from [esp-airplay2-core](https://github.com/Kristian8606/esp-airplay2-core) | `main/` |
 | the speaker's own (audio engine, link to the Gateway, EQ page) and FDK AAC | `speaker/main/`, `speaker/components/` |
-| shared (web server, clock, sync protocol) | `common/`, `data/www/`, and the components in `components/` |
+| shared (web server, clock, sync protocol) | `common/`, `web/`, and the components in `components/` |
 | menuconfig options of both | `components/airplay_options/` |
 
 Both use the shared settings in `sdkconfig.defaults`; the Gateway adds
@@ -443,7 +447,7 @@ the same menus; some options matter for one firmware only:
 | Menu | What you can set | For |
 |---|---|---|
 | **Surround Build Role** | the role (set by the folder: leave it); a fixed Gateway address for networks that filter mDNS; the sync test pulse | both |
-| **AirPlay Receiver** | setup Wi-Fi name and password; HomeKit, setup code, manufacturer, artwork; playback buttons and AirPlay model (the icon senders show) | Wi-Fi both, the rest Gateway |
+| **AirPlay Receiver** | setup Wi-Fi name and password; HomeKit, setup code, manufacturer, artwork; playback buttons (for AirPlay and the USB player) and AirPlay model (the icon senders show) | Wi-Fi both, the rest Gateway |
 | **Multichannel Experiment** | 5.1 / 7.1 on or off, default speaker position | both |
 | **I2S Playout** | BCLK / LRCK / DATA / MCLK GPIOs, output latency of your DAC, wired latency test; web admin password | speakers (password both) |
 | **Amplifier Power Control** | amplifier enable GPIO and level | speakers |
@@ -821,7 +825,12 @@ user `admin` and that password.
 
 ## USB player (experimental)
 
-<a href="images/player-bar.png"><img src="images/player-bar.png" alt="Player bar: cover, title, artist and album, format chips, seek, controls, volume and the channel each speaker gets" width="100%"></a>
+<table>
+  <tr>
+    <td width="50%"><a href="images/player-bar.png"><img src="images/player-bar.png" alt="Player bar: cover, title, artist and album, format chips, seek, controls, volume and the channel each speaker gets" width="100%"></a></td>
+    <td width="50%"><a href="images/player-library.png"><img src="images/player-library.png" alt="Library: the USB stick's folders and files" width="100%"></a></td>
+  </tr>
+</table>
 
 **Plug in a USB stick, open the page, press play.** No phone, no app, no
 streaming service: the Gateway itself becomes a music player for the whole
@@ -1178,10 +1187,10 @@ are listed in
 | Speaker link | `speaker/main/spk_link.c` | finds the Gateway, runs every forwarded call locally (`CMD …`) |
 | Protocol | `common/surround/surround_proto.h` | message types and payloads, versioned |
 | Audio engine | `speaker/main/audio` | FIFO, FDK AAC / ALAC decode, PCM store, I2S playout and servo |
-| Room calibration and Room EQ | `main/gw_calib.c`, `main/gw_mic.c`, `common/surround/cal_chirp.c`, `data/www/roomeq.html` | microphone capture, chirp search and level / delay suggestions; the sweeps of Room EQ, whose response and filters the browser computes (`gw_calib` in the log); the speaker side plays the chirps and sweeps (`ROOM CAL …`) |
-| Web radio | `main/gw_radio.c`, `data/www/radio.js` | reads a station, decodes MP3 / AAC, encodes ALAC and sends it to the buffered relay like an Apple sender (`gw_radio` in the log); the stations panel and player bar |
-| USB player | `main/gw_player*.c`, `main/gw_usb.c`, `data/www/player.js` | reads a file (USB drive or HTTP), decodes it on core 0, encodes one ALAC lane per speaker on core 1 and sends them to the buffered relay in lane mode (`gw_player`, `gw_usb` in the log); the Library and the player bar. The speakers take the lanes with **Player streams** (`common/surround/surround_player_formats.h`) |
-| Speaker EQ | `speaker/main/audio/audio_eq.c`, `data/www/eq.html` | 24 biquads per output, mono or bi-amp with a Linkwitz-Riley crossover, delay and polarity per output |
+| Room calibration and Room EQ | `main/gw_calib.c`, `main/gw_mic.c`, `common/surround/cal_chirp.c`, `web/roomeq.html` | microphone capture, chirp search and level / delay suggestions; the sweeps of Room EQ, whose response and filters the browser computes (`gw_calib` in the log); the speaker side plays the chirps and sweeps (`ROOM CAL …`) |
+| Web radio | `main/gw_radio.c`, `web/radio.js` | reads a station, decodes MP3 / AAC, encodes ALAC and sends it to the buffered relay like an Apple sender (`gw_radio` in the log); the stations panel and player bar |
+| USB player | `main/gw_player*.c`, `main/gw_usb.c`, `web/player.js` | reads a file (USB drive or HTTP), decodes it on core 0, encodes one ALAC lane per speaker on core 1 and sends them to the buffered relay in lane mode (`gw_player`, `gw_usb` in the log); the Library and the player bar. The speakers take the lanes with **Player streams** (`common/surround/surround_player_formats.h`) |
+| Speaker EQ | `speaker/main/audio/audio_eq.c`, `web/eq.html` | 24 biquads per output, mono or bi-amp with a Linkwitz-Riley crossover, delay and polarity per output |
 
 ## Measuring sync
 
@@ -1255,6 +1264,9 @@ are listed in
 | Subwoofer silent with surround music | Normal: most music has no LFE. Try a film. |
 | Dropouts | Wi-Fi signal at that speaker and at the Gateway (`/speedtest`, RSSI on the main page). |
 | One speaker early or late | Its **Delay** on `/speakers`; its **Output Latency** (DSP, external processors). |
+| The USB stick is not seen | The Library says *no drive*: the native USB port gets no 5 V (on many DevKitC boards a solder bridge, see [the USB stick](#usb-player-experimental)). *Not FAT32*: format it FAT32 with a Master Boot Record. |
+| A song from the stick stops every few seconds | `buffering: The file comes too slowly` in the Gateway log: a WAV 5.1 / 7.1 or a 7.1 at 24-bit is too heavy; convert it to FLAC (16-bit for 7.1). |
+| No log or no flashing over the Gateway's USB port | The Gateway's console is on its **UART** port; the native USB port is the USB player's. |
 
 Every board streams its log to `http://<board-ip>/logs`. Useful lines:
 
@@ -1280,6 +1292,11 @@ Every board streams its log to `http://<board-ip>/logs`. Useful lines:
 | `NOW PLAYING \| AAC-LC \| 48000 Hz \| 24-bit (F24) \| 7.1 (8ch) \| Front Right (R)` | speaker | the channel actually played |
 | `stereo sources: silent (role Centre (C))` | speaker | what this role plays from a stereo song |
 | `MC CPU … avg …% of one core` | speaker | decoding time per frame |
+| `gw_usb: drive mounted at /usb: 8.1 GB, …` | Gateway | the USB stick is in and read |
+| `gw_player: track 2 of 5: usb:/Music/…` / `gapless on into track 3` | Gateway | the player's queue |
+| `PLAYER playing … (1.18x real time) \| read … decode … encode … send …` | Gateway | the player keeps up when it runs above 1x; where the time goes |
+| `PCM CRC-32 of 10 s from 0.000 s …` | Gateway | a checksum of the decoded samples, to compare with the file (bit for bit) |
+| `PLAYING buffered ALAC … one channel (player lane, both slots)` | speaker | the speaker plays its own channel from the Gateway's player |
 
 For deeper debugging enable **AirPlay Logs and Diagnostics → Log every RTSP
 request and response** in `menuconfig` on the Gateway (verbose; turn it off
@@ -1306,8 +1323,8 @@ afterwards).
   **grants no patent rights**: AAC patent licenses are available through Via
   Licensing or the patent owners.
 - Other components (ESP-IDF, `esp_audio_codec`, libsodium, mDNS, cJSON,
-  led_strip) come through the ESP-IDF component manager under their own
-  licenses.
+  led_strip, and `usb` / `usb_host_msc` for the USB player's drive) come
+  through the ESP-IDF component manager under their own licenses.
 
 Related projects by the same author: the `standalone` branch of
 [esp32-airplay2-surround](https://github.com/Kristian8606/esp32-airplay2-surround),
