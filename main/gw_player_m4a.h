@@ -43,6 +43,9 @@ typedef struct {
   uint32_t n_stsc;
   m4a_stts_t *stts;
   uint32_t n_stts;
+  /* gapless (phase 3d.3): the encoder's priming samples at the start and
+   * the samples that are music (iTunSMPB, else the edit list); 0 = none */
+  uint64_t priming_ts, valid_ts; /* in timescale units */
   int64_t moov_off;           /* where moov is, for the log */
   bool moov_last;             /* moov after mdat */
 } m4a_track_t;

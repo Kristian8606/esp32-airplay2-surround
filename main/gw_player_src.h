@@ -57,6 +57,7 @@ esp_err_t flac_parse(const uint8_t *buf, size_t len, wav_info_t *info, uint64_t 
  * new decoder with. fLaC points at the file's "fLaC". */
 typedef struct {
   uint32_t min_block, max_block;
+  uint32_t max_frame; /* bytes, 0 = not known */
   uint8_t streaminfo[34];
 } flac_stream_t;
 void flac_stream_info(const uint8_t *fLaC, flac_stream_t *out);
@@ -64,6 +65,9 @@ void flac_stream_info(const uint8_t *fLaC, flac_stream_t *out);
 /* One FLAC frame header at b (sync 0xFFF8/0xFFF9, CRC-8 checked, the
  * channel count and depth as the stream's): its first sample. False when
  * it is not a frame header. */
+/* The CRC-16 at the end of a whole FLAC frame (len bytes at b) is right. */
+bool flac_frame_crc_ok(const uint8_t *b, size_t len);
+
 bool flac_frame_at(const uint8_t *b, size_t len, const flac_stream_t *st, int channels,
                    int bits, uint64_t *first_sample);
 
@@ -80,6 +84,10 @@ typedef struct {
   uint32_t xing_frames, xing_bytes; /* 0 = not known */
   bool has_toc;
   uint8_t toc[100];
+  /* the LAME tag (phase 3d.3, gapless): the encoder's delay and padding in
+   * samples; lame_ok when there is one */
+  bool lame_ok;
+  int enc_delay, enc_padding;
 } mp3_info_t;
 bool mp3_parse_first(const uint8_t *buf, size_t len, mp3_info_t *m);
 

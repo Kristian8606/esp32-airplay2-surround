@@ -22,6 +22,16 @@
  * that plays. Returns at once; GET /api/player shows how it goes. */
 esp_err_t gw_player_play(const char *url, int volume_db);
 
+/* Phase 3d.3: a queue of up to 64 URLs from index start; same-format
+ * tracks follow each other gapless. add puts one more at the end (also
+ * while it plays); next and prev (to the start of the track after 3 s)
+ * and jump go to another track at once. */
+esp_err_t gw_player_play_queue(const char *const *urls, int n, int start, int volume_db);
+esp_err_t gw_player_add(const char *url);
+esp_err_t gw_player_next(void);
+esp_err_t gw_player_prev(void);
+esp_err_t gw_player_jump(int index);
+
 /* Stops the player and waits until it let go of the speakers. Nothing when
  * it does not play. Not from the player's own task. */
 void gw_player_stop(void);
@@ -42,6 +52,8 @@ bool gw_player_clock_line(apple_clock_line_t *out);
 
 /* GET /api/player (status) and POST /api/player {"cmd":"play","url":...,
  * "vol":-30} | {"cmd":"stop"} | {"cmd":"volume","vol":-25} | {"cmd":"pause"}
- * | {"cmd":"resume"} | {"cmd":"seek","pos":95.5}. POST asks the
+ * | {"cmd":"resume"} | {"cmd":"seek","pos":95.5} | {"cmd":"play","urls":[...],
+ * "index":0} | {"cmd":"add","url":...} | {"cmd":"next"} | {"cmd":"prev"} |
+ * {"cmd":"jump","index":2}. The status shows the queue and its index. POST asks the
  * admin password like the other settings. */
 void gw_player_register_web(httpd_handle_t server);

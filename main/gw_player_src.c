@@ -393,6 +393,15 @@ bool mp3_parse_first(const uint8_t *b, size_t len, mp3_info_t *m) {
       memcpy(m->toc, b + at, 100);
       m->has_toc = true;
     }
+    /* the LAME tag comes 120 bytes after "Xing" (fields, TOC, quality) */
+    const size_t l = x + 120;
+    if (l + 24 <= len && (memcmp(b + l, "LAME", 4) == 0 || memcmp(b + l, "Lavc", 4) == 0 ||
+                          memcmp(b + l, "Lavf", 4) == 0)) {
+      const uint8_t *d = b + l + 21;
+      m->enc_delay = (d[0] << 4) | (d[1] >> 4);
+      m->enc_padding = ((d[1] & 0x0F) << 8) | d[2];
+      m->lame_ok = true;
+    }
   }
   return true;
 }
@@ -404,6 +413,22 @@ void flac_stream_info(const uint8_t *f, flac_stream_t *out) {
   memcpy(out->streaminfo, si, sizeof(out->streaminfo));
   out->min_block = ((uint32_t)si[0] << 8) | si[1];
   out->max_block = ((uint32_t)si[2] << 8) | si[3];
+  out->max_frame = ((uint32_t)si[7] << 16) | ((uint32_t)si[8] << 8) | si[9];
+}
+
+bool flac_frame_crc_ok(const uint8_t *b, size_t len) {
+  static uint16_t table[256];
+  if (!table[1]) {
+    for (uint32_t i = 0; i < 256; ++i) {
+      uint16_t c = (uint16_t)(i << 8);
+      for (int k = 0; k < 8; ++k) c = (uint16_t)((c & 0x8000) ? (c << 1) ^ 0x8005 : c << 1);
+      table[i] = c;
+    }
+  }
+  if (len < 4) return false;
+  uint16_t crc = 0;
+  for (size_t i = 0; i + 2 < len; ++i) crc = (uint16_t)((crc << 8) ^ table[(crc >> 8) ^ b[i]]);
+  return crc == (uint16_t)((b[len - 2] << 8) | b[len - 1]);
 }
 
 static uint8_t crc8_07(const uint8_t *b, size_t n) {
@@ -449,8 +474,8 @@ bool flac_frame_at(const uint8_t *b, size_t len, const flac_stream_t *st, int ch
   if (variable) {
     *first = v;
   } else {
-    if (!st->min_block || st->min_block != st->max_block) return false;
-    *first = v * st->min_block;
+    if (!st->max_block) return false; /* every block but the last has this size */
+    *first = v * st->max_block;
   }
   return true;
 }

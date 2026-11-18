@@ -270,8 +270,46 @@ mem:
   return false;
 }
 
+static uint64_t hex_field(const char **p, const char *end) {
+  while (*p < end && **p == ' ') (*p)++;
+  uint64_t v = 0;
+  int n = 0;
+  for (; *p < end; (*p)++, ++n) {
+    const char c = **p;
+    const int d = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10
+                : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+    if (d < 0) break;
+    v = (v << 4) | (uint64_t)d;
+  }
+  return n ? v : UINT64_MAX;
+}
+
+/* iTunes' gapless tag: " 00000000 PRIMING PADDING TOTAL ..." in hex. */
+static void parse_itunsmpb(m4a_track_t *t, const uint8_t *moov, size_t len) {
+  for (size_t i = 0; i + 8 <= len; ++i) {
+    if (memcmp(moov + i, "iTunSMPB", 8) != 0) continue;
+    size_t n;
+    const uint8_t *d = find_box(moov + i + 8, len - i - 8, "data", &n);
+    if (!d || n < 8 + 30) return;
+    const char *p = (const char *)d + 8, *end = (const char *)d + n;
+    (void)hex_field(&p, end);
+    const uint64_t priming = hex_field(&p, end), padding = hex_field(&p, end),
+                   total = hex_field(&p, end);
+    if (priming == UINT64_MAX || padding == UINT64_MAX || total == UINT64_MAX || !total) return;
+    t->priming_ts = priming;
+    t->valid_ts = total;
+    return;
+  }
+}
+
 static bool parse_moov(m4a_track_t *t, const uint8_t *moov, size_t len, char *why,
                        size_t why_len) {
+  uint32_t movie_ts = 0;
+  {
+    size_t n;
+    const uint8_t *mvhd = child(moov, len, "mvhd", &n);
+    if (mvhd && n >= 20) movie_ts = mvhd[0] == 1 && n >= 28 ? be32(mvhd + 20) : be32(mvhd + 12);
+  }
   size_t pos = 0;
   const uint8_t *type, *trak;
   size_t tlen;
@@ -297,6 +335,23 @@ static bool parse_moov(m4a_track_t *t, const uint8_t *moov, size_t len, char *wh
     const uint8_t *stbl = minf ? child(minf, in, "stbl", &sn) : NULL;
     if (!stbl) continue;
     if (!t->timescale) t->timescale = 1;
+    /* the edit list: media_time is where the music starts (the priming),
+     * the segment its length in the movie's timescale */
+    size_t en, ln;
+    const uint8_t *edts = child(trak, tlen, "edts", &en);
+    const uint8_t *elst = edts ? child(edts, en, "elst", &ln) : NULL;
+    if (elst && ln >= 8 && be32(elst + 4) >= 1 && movie_ts) {
+      const bool v1 = elst[0] == 1;
+      if (ln >= 8 + (v1 ? 20U : 12U)) {
+        const uint64_t seg = v1 ? be64(elst + 8) : be32(elst + 8);
+        const int64_t media = v1 ? (int64_t)be64(elst + 16) : (int32_t)be32(elst + 12);
+        if (media >= 0 && seg) {
+          t->priming_ts = (uint64_t)media;
+          t->valid_ts = seg * t->timescale / movie_ts;
+        }
+      }
+    }
+    parse_itunsmpb(t, moov, len); /* iTunes' tag wins: it is what iTunes plays */
     return parse_stbl(t, stbl, sn, why, why_len);
   }
   snprintf(why, why_len, "M4A without an audio track");
@@ -366,6 +421,9 @@ esp_err_t m4a_open(player_source_t *src, int64_t base, m4a_track_t *t, char *why
   }
   t->moov_off = moov_at;
   t->moov_last = mdat_seen;
+  if (t->valid_ts)
+    ESP_LOGI(TAG, "M4A gapless: %llu priming samples, %llu of music",
+             (unsigned long long)t->priming_ts, (unsigned long long)t->valid_ts);
   ESP_LOGI(TAG, "M4A %s: %u samples in %u chunks, largest %u B, timescale %u, %.1f s, moov %s "
            "(%llu KiB at %lld)",
            t->codec == M4A_ALAC ? "ALAC" : t->codec == M4A_AAC ? "AAC" : "MP3",
