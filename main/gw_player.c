@@ -33,10 +33,12 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
+#include "freertos/message_buffer.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "gw_bench_alac_lite.h"
 #include "gw_calib.h"
+#include "gw_player_decim.h"
 #include "gw_player_m4a.h"
 #include "gw_player_src.h"
 #include "gw_radio.h"
@@ -54,7 +56,7 @@ static const char *TAG = "gw_player";
 
 #define PL_TASK_STACK    12288
 #define PL_TASK_PRIORITY 3
-#define PL_TASK_CORE     0 /* like the radio: core 1 carries WiFi, lwIP and the relay */
+#define PL_TASK_CORE     1 /* filters, encoders, the relay socket: next to lwIP; the decoder task has core 0 */
 #define PL_FRAME         352U   /* samples per ALAC frame, like AirPlay */
 #define PL_READ_CHUNK    8192U
 #define PL_HEADER_MAX    65536U /* the WAV data chunk / the M4A codec must come before this */
@@ -99,7 +101,7 @@ typedef struct {
   player_state_t state;
   char message[96];
   char url[256];
-  char format[48];  /* "WAV 48000 Hz / 24 bit / 5.1" */
+  char format[64];  /* "WAV 48000 Hz / 24 bit / 5.1" */
   int rate, bits, channels, layout;
   int volume_db;
   int lead_ms;
@@ -256,7 +258,7 @@ typedef struct {
 typedef struct {
   int ix;
   char url[PL_URL_MAX];
-  char format[48];
+  char format[64];
   int rate, bits, channels, layout;
   double duration_s;
 } track_info_t;
@@ -335,7 +337,8 @@ typedef struct {
   int64_t max_lead_ns;
   int64_t log_us;
   /* where the time goes, per status window */
-  int64_t t_read_us, t_enc_us, t_send_us, t_dec_us;
+  int64_t t_read_us, t_enc_us, t_send_us, t_dec_us, t_hr_us;
+  int64_t t_put_wait_us, t_get_wait_us; /* the queue full (decoder task) / empty (player) */
   /* MP3 / AAC length, estimated from what the decoder took so far */
   uint64_t dec_bytes, dec_frames;
   size_t id3_bytes;
@@ -349,6 +352,23 @@ typedef struct {
   uint64_t out_left;      /* frames of music left in the input (UINT64_MAX: all) */
   uint64_t trim_start, trim_total; /* encoder delay to drop; music frames (0 = all) */
   uint64_t track_frames;  /* frames of the input that went out (the log: gapless) */
+  /* hi-res (phase 3e): 88.2/96 kHz by 2, 176.4/192 by 4; pcm[] then holds
+   * the filters' 24-bit output at the stream's rate */
+  decim_t hr;
+  int hr_in_rate, hr_bits;
+  /* the decoder task (phase 3e): input, decoders and push_pcm run there;
+   * the queue rb carries their PCM to this task */
+  MessageBufferHandle_t rb;
+  uint8_t *w_msg, *r_msg;  /* a record to send (decoder task), one received (player) */
+  TaskHandle_t w_task;
+  SemaphoreHandle_t w_resume, w_exit;
+  atomic_bool park_req, w_parked;
+  bool w_alive, w_quit;
+  volatile bool in_done;  /* the input is read to its end (or closed): the worker waits */
+  int park_depth;
+  int pcm_bits;           /* the depth of what pcm[] holds: the lanes' */
+  bool hr_worker;         /* the filters run in the decoder task (not for ALAC: its decoder is heavy) */
+  int32_t *w_pack;        /* the decoder task's filtered block, packed by slot */
   /* pause and seek (phase 3d) */
   bool paused, finishing;
   uint32_t paused_rtp;
@@ -416,7 +436,7 @@ static void lanes_refresh(player_t *p) {
       memset(l, 0, sizeof(*l));
       l->role = role;
       l->sig = sig;
-      l->bits = sig.kind == SURROUND_SIG_CHANNEL ? p->wav.bits : 24;
+      l->bits = sig.kind == SURROUND_SIG_CHANNEL ? p->pcm_bits : 24;
       const airplay_audio_format_t *f = surround_player_lane_format(p->rate, l->bits, mc);
       if (!f) continue;
       l->ssrc = f->ssrc;
@@ -484,7 +504,7 @@ static void lane_samples(const player_t *p, const lane_t *l, int32_t *x) {
       break;
     case SURROUND_SIG_HALF_LR: {
       const int32_t *a = p->pcm[0], *b = p->pcm[1];
-      if (p->wav.bits == 16) {
+      if (p->pcm_bits == 16) {
         for (size_t i = 0; i < PL_FRAME; ++i) x[i] = (a[i] + b[i]) * 128; /* exact */
       } else {
         for (size_t i = 0; i < PL_FRAME; ++i) x[i] = (a[i] + b[i]) >> 1;
@@ -495,7 +515,7 @@ static void lane_samples(const player_t *p, const lane_t *l, int32_t *x) {
       int n = 0;
       for (int c = 0; c < 8; ++c)
         if (c != SURROUND_ROLE_LFE && (p->wav.present & (1U << c))) n++;
-      const int up = p->wav.bits == 16 ? 256 : 1;
+      const int up = p->pcm_bits == 16 ? 256 : 1;
       for (size_t i = 0; i < PL_FRAME; ++i) {
         int64_t s = 0;
         for (int c = 0; c < 8; ++c)
@@ -555,7 +575,7 @@ static bool send_frame(player_t *p) {
  * radio's stereo one for the rate (the lanes' SSRCs tell the speakers the
  * rest, per block). */
 static bool session_open(player_t *p, int volume_db) {
-  p->rate = p->wav.rate;
+  p->rate = p->hr.factor > 1 ? p->hr.out_rate : p->wav.rate;
   const int ann_bits = p->rate == 48000 ? 24 : 16;
   esp_fill_random(p->key, sizeof(p->key));
   p->seq = esp_random() & PL_SEQ_MASK;
@@ -580,8 +600,8 @@ static bool session_open(player_t *p, int volume_db) {
     return false;
   }
   p->session = true;
-  p->sess_rate = p->wav.rate;
-  p->sess_bits = p->wav.bits;
+  p->sess_rate = p->rate;
+  p->sess_bits = p->pcm_bits;
   p->sess_layout = p->wav.layout;
   p->sess_present = p->wav.present;
   sound_engine_set_playout_latency_samples(0);
@@ -876,17 +896,41 @@ static bool open_input(player_t *p) {
   if (p->total_frames) dur = (double)p->total_frames / p->wav.rate;
   else if (p->kind == KIND_M4A) dur = p->m4a_duration_s;
   /* MP3 and AAC: status_update estimates it once a few seconds are decoded */
+  /* hi-res: the filters for this rate, kept over a gapless change */
+  {
+    const int f = decim_factor(p->wav.rate);
+    if (f != p->hr.factor || p->hr_in_rate != p->wav.rate || p->hr_bits != p->wav.bits ||
+        p->hr.present != p->wav.present) {
+      decim_free(&p->hr);
+      if (!decim_init(&p->hr, p->wav.rate, p->wav.bits, p->wav.present)) {
+        st_set(P_FAILED, "Out of memory for the hi-res filters");
+        goto done;
+      }
+      p->hr_in_rate = p->wav.rate;
+      p->hr_bits = p->wav.bits;
+    }
+    p->pcm_bits = p->hr.factor > 1 ? 24 : p->wav.bits;
+    /* where the filters run: next to a light decoder (FLAC, WAV, MP3,
+     * AAC), or in the player task next to the encoders (ALAC) */
+    p->hr_worker = p->hr.factor > 1 &&
+                   !(p->kind == KIND_M4A && p->m4a.codec == M4A_ALAC);
+  }
   const char *kind = kind_name(p);
   track_info_t *ti = &p->ti;
-  snprintf(ti->format, sizeof(ti->format), "%s %d Hz / %d bit / %s", kind, p->wav.rate,
-           p->wav.bits, layout_name(p->wav.layout));
+  if (p->hr.factor > 1)
+    snprintf(ti->format, sizeof(ti->format), "%s %d Hz / %d bit / %s, /%d to %d", kind,
+             p->wav.rate, p->wav.bits, layout_name(p->wav.layout), p->hr.factor, p->hr.out_rate);
+  else
+    snprintf(ti->format, sizeof(ti->format), "%s %d Hz / %d bit / %s", kind, p->wav.rate,
+             p->wav.bits, layout_name(p->wav.layout));
   ti->rate = p->wav.rate;
   ti->bits = p->wav.bits;
   ti->channels = p->wav.channels;
   ti->layout = p->wav.layout;
   ti->duration_s = dur;
-  ESP_LOGI(TAG, "file: %s %d Hz, %d bit, %d channels (%s), %.1f s", kind, p->wav.rate,
-           p->wav.bits, p->wav.channels, layout_name(p->wav.layout), dur);
+  ESP_LOGI(TAG, "file: %s %d Hz, %d bit, %d channels (%s), %.1f s%s", kind, p->wav.rate,
+           p->wav.bits, p->wav.channels, layout_name(p->wav.layout), dur,
+           p->hr.factor > 1 ? " (hi-res: down to the stream's rate, 24-bit lanes)" : "");
   ok = true;
 done:
   free(hdr);
@@ -912,9 +956,71 @@ static uint32_t crc32_update(uint32_t crc, const uint8_t *b, size_t n) {
 /* n frames of interleaved PCM, bytes per sample 2/3/4 little-endian, a
  * 4-byte sample shifted right by shift (8 = left-justified 24 bit): into
  * the internal slots; every full 352-sample frame goes out. */
-static bool push_pcm(player_t *p, const uint8_t *d, size_t n, int bytes, int shift) {
+/* ---- the decoder task's side (phase 3e: the decoder runs on core 1) ----
+ * The decoders give their PCM to push_pcm, which drops what a seek or the
+ * encoder's delay says, and puts the rest in the queue to the player task
+ * (pcm_out). A park request (a seek, another track) drops it instead: the
+ * player throws the queue away then anyway. */
+
+typedef struct {
+  uint8_t type; /* REC_PCM, REC_END (the input's end), REC_ERR */
+  uint8_t bytes, shift, ch;
+  uint32_t n;   /* frames that follow (REC_PCM) */
+} pcm_rec_t;
+enum { REC_PCM = 1, REC_END, REC_ERR, REC_SLOTS };
+/* REC_SLOTS: filtered frames (hi-res), int32, the present slots in order */
+#define PL_PIPE_BYTES (512U * 1024U)
+#define PL_PIPE_ITEM  8192U
+
+/* One record into the queue; waits while it is full, unless the player
+ * wants the decoder parked or stopped (then the record is dropped). */
+static void pipe_put(player_t *p, const pcm_rec_t *h, const uint8_t *d, size_t len) {
+  memcpy(p->w_msg, h, sizeof(*h));
+  if (len) memcpy(p->w_msg + sizeof(*h), d, len);
+  const int64_t t0 = esp_timer_get_time();
+  for (;;) {
+    if (atomic_load(&p->park_req) || p->w_quit || atomic_load(&s_stop)) break;
+    if (xMessageBufferSend(p->rb, p->w_msg, sizeof(*h) + len, pdMS_TO_TICKS(20)) > 0) break;
+  }
+  p->t_put_wait_us += esp_timer_get_time() - t0;
+}
+
+static void pipe_mark(player_t *p, uint8_t type) {
+  const pcm_rec_t h = {.type = type};
+  pipe_put(p, &h, NULL, 0);
+}
+
+static inline int32_t sample_at(const uint8_t *d, int bytes, int shift) {
+  if (bytes == 3) return (int32_t)(((uint32_t)d[0] << 8) | ((uint32_t)d[1] << 16) | ((uint32_t)d[2] << 24)) >> 8;
+  if (bytes == 2) return (int16_t)(d[0] | (d[1] << 8));
+  return (int32_t)((uint32_t)d[0] | ((uint32_t)d[1] << 8) | ((uint32_t)d[2] << 16) | ((uint32_t)d[3] << 24)) >> shift;
+}
+
+/* The CRC of the first 10 s from the start or a seek (a pass of its own,
+ * only while it runs). */
+static void pcm_crc(player_t *p, const uint8_t *d, size_t n, int bytes, int shift) {
   const int ch = p->wav.channels;
   const uint64_t crc_end = (uint64_t)p->wav.rate * 10U;
+  if (p->crc_frames >= crc_end) return;
+  const size_t k = crc_end - p->crc_frames < n ? (size_t)(crc_end - p->crc_frames) : n;
+  for (size_t i = 0; i < k * (size_t)ch; ++i, d += bytes) {
+    const int32_t v = sample_at(d, bytes, shift);
+    const uint8_t le[4] = {(uint8_t)v, (uint8_t)(v >> 8), (uint8_t)(v >> 16), (uint8_t)(v >> 24)};
+    p->crc = crc32_update(p->crc, le, 4);
+  }
+  p->crc_frames += k;
+  if (p->crc_frames == crc_end && !p->crc_logged) {
+    p->crc_logged = true;
+    ESP_LOGI(TAG, "PCM CRC-32 of 10 s from %.3f s (%u ch, int32 LE, file order): 0x%08" PRIx32,
+             p->crc_from_s, (unsigned)ch, p->crc);
+    taskENTER_CRITICAL(&s_mux);
+    s_st.pcm_crc10 = p->crc;
+    taskEXIT_CRITICAL(&s_mux);
+  }
+}
+
+static bool push_pcm(player_t *p, const uint8_t *d, size_t n, int bytes, int shift) {
+  const int ch = p->wav.channels;
   p->dec_frames += n;
   if (p->skip_frames) { /* a seek landed before its place; an encoder's delay */
     const size_t k = p->skip_frames < n ? (size_t)p->skip_frames : n;
@@ -927,31 +1033,123 @@ static bool push_pcm(player_t *p, const uint8_t *d, size_t n, int bytes, int shi
     p->out_left -= n;
   }
   p->track_frames += n;
-  for (size_t f = 0; f < n; ++f) {
-    for (int c = 0; c < ch; ++c, d += bytes) {
-      int32_t v;
-      if (bytes == 2) v = (int16_t)(d[0] | (d[1] << 8));
-      else if (bytes == 3) v = (int32_t)(((uint32_t)d[0] << 8) | ((uint32_t)d[1] << 16) | ((uint32_t)d[2] << 24)) >> 8;
-      else v = (int32_t)((uint32_t)d[0] | ((uint32_t)d[1] << 8) | ((uint32_t)d[2] << 16) | ((uint32_t)d[3] << 24)) >> shift;
-      if (p->crc_frames < crc_end) {
-        const uint8_t le[4] = {(uint8_t)v, (uint8_t)(v >> 8), (uint8_t)(v >> 16), (uint8_t)(v >> 24)};
-        p->crc = crc32_update(p->crc, le, 4);
+  pcm_crc(p, d, n, bytes, shift); /* here: core 0 has the time */
+  const size_t fb = (size_t)ch * (size_t)bytes;
+  if (p->hr_worker) { /* hi-res next to a light decoder: the filters here */
+    decim_t *dm = &p->hr;
+    const float scale = dm->in_scale;
+    const uint8_t present = p->wav.present;
+    int nsl = 0;
+    for (int sl = 0; sl < DECIM_SLOTS; ++sl) nsl += (present >> sl) & 1;
+    while (n) {
+      const size_t blk = n < DECIM_CHUNK ? n : DECIM_CHUNK;
+      const int64_t t0 = esp_timer_get_time();
+      for (int c = 0; c < ch; ++c) {
+        const int8_t sl = p->wav.slot[c];
+        if (sl < 0) continue;
+        float *x = dm->in[sl];
+        const uint8_t *q = d + (size_t)c * (size_t)bytes;
+        if (bytes == 3) {
+          for (size_t f = 0; f < blk; ++f, q += fb)
+            x[f] = (float)((int32_t)(((uint32_t)q[0] << 8) | ((uint32_t)q[1] << 16) | ((uint32_t)q[2] << 24)) >> 8);
+        } else {
+          for (size_t f = 0; f < blk; ++f, q += fb) x[f] = (float)sample_at(q, bytes, shift) * scale;
+        }
       }
-      const int8_t slot = p->wav.slot[c];
-      if (slot >= 0) p->pcm[slot][p->fill] = v;
+      const int m = decim_run(dm, (int)blk);
+      int32_t *o = p->w_pack;
+      for (int j = 0; j < m; ++j)
+        for (int sl = 0; sl < DECIM_SLOTS; ++sl)
+          if (present & (1U << sl)) *o++ = dm->out[sl][j];
+      p->t_hr_us += esp_timer_get_time() - t0;
+      if (m) {
+        const pcm_rec_t h = {.type = REC_SLOTS, .ch = (uint8_t)nsl, .n = (uint32_t)m};
+        pipe_put(p, &h, (const uint8_t *)p->w_pack, (size_t)m * (size_t)nsl * sizeof(int32_t));
+      }
+      d += blk * fb;
+      n -= blk;
     }
-    if (p->crc_frames < crc_end && ++p->crc_frames == crc_end && !p->crc_logged) {
-      p->crc_logged = true;
-      ESP_LOGI(TAG, "PCM CRC-32 of 10 s from %.3f s (%u ch, int32 LE, file order): 0x%08" PRIx32,
-               p->crc_from_s, (unsigned)ch, p->crc);
-      taskENTER_CRITICAL(&s_mux);
-      s_st.pcm_crc10 = p->crc;
-      taskEXIT_CRITICAL(&s_mux);
-    }
+    return true;
+  }
+  const size_t per = PL_PIPE_ITEM / fb;
+  while (n) {
+    const size_t k = n < per ? n : per;
+    const pcm_rec_t h = {.type = REC_PCM, .bytes = (uint8_t)bytes, .shift = (uint8_t)shift,
+                         .ch = (uint8_t)ch, .n = (uint32_t)k};
+    pipe_put(p, &h, d, k * fb);
+    d += k * fb;
+    n -= k;
+  }
+  return true;
+}
+
+/* ---- the player task's side: PCM from the queue into frames ---- */
+
+/* Frames the decoder task filtered already (hi-res): into the frames. */
+static bool slots_in(player_t *p, const int32_t *v, size_t n) {
+  const uint8_t present = p->wav.present;
+  for (size_t f = 0; f < n; ++f) {
+    for (int sl = 0; sl < DECIM_SLOTS; ++sl)
+      if (present & (1U << sl)) p->pcm[sl][p->fill] = *v++;
     if (++p->fill == PL_FRAME) {
       p->fill = 0;
       if (!send_frame(p)) return false;
     }
+  }
+  return true;
+}
+
+static bool pcm_in(player_t *p, const uint8_t *d, size_t n, int bytes, int shift) {
+  const int ch = p->wav.channels;
+  const size_t fb = (size_t)ch * (size_t)bytes;
+  int8_t slot[8];
+  memcpy(slot, p->wav.slot, sizeof(slot));
+  if (p->hr.factor <= 1) {
+    for (size_t f = 0; f < n; ++f, d += fb) {
+      for (int c = 0; c < ch; ++c)
+        if (slot[c] >= 0) p->pcm[slot[c]][p->fill] = sample_at(d + (size_t)c * (size_t)bytes, bytes, shift);
+      if (++p->fill == PL_FRAME) {
+        p->fill = 0;
+        if (!send_frame(p)) return false;
+      }
+    }
+    return true;
+  }
+  /* hi-res: a block at a time, each channel into its float array in
+   * internal RAM, then the filters */
+  decim_t *dm = &p->hr;
+  const float scale = dm->in_scale;
+  while (n) {
+    const size_t blk = n < DECIM_CHUNK ? n : DECIM_CHUNK;
+    const int64_t t0 = esp_timer_get_time();
+    for (int c = 0; c < ch; ++c) {
+      if (slot[c] < 0) continue;
+      float *x = dm->in[slot[c]];
+      const uint8_t *q = d + (size_t)c * (size_t)bytes;
+      if (bytes == 3) {
+        for (size_t f = 0; f < blk; ++f, q += fb)
+          x[f] = (float)((int32_t)(((uint32_t)q[0] << 8) | ((uint32_t)q[1] << 16) | ((uint32_t)q[2] << 24)) >> 8);
+      } else {
+        for (size_t f = 0; f < blk; ++f, q += fb) x[f] = (float)sample_at(q, bytes, shift) * scale;
+      }
+    }
+    const int m = decim_run(dm, (int)blk);
+    p->t_hr_us += esp_timer_get_time() - t0;
+    for (int j = 0; j < m;) {
+      int run = m - j;
+      if (run > (int)(PL_FRAME - p->fill)) run = (int)(PL_FRAME - p->fill);
+      for (int sl = 0; sl < DECIM_SLOTS; ++sl)
+        if (p->wav.present & (1U << sl))
+          memcpy(&p->pcm[sl][p->fill], &dm->out[sl][j], (size_t)run * sizeof(int32_t));
+      p->fill += (uint32_t)run;
+      j += run;
+      if (p->fill == PL_FRAME) {
+        p->fill = 0;
+        if (!send_frame(p)) return false;
+      }
+    }
+    d += blk * fb;
+    n -= blk;
   }
   return true;
 }
@@ -1000,8 +1198,8 @@ static bool dec_layout(player_t *p, const esp_audio_simple_dec_info_t *info, uin
     w->container_bits = 0;
     memset(w->slot, -1, sizeof(w->slot));
     w->present = 0;
-    if (w->rate != 44100 && w->rate != 48000) {
-      st_set(P_FAILED, "%s at %d Hz (44.1 and 48 kHz for now)", kind, w->rate);
+    if (!decim_factor(w->rate)) {
+      st_set(P_FAILED, "%s at %d Hz (44.1/48 kHz and their 2x and 4x)", kind, w->rate);
       return false;
     }
     if (w->bits != 16 && w->bits != 24) {
@@ -1413,6 +1611,110 @@ static bool decode_any(player_t *p) {
                                                                      : decode_stream(p);
 }
 
+/* ---- the decoder task (phase 3e) ----
+ * On core 1, below the relay and lwIP: it reads the file and decodes it,
+ * the player task (core 0) filters, encodes and sends. The player parks it
+ * at a safe point (between two decoder calls) before it touches the input
+ * itself: a seek, another track, the next track at the end. */
+
+#define PL_WORKER_STACK    12288
+#define PL_WORKER_PRIORITY 3 /* core 0 has little else; the radio is off while the player plays */
+#define PL_WORKER_CORE     0 /* alone there: reading and decoding are the heaviest part */
+
+static void worker_loop(player_t *p) {
+  for (;;) {
+    if (p->w_quit || atomic_load(&s_stop)) return;
+    if (atomic_load(&p->park_req)) {
+      atomic_store(&p->w_parked, true);
+      xSemaphoreTake(p->w_resume, portMAX_DELAY);
+      atomic_store(&p->w_parked, false);
+      continue;
+    }
+    if (p->in_done) { /* the end is in the queue: the player goes on from there */
+      vTaskDelay(pdMS_TO_TICKS(5));
+      continue;
+    }
+    fill_buf(p);
+    const bool ok = p->kind == KIND_WAV ? take_pcm(p) : decode_any(p);
+    if (atomic_load(&p->park_req)) continue; /* what it made went nowhere */
+    if (!ok) {
+      pipe_mark(p, REC_ERR);
+      p->in_done = true;
+      continue;
+    }
+    const bool drained = p->kind != KIND_WAV
+        ? p->dec_done && !p->dpcm_pending
+        : p->buf_len - p->buf_pos < (size_t)p->wav.channels * p->wav.container_bits / 8U;
+    if (p->eof && drained) {
+      pipe_mark(p, REC_END);
+      p->in_done = true;
+    }
+  }
+}
+
+static void worker_task(void *arg) {
+  player_t *p = arg;
+  worker_loop(p);
+  xSemaphoreGive(p->w_exit);
+  vTaskDeleteWithCaps(NULL);
+}
+
+static bool worker_start(player_t *p) {
+  p->rb = xMessageBufferCreateWithCaps(PL_PIPE_BYTES, MALLOC_CAP_SPIRAM);
+  p->w_msg = heap_caps_malloc(PL_PIPE_ITEM + sizeof(pcm_rec_t), MALLOC_CAP_SPIRAM);
+  p->w_pack = heap_caps_malloc((DECIM_CHUNK / 2 + 1) * DECIM_SLOTS * sizeof(int32_t), MALLOC_CAP_SPIRAM);
+  /* the player reads every sample of it: internal RAM when there is room */
+  p->r_msg = heap_caps_malloc(PL_PIPE_ITEM + sizeof(pcm_rec_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (!p->r_msg) p->r_msg = heap_caps_malloc(PL_PIPE_ITEM + sizeof(pcm_rec_t), MALLOC_CAP_SPIRAM);
+  p->w_resume = xSemaphoreCreateBinary();
+  p->w_exit = xSemaphoreCreateBinary();
+  if (!p->rb || !p->w_msg || !p->r_msg || !p->w_pack || !p->w_resume || !p->w_exit) return false;
+  if (xTaskCreatePinnedToCoreWithCaps(worker_task, "gw_player_dec", PL_WORKER_STACK, p,
+                                      PL_WORKER_PRIORITY, &p->w_task, PL_WORKER_CORE,
+                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS)
+    return false;
+  p->w_alive = true;
+  return true;
+}
+
+static void worker_stop(player_t *p) {
+  if (p->w_alive) {
+    p->w_quit = true;
+    xSemaphoreGive(p->w_resume); /* in case it is parked */
+    for (int i = 0; i < 100 && xSemaphoreTake(p->w_exit, pdMS_TO_TICKS(100)) != pdTRUE; ++i)
+      (void)xMessageBufferReceive(p->rb, p->r_msg, PL_PIPE_ITEM + sizeof(pcm_rec_t), 0);
+    p->w_alive = false;
+  }
+  if (p->rb) vMessageBufferDeleteWithCaps(p->rb);
+  free(p->w_msg);
+  free(p->r_msg);
+  free(p->w_pack);
+  p->w_msg = p->r_msg = NULL;
+  p->w_pack = NULL;
+  if (p->w_resume) vSemaphoreDelete(p->w_resume);
+  if (p->w_exit) vSemaphoreDelete(p->w_exit);
+  p->rb = NULL;
+  p->w_resume = p->w_exit = NULL;
+}
+
+/* The decoder task at a safe point, and what it made thrown away: the
+ * input is the player's until pipe_resume. Nested calls count. */
+static void pipe_park(player_t *p) {
+  if (p->park_depth++ > 0 || !p->w_alive) return;
+  atomic_store(&p->park_req, true);
+  const size_t cap = PL_PIPE_ITEM + sizeof(pcm_rec_t);
+  while (!atomic_load(&p->w_parked)) (void)xMessageBufferReceive(p->rb, p->r_msg, cap, pdMS_TO_TICKS(5));
+  while (xMessageBufferReceive(p->rb, p->r_msg, cap, 0) > 0) {
+  }
+}
+
+static void pipe_resume(player_t *p) {
+  if (p->park_depth > 0 && --p->park_depth > 0) return;
+  if (!p->w_alive) return;
+  atomic_store(&p->park_req, false);
+  if (atomic_load(&p->w_parked)) xSemaphoreGive(p->w_resume);
+}
+
 /* ---- pause and seek (phase 3d) ---- */
 
 /* The RTP time the speakers play now (the next frame to send while the
@@ -1579,7 +1881,7 @@ static bool flac_locate(player_t *p, uint64_t target, int64_t *pos, uint64_t *sa
   }
   int tries = 0;
   if (hi_off > lo_off && hi_s > lo_s) {
-    for (; tries < 16 && target - lo_s > (uint64_t)p->rate / 2U; ++tries) {
+    for (; tries < 16 && target - lo_s > (uint64_t)p->wav.rate / 2U; ++tries) {
       if (hi_off - lo_off < 64) break;
       int64_t guess = lo_off + (int64_t)((double)(target - lo_s) / (double)(hi_s - lo_s) *
                                          (double)(hi_off - lo_off));
@@ -1607,7 +1909,7 @@ static bool flac_locate(player_t *p, uint64_t target, int64_t *pos, uint64_t *sa
   *sample = lo_s;
   ESP_LOGI(TAG, "FLAC seek: frame at byte %lld, sample %llu (%d reads), %.2f s to drop",
            (long long)lo_off, (unsigned long long)lo_s, tries,
-           (double)(target - lo_s) / p->rate);
+           (double)(target - lo_s) / p->wav.rate);
   return true;
 }
 
@@ -1627,7 +1929,9 @@ static void do_seek(player_t *p, double to_s, const char *why) {
     return;
   }
   if (!p->src.seek || !p->src.read_at) return;
-  uint64_t target = to_s > 0 ? (uint64_t)(to_s * p->rate) : 0;
+  const uint64_t frate = (uint64_t)p->wav.rate; /* the file's: seeks count its frames */
+  const uint64_t fac = p->hr.factor > 1 ? (uint64_t)p->hr.factor : 1U;
+  uint64_t target = to_s > 0 ? (uint64_t)(to_s * (double)frate) : 0;
   if (p->total_frames && target >= p->total_frames) target = p->total_frames - 1;
   const int64_t t0 = esp_timer_get_time();
   int64_t pos;
@@ -1648,14 +1952,14 @@ static void do_seek(player_t *p, double to_s, const char *why) {
     const m4a_track_t *t = &p->m4a;
     uint64_t st = 0;
     const uint64_t media = target + p->trim_start; /* the encoder's delay comes first */
-    const uint64_t ts = media * t->timescale / (uint64_t)p->rate;
+    const uint64_t ts = media * t->timescale / frate;
     m4a_sample = m4a_sample_at(t, ts, &st);
     if (m4a_sample >= t->samples) m4a_sample = t->samples - 1;
     if (t->codec != M4A_ALAC && m4a_sample > 0) {
       m4a_sample--;
       st -= m4a_sample_delta(t, m4a_sample);
     }
-    uint64_t at_media = st * (uint64_t)p->rate / t->timescale;
+    uint64_t at_media = st * frate / t->timescale;
     if (at_media > media) at_media = media;
     skip = media - at_media;
     at = target;
@@ -1682,10 +1986,10 @@ static void do_seek(player_t *p, double to_s, const char *why) {
       } else {
         frac = pct / 100.0;
       }
-    } else if (bytes > 0 && p->dec_frames >= (uint64_t)p->rate) {
+    } else if (bytes > 0 && p->dec_frames >= frate) {
       frac = (double)target * (double)p->dec_bytes / (double)p->dec_frames / (double)bytes;
     } else if (bytes > 0 && p->kind == KIND_MP3 && p->mp3_ok && p->mp3.kbps) {
-      frac = (double)target / p->rate * p->mp3.kbps * 125.0 / (double)bytes;
+      frac = (double)target / (double)frate * p->mp3.kbps * 125.0 / (double)bytes;
     }
     if (frac < 0) {
       ESP_LOGW(TAG, "seek to %.1f s: the %s file's length is not known yet", to_s, kind_name(p));
@@ -1694,13 +1998,16 @@ static void do_seek(player_t *p, double to_s, const char *why) {
     if (frac > 0.999) frac = 0.999;
     pos = audio0 + (int64_t)(frac * (double)bytes);
   }
+  pipe_park(p); /* the decoder task lets go of the input */
   const esp_err_t err = p->src.seek(&p->src, pos);
   if (err != ESP_OK) {
     ESP_LOGW(TAG, "seek to %.1f s: %s", to_s,
              err == ESP_ERR_NOT_SUPPORTED ? "the server does not seek (no HTTP Range)"
                                           : esp_err_to_name(err));
+    pipe_resume(p);
     return;
   }
+  p->in_done = false;
   /* the speakers and the relay drop what is not played yet */
   p->wlen = 0;
   sound_engine_pause();
@@ -1719,6 +2026,7 @@ static void do_seek(player_t *p, double to_s, const char *why) {
       !(p->kind == KIND_FLAC ? flac_restart(p) : decoder_open(p))) {
     st_set(P_FAILED, "No %s decoder after the seek", kind_name(p));
     atomic_store(&s_stop, true);
+    pipe_resume(p);
     return;
   }
   if ((p->kind == KIND_MP3 || p->kind == KIND_AAC) && pos == (int64_t)p->id3_bytes)
@@ -1726,7 +2034,8 @@ static void do_seek(player_t *p, double to_s, const char *why) {
   p->frames_read = at;
   p->skip_frames = skip;
   p->out_left = !p->trim_total ? UINT64_MAX : target < p->trim_total ? p->trim_total - target : 0;
-  p->rtp0 = p->rtp - (uint32_t)target;
+  p->rtp0 = p->rtp - (uint32_t)(target / fac);
+  decim_reset(&p->hr);
   p->burst_rtp = p->rtp;
   p->playing = false;
   p->paused = false;
@@ -1737,13 +2046,14 @@ static void do_seek(player_t *p, double to_s, const char *why) {
   p->crc = 0;
   p->crc_frames = 0;
   p->crc_logged = false;
-  p->crc_from_s = (double)target / p->rate;
+  p->crc_from_s = (double)target / (double)frate;
   taskENTER_CRITICAL(&s_mux);
   s_st.pcm_crc10 = 0;
   taskEXIT_CRITICAL(&s_mux);
-  ESP_LOGI(TAG, "%s %.1f s: byte %lld, in %lld ms", why ? why : "seek to", (double)target / p->rate,
+  ESP_LOGI(TAG, "%s %.1f s: byte %lld, in %lld ms", why ? why : "seek to", (double)target / (double)frate,
            (long long)pos, (long long)((esp_timer_get_time() - t0) / 1000));
   st_set(P_PLAYING, NULL);
+  pipe_resume(p);
 }
 
 /* ---- the queue and gapless (phase 3d.3) ---- */
@@ -1824,6 +2134,7 @@ static void track_close(player_t *p) {
   p->out_left = UINT64_MAX;
   p->trim_start = p->trim_total = 0;
   p->track_frames = 0;
+  p->in_done = true; /* nothing to read: the decoder task waits */
 }
 
 /* Opens queue track *k, or the first after it that opens. */
@@ -1835,6 +2146,7 @@ static bool open_track(player_t *p, int *k) {
     if (player_source_http_open(&p->src, url) == ESP_OK && open_input(p)) {
       p->in_ix = *k;
       p->ti.ix = *k;
+      p->in_done = false;
       strlcpy(p->ti.url, url, sizeof(p->ti.url));
       ESP_LOGI(TAG, "track %d of %d: %s", *k + 1, queue_len(), url);
       return true;
@@ -1848,7 +2160,8 @@ static bool open_track(player_t *p, int *k) {
 
 /* The speakers can go on with the new input in the same stream. */
 static bool same_stream(const player_t *p) {
-  return p->session && p->wav.rate == p->sess_rate && p->wav.bits == p->sess_bits &&
+  const int out_rate = p->hr.factor > 1 ? p->hr.out_rate : p->wav.rate;
+  return p->session && out_rate == p->sess_rate && p->pcm_bits == p->sess_bits &&
          p->wav.layout == p->sess_layout && p->wav.present == p->sess_present;
 }
 
@@ -1872,6 +2185,7 @@ static bool stream_for_input(player_t *p) {
 /* To queue track k (next, previous, a jump) at pos_s: the speakers drop
  * what they hold, as on a seek. */
 static bool goto_track(player_t *p, int k, double pos_s) {
+  pipe_park(p); /* stays parked when it fails: the player stops */
   if (p->session) {
     p->wlen = 0;
     sound_engine_pause();
@@ -1881,6 +2195,7 @@ static bool goto_track(player_t *p, int k, double pos_s) {
   p->n_bnd = 0;
   p->paused = p->finishing = p->playing = false;
   p->need_anchor = true;
+  decim_reset(&p->hr);
   track_close(p);
   if (!open_track(p, &k)) return false;
   if (!stream_for_input(p)) return false;
@@ -1894,6 +2209,7 @@ static bool goto_track(player_t *p, int k, double pos_s) {
   p->crc_from_s = 0;
   if (pos_s > 0) do_seek(p, pos_s, "track start at");
   st_set(P_PLAYING, NULL);
+  pipe_resume(p);
   return true;
 }
 
@@ -1995,10 +2311,10 @@ static void status_update(player_t *p) {
   for (int k = 0; k < PL_LANES; ++k) s_st.lane_bytes[k] = p->lane[k].bytes;
   if ((p->kind == KIND_MP3 || p->kind == KIND_AAC) && !p->total_frames && p->src.size > 0 &&
       p->play_ix == p->in_ix && p->dec_bytes &&
-      p->dec_frames >= (uint64_t)p->rate * 2U) {
+      p->dec_frames >= (uint64_t)p->wav.rate * 2U) {
     /* bytes per second so far (exact for constant bit rate) */
     const double audio = (double)p->src.size - (double)p->id3_bytes;
-    s_st.duration_s = audio * (double)p->dec_frames / (double)p->dec_bytes / p->rate;
+    s_st.duration_s = audio * (double)p->dec_frames / (double)p->dec_bytes / p->wav.rate;
     s_st.duration_estimated = true;
   }
   taskEXIT_CRITICAL(&s_mux);
@@ -2014,14 +2330,17 @@ static void status_update(player_t *p) {
     s_st.perf_dec_ms = (int)(p->t_dec_us / 1000);
     taskEXIT_CRITICAL(&s_mux);
     ESP_LOGI(TAG, "PLAYER %s seq %" PRIu32 " lead %d ms, %.1f s of %.1f s | %u frames "
-             "(%.2fx real time) | read %lld ms (%llu KiB), decode %lld ms, encode %lld ms, send %lld ms",
+             "(%.2fx real time) | read %lld ms (%llu KiB), decode %lld ms, hi-res %lld ms, encode %lld ms, "
+             "send %lld ms | queue full %lld ms, empty %lld ms",
              state_name(s_st.state), p->seq, lm, s_st.position_s, s_st.duration_s,
              (unsigned)p->frames_sent,
              (double)p->frames_sent * PL_FRAME / p->rate / (PL_STATUS_LOG_MS / 1000.0),
              (long long)(p->t_read_us / 1000), (unsigned long long)(p->read_bytes / 1024U),
-             (long long)(p->t_dec_us / 1000), (long long)(p->t_enc_us / 1000),
-             (long long)(p->t_send_us / 1000));
-    p->t_read_us = p->t_enc_us = p->t_send_us = p->t_dec_us = 0;
+             (long long)(p->t_dec_us / 1000), (long long)(p->t_hr_us / 1000),
+             (long long)(p->t_enc_us / 1000), (long long)(p->t_send_us / 1000),
+             (long long)(p->t_put_wait_us / 1000), (long long)(p->t_get_wait_us / 1000));
+    p->t_read_us = p->t_enc_us = p->t_send_us = p->t_dec_us = p->t_hr_us = 0;
+    p->t_put_wait_us = p->t_get_wait_us = 0;
     p->read_bytes = 0;
     p->frames_sent = 0;
   }
@@ -2059,6 +2378,10 @@ static void player_run(int start, int volume_db) {
     if (!session_open(p, volume_db)) goto out;
     p->play_ix = k;
     publish_track(&p->ti);
+    if (!worker_start(p)) {
+      st_set(P_FAILED, "Out of memory for the decoder task");
+      goto out;
+    }
   }
   st_set(P_PLAYING, NULL);
 
@@ -2082,25 +2405,38 @@ static void player_run(int start, int volume_db) {
       vTaskDelay(pdMS_TO_TICKS(20));
       continue;
     }
-    if (p->playing && !p->eof && lead_ns(p) < PL_MIN_LEAD_NS) {
+    if (p->playing && !p->in_done && lead_ns(p) < PL_MIN_LEAD_NS) {
       if (!flush_wbuf(p)) break;
       sound_engine_pause();
       p->playing = false;
       p->need_anchor = true;
       st_set(P_BUFFERING, "The file comes too slowly: buffering");
     }
-    fill_buf(p);
-    if (!(p->kind == KIND_WAV ? take_pcm(p) : decode_any(p))) break;
-    const bool drained = p->kind != KIND_WAV
-        ? p->dec_done && !p->dpcm_pending
-        : p->buf_len - p->buf_pos < (size_t)p->wav.channels * p->wav.container_bits / 8U;
-    if (p->eof && drained) {
+    /* what the decoder task made */
+    const int64_t tw = esp_timer_get_time();
+    const size_t got = xMessageBufferReceive(p->rb, p->r_msg, PL_PIPE_ITEM + sizeof(pcm_rec_t),
+                                             pdMS_TO_TICKS(20));
+    p->t_get_wait_us += esp_timer_get_time() - tw;
+    if (got < sizeof(pcm_rec_t)) {
+      status_update(p);
+      continue;
+    }
+    pcm_rec_t h;
+    memcpy(&h, p->r_msg, sizeof(h));
+    bool ok = true;
+    if (h.type == REC_PCM) ok = pcm_in(p, p->r_msg + sizeof(h), h.n, h.bytes, h.shift);
+    else if (h.type == REC_SLOTS) ok = slots_in(p, (const int32_t *)(p->r_msg + sizeof(h)), h.n);
+    if (!ok || h.type == REC_ERR) break;
+    if (h.type == REC_END) {
+      pipe_park(p); /* the input is the player's now */
       ESP_LOGI(TAG, "track %d read: %llu frames out (%.3f s), %llu decoded, %llu of %lld bytes "
                "to the decoder", p->in_ix + 1,
-               (unsigned long long)p->track_frames, (double)p->track_frames / p->rate,
+               (unsigned long long)p->track_frames, (double)p->track_frames / p->wav.rate,
                (unsigned long long)p->dec_frames, (unsigned long long)p->dec_bytes,
                (long long)p->src.size);
-      if (next_input(p)) continue; /* the queue goes on */
+      const bool more = next_input(p); /* the queue goes on */
+      pipe_resume(p);
+      if (more) continue;
       if (atomic_load(&s_stop) || !p->session) break;
       if (p->fill) { /* the last frame, filled with silence */
         for (int c = 0; c < 8; ++c)
@@ -2120,7 +2456,9 @@ static void player_run(int start, int volume_db) {
 out:
   if (p) {
     if (s_st.state != P_FAILED) st_set(P_STOPPING, "Stopping");
+    worker_stop(p); /* before the input goes */
     track_close(p);
+    decim_free(&p->hr);
     free(p->dpcm);
     session_close(p);
     free(p->buf);

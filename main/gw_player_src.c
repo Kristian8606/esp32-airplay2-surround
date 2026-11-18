@@ -171,6 +171,12 @@ esp_err_t player_source_http_open(player_source_t *s, const char *url) {
   return ESP_OK;
 }
 
+/* 44.1 and 48 kHz, and the hi-res rates the player takes down by 2 or 4
+ * (gw_player_decim.c) */
+static bool rate_ok(int r) {
+  return r == 44100 || r == 48000 || r == 88200 || r == 96000 || r == 176400 || r == 192000;
+}
+
 /* ---- WAV ---- */
 
 static uint16_t le16(const uint8_t *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
@@ -259,8 +265,8 @@ esp_err_t flac_parse(const uint8_t *buf, size_t len, wav_info_t *w, uint64_t *to
   *total = ((uint64_t)(si[13] & 0x0F) << 32) | ((uint64_t)si[14] << 24) |
            ((uint64_t)si[15] << 16) | ((uint64_t)si[16] << 8) | si[17];
   w->data_offset = 0; /* the decoder takes the file from its start */
-  if (w->rate != 44100 && w->rate != 48000) {
-    snprintf(w->why, sizeof(w->why), "%d Hz (phase 3b plays 44.1 and 48 kHz)", w->rate);
+  if (!rate_ok(w->rate)) {
+    snprintf(w->why, sizeof(w->why), "%d Hz (44.1/48 kHz and their 2x and 4x)", w->rate);
     return ESP_ERR_NOT_SUPPORTED;
   }
   if (w->bits != 16 && w->bits != 24) {
@@ -334,8 +340,8 @@ esp_err_t wav_parse(const uint8_t *buf, size_t len, wav_info_t *w) {
   }
   if (!w->data_offset) return ESP_ERR_INVALID_SIZE;
 
-  if (w->rate != 44100 && w->rate != 48000) {
-    snprintf(w->why, sizeof(w->why), "%d Hz (phase 3a plays 44.1 and 48 kHz)", w->rate);
+  if (!rate_ok(w->rate)) {
+    snprintf(w->why, sizeof(w->why), "%d Hz (44.1/48 kHz and their 2x and 4x)", w->rate);
     return ESP_ERR_NOT_SUPPORTED;
   }
   const bool depth_ok = (w->container_bits == 16 && w->bits == 16) ||
