@@ -354,72 +354,47 @@ esp_err_t wav_parse(const uint8_t *buf, size_t len, wav_info_t *w) {
   return ESP_OK;
 }
 
-/* ---- M4A ---- */
+/* ---- MP3 ---- */
 
-static uint32_t be32(const uint8_t *p) {
-  return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
-}
-
-static const uint8_t *find4(const uint8_t *b, size_t len, const char *tag) {
-  for (size_t i = 0; i + 4 <= len; ++i)
-    if (memcmp(b + i, tag, 4) == 0) return b + i;
-  return NULL;
-}
-
-esp_err_t m4a_probe(const uint8_t *buf, size_t len, m4a_info_t *m) {
+bool mp3_parse_first(const uint8_t *b, size_t len, mp3_info_t *m) {
   memset(m, 0, sizeof(*m));
-  size_t at = 0;
-  while (at + 8 <= len) {
-    uint64_t size = be32(buf + at);
-    const uint8_t *type = buf + at + 4;
-    size_t head = 8;
-    if (size == 1) {
-      if (at + 16 > len) return ESP_ERR_INVALID_SIZE;
-      size = ((uint64_t)be32(buf + at + 8) << 32) | be32(buf + at + 12);
-      head = 16;
+  if (len < 4 || b[0] != 0xFF || (b[1] & 0xE0) != 0xE0) return false;
+  const int ver = (b[1] >> 3) & 3; /* 3 MPEG-1, 2 MPEG-2, 0 MPEG-2.5 */
+  const int layer = (b[1] >> 1) & 3; /* 1 = layer III */
+  const int br_ix = b[2] >> 4, sr_ix = (b[2] >> 2) & 3, pad = (b[2] >> 1) & 1;
+  if (ver == 1 || layer != 1 || br_ix == 0 || br_ix == 15 || sr_ix == 3) return false;
+  static const int rates[3] = {44100, 48000, 32000};
+  static const int16_t kbps1[15] = {0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320};
+  static const int16_t kbps2[15] = {0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160};
+  const bool mpeg1 = ver == 3;
+  m->rate = rates[sr_ix] >> (mpeg1 ? 0 : ver == 2 ? 1 : 2);
+  m->channels = (b[3] >> 6) == 3 ? 1 : 2;
+  m->spf = mpeg1 ? 1152 : 576;
+  m->kbps = mpeg1 ? kbps1[br_ix] : kbps2[br_ix];
+  const size_t frame = (size_t)(m->spf / 8) * (size_t)m->kbps * 1000U / (size_t)m->rate + pad;
+  const size_t side = mpeg1 ? (m->channels == 1 ? 17U : 32U) : (m->channels == 1 ? 9U : 17U);
+  const size_t x = 4 + side;
+  if (x + 8 <= len && x + 8 <= frame + 4 &&
+      (memcmp(b + x, "Xing", 4) == 0 || memcmp(b + x, "Info", 4) == 0)) {
+    const uint32_t flags = ((uint32_t)b[x + 4] << 24) | ((uint32_t)b[x + 5] << 16) |
+                           ((uint32_t)b[x + 6] << 8) | b[x + 7];
+    size_t at = x + 8;
+    if ((flags & 1U) && at + 4 <= len) {
+      m->xing_frames = ((uint32_t)b[at] << 24) | ((uint32_t)b[at + 1] << 16) |
+                       ((uint32_t)b[at + 2] << 8) | b[at + 3];
+      at += 4;
     }
-    if (memcmp(type, "mdat", 4) == 0) {
-      strlcpy(m->why, "M4A with its index (moov) after the audio: needs seeking (phase 3d)",
-              sizeof(m->why));
-      return ESP_ERR_NOT_SUPPORTED;
+    if ((flags & 2U) && at + 4 <= len) {
+      m->xing_bytes = ((uint32_t)b[at] << 24) | ((uint32_t)b[at + 1] << 16) |
+                      ((uint32_t)b[at + 2] << 8) | b[at + 3];
+      at += 4;
     }
-    if (memcmp(type, "moov", 4) == 0) {
-      const uint8_t *mv = buf + at + head;
-      const size_t have = len - at - head;
-      const size_t body = size >= head && size - head < have ? (size_t)(size - head) : have;
-      /* the first track whose handler is soun: its mdhd and stsd */
-      const uint8_t *hd = find4(mv, body, "soun");
-      if (!hd) {
-        if (size - head > have) return ESP_ERR_INVALID_SIZE;
-        strlcpy(m->why, "M4A without an audio track", sizeof(m->why));
-        return ESP_ERR_NOT_SUPPORTED;
-      }
-      /* mdhd comes before hdlr inside mdia */
-      const uint8_t *md = NULL;
-      for (const uint8_t *q = mv; (q = find4(q, (size_t)(hd - q), "mdhd")) != NULL; q += 4) md = q;
-      if (md && md + 36 <= mv + body) {
-        const uint8_t ver = md[4];
-        const uint32_t ts = ver ? be32(md + 24) : be32(md + 16);
-        const uint64_t dur = ver ? (((uint64_t)be32(md + 28) << 32) | be32(md + 32))
-                                 : be32(md + 20);
-        if (ts) m->duration_s = (double)dur / ts;
-      }
-      const uint8_t *sd = find4(hd, (size_t)(mv + body - hd), "stsd");
-      if (!sd || sd + 20 > mv + body) {
-        if (size - head > have) return ESP_ERR_INVALID_SIZE;
-        strlcpy(m->why, "M4A without a sample description", sizeof(m->why));
-        return ESP_ERR_NOT_SUPPORTED;
-      }
-      /* stsd: version/flags, count, then the first entry: size, format */
-      memcpy(m->codec, sd + 16, 4);
-      m->codec[4] = 0;
-      return ESP_OK;
+    if ((flags & 4U) && at + 100 <= len) {
+      memcpy(m->toc, b + at, 100);
+      m->has_toc = true;
     }
-    if (size < head) return ESP_FAIL;
-    if (size > len - at) return ESP_ERR_INVALID_SIZE; /* a box past what we have */
-    at += (size_t)size;
   }
-  return ESP_ERR_INVALID_SIZE;
+  return true;
 }
 
 /* ---- FLAC frames, for seeking ---- */

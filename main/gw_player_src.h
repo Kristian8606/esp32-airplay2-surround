@@ -71,19 +71,17 @@ bool flac_frame_at(const uint8_t *b, size_t len, const flac_stream_t *st, int ch
  * there is none. */
 size_t id3v2_size(const uint8_t *buf, size_t len);
 
-/* ---- M4A (phase 3c) ----
- * The top-level boxes from the start of the file: the index (moov) has to
- * come before the audio (mdat), as the simple decoder reads the file in one
- * pass. Fills codec ("alac", "mp4a", ".mp3" or what stsd names) and, when
- * mdhd is in buf, the duration in seconds. ESP_OK once stsd's codec is in
- * buf; ESP_ERR_INVALID_SIZE when more of the file is needed;
- * ESP_ERR_NOT_SUPPORTED with why (mdat first, no audio track). */
+/* ---- MP3 (phase 3d.2) ----
+ * The first frame at buf (after an ID3v2 tag): its format, and a Xing or
+ * Info tag in it (frame count, byte count, TOC) when there is one. False
+ * when buf does not start with an MPEG audio layer III frame. */
 typedef struct {
-  char codec[5];
-  double duration_s; /* 0 = not known */
-  char why[96];
-} m4a_info_t;
-esp_err_t m4a_probe(const uint8_t *buf, size_t len, m4a_info_t *info);
+  int rate, channels, spf, kbps;
+  uint32_t xing_frames, xing_bytes; /* 0 = not known */
+  bool has_toc;
+  uint8_t toc[100];
+} mp3_info_t;
+bool mp3_parse_first(const uint8_t *buf, size_t len, mp3_info_t *m);
 
 /* Parses the RIFF/WAVE header in buf. ESP_OK with *info filled once the
  * data chunk starts inside buf; ESP_ERR_INVALID_SIZE when more of the file
