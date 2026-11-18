@@ -881,6 +881,11 @@ the player cannot play just shows a message, and the next song starts.
   size. Stereo WAV plays fine, but a 5.1 / 7.1 WAV is too heavy for the
   port and stops every few seconds to catch up. One command turns it into
   FLAC: `ffmpeg -i film.wav -c:a flac film.flac`.
+- **7.1 at 24-bit is the S3's limit.** Eight channels of a dense film mix
+  at 24-bit take more than the ESP32-S3 has to decode them and send every
+  speaker its channel, so it stops now and then to catch up (5.1 at 24-bit
+  plays fine). As a 16-bit FLAC the same 7.1 file plays without a stop:
+  `ffmpeg -i film.wav -af aresample=osf=s16:dither_method=triangular -c:a flac film.flac`.
 
 The player can also play files from a web server on your network, through
 the Gateway's `/api/player` (play, pause, seek, next, previous, queue,
@@ -1225,7 +1230,8 @@ are listed in
 - **Rear and side channels are often nearly silent in music**; they come
   alive with films and Atmos mixes.
 - **USB player** (experimental): a file heavier than about 5 Mbit/s (WAV
-  5.1 / 7.1) stops to buffer every few seconds; FAT32 only, one drive, hubs
+  5.1 / 7.1) stops to buffer every few seconds, and so does a dense 7.1
+  film mix at 24-bit (CPU; 16-bit plays); FAT32 only, one drive, hubs
   not yet tested; no shuffle or repeat, and the queue is not kept over a
   restart.
 - A sender can postpone audio after AirPlay setup. Distinguish that from
