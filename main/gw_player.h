@@ -6,8 +6,10 @@
  * speaker role through the relay's lane mode: each speaker gets only its
  * own channel as one-channel ALAC (common/surround/surround_route.h).
  *
- * Phase 3a: one WAV file over HTTP (16 or 24 bit, 44.1 or 48 kHz; mono,
- * stereo, 5.1 or 7.1), play and stop. AirPlay wins as with the radio: a
+ * Phase 3a-3c: one file over HTTP, play and stop. WAV and FLAC (16 or 24
+ * bit, 44.1 or 48 kHz; mono, stereo, 5.1 or 7.1), ALAC in M4A (the same),
+ * MP3, AAC (ADTS) and AAC in M4A (mono or stereo). M4A needs its index
+ * (moov) before the audio. AirPlay wins as with the radio: a
  * sender's first sound_engine call stops the player (gw_local_src.h). */
 
 #include <stdbool.h>

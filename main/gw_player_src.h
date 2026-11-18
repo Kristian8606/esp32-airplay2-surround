@@ -35,7 +35,7 @@ typedef struct {
   int layout;        /* 1, 2, 6 or 8 */
   size_t data_offset;
   uint32_t data_size; /* 0xFFFFFFFF or 0 when not known */
-  char why[64];      /* why it is not supported */
+  char why[96];      /* why it is not supported */
 } wav_info_t;
 
 /* ---- FLAC ----
@@ -49,6 +49,20 @@ esp_err_t flac_parse(const uint8_t *buf, size_t len, wav_info_t *info, uint64_t 
 /* The size of an ID3v2 tag at the start of buf (header included), 0 if
  * there is none. */
 size_t id3v2_size(const uint8_t *buf, size_t len);
+
+/* ---- M4A (phase 3c) ----
+ * The top-level boxes from the start of the file: the index (moov) has to
+ * come before the audio (mdat), as the simple decoder reads the file in one
+ * pass. Fills codec ("alac", "mp4a", ".mp3" or what stsd names) and, when
+ * mdhd is in buf, the duration in seconds. ESP_OK once stsd's codec is in
+ * buf; ESP_ERR_INVALID_SIZE when more of the file is needed;
+ * ESP_ERR_NOT_SUPPORTED with why (mdat first, no audio track). */
+typedef struct {
+  char codec[5];
+  double duration_s; /* 0 = not known */
+  char why[96];
+} m4a_info_t;
+esp_err_t m4a_probe(const uint8_t *buf, size_t len, m4a_info_t *info);
 
 /* Parses the RIFF/WAVE header in buf. ESP_OK with *info filled once the
  * data chunk starts inside buf; ESP_ERR_INVALID_SIZE when more of the file

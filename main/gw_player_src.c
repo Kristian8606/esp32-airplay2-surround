@@ -183,7 +183,7 @@ esp_err_t wav_parse(const uint8_t *buf, size_t len, wav_info_t *w) {
   memset(w->slot, -1, sizeof(w->slot));
   if (len < 12) return ESP_ERR_INVALID_SIZE;
   if (memcmp(buf, "RIFF", 4) != 0 || memcmp(buf + 8, "WAVE", 4) != 0) {
-    strlcpy(w->why, "Not a WAV file", sizeof(w->why));
+    strlcpy(w->why, "Not a WAV, FLAC, MP3, AAC or M4A file", sizeof(w->why));
     return ESP_ERR_NOT_SUPPORTED;
   }
   size_t at = 12;
@@ -245,4 +245,72 @@ esp_err_t wav_parse(const uint8_t *buf, size_t len, wav_info_t *w) {
     return ESP_ERR_NOT_SUPPORTED;
   }
   return ESP_OK;
+}
+
+/* ---- M4A ---- */
+
+static uint32_t be32(const uint8_t *p) {
+  return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
+}
+
+static const uint8_t *find4(const uint8_t *b, size_t len, const char *tag) {
+  for (size_t i = 0; i + 4 <= len; ++i)
+    if (memcmp(b + i, tag, 4) == 0) return b + i;
+  return NULL;
+}
+
+esp_err_t m4a_probe(const uint8_t *buf, size_t len, m4a_info_t *m) {
+  memset(m, 0, sizeof(*m));
+  size_t at = 0;
+  while (at + 8 <= len) {
+    uint64_t size = be32(buf + at);
+    const uint8_t *type = buf + at + 4;
+    size_t head = 8;
+    if (size == 1) {
+      if (at + 16 > len) return ESP_ERR_INVALID_SIZE;
+      size = ((uint64_t)be32(buf + at + 8) << 32) | be32(buf + at + 12);
+      head = 16;
+    }
+    if (memcmp(type, "mdat", 4) == 0) {
+      strlcpy(m->why, "M4A with its index (moov) after the audio: needs seeking (phase 3d)",
+              sizeof(m->why));
+      return ESP_ERR_NOT_SUPPORTED;
+    }
+    if (memcmp(type, "moov", 4) == 0) {
+      const uint8_t *mv = buf + at + head;
+      const size_t have = len - at - head;
+      const size_t body = size >= head && size - head < have ? (size_t)(size - head) : have;
+      /* the first track whose handler is soun: its mdhd and stsd */
+      const uint8_t *hd = find4(mv, body, "soun");
+      if (!hd) {
+        if (size - head > have) return ESP_ERR_INVALID_SIZE;
+        strlcpy(m->why, "M4A without an audio track", sizeof(m->why));
+        return ESP_ERR_NOT_SUPPORTED;
+      }
+      /* mdhd comes before hdlr inside mdia */
+      const uint8_t *md = NULL;
+      for (const uint8_t *q = mv; (q = find4(q, (size_t)(hd - q), "mdhd")) != NULL; q += 4) md = q;
+      if (md && md + 36 <= mv + body) {
+        const uint8_t ver = md[4];
+        const uint32_t ts = ver ? be32(md + 24) : be32(md + 16);
+        const uint64_t dur = ver ? (((uint64_t)be32(md + 28) << 32) | be32(md + 32))
+                                 : be32(md + 20);
+        if (ts) m->duration_s = (double)dur / ts;
+      }
+      const uint8_t *sd = find4(hd, (size_t)(mv + body - hd), "stsd");
+      if (!sd || sd + 20 > mv + body) {
+        if (size - head > have) return ESP_ERR_INVALID_SIZE;
+        strlcpy(m->why, "M4A without a sample description", sizeof(m->why));
+        return ESP_ERR_NOT_SUPPORTED;
+      }
+      /* stsd: version/flags, count, then the first entry: size, format */
+      memcpy(m->codec, sd + 16, 4);
+      m->codec[4] = 0;
+      return ESP_OK;
+    }
+    if (size < head) return ESP_FAIL;
+    if (size > len - at) return ESP_ERR_INVALID_SIZE; /* a box past what we have */
+    at += (size_t)size;
+  }
+  return ESP_ERR_INVALID_SIZE;
 }
