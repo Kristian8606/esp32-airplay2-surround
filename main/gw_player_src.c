@@ -9,34 +9,33 @@
 
 #include "esp_http_client.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static const char *TAG = "gw_player_src";
 
 /* ---- HTTP ---- */
 
-static int http_read(player_source_t *s, uint8_t *buf, size_t len) {
-  esp_http_client_handle_t c = s->ctx;
-  for (int tries = 0; tries < 20; ++tries) {
-    const int n = esp_http_client_read(c, (char *)buf, (int)len);
-    if (n != -ESP_ERR_HTTP_EAGAIN) {
-      if (n == 0 && !esp_http_client_is_complete_data_received(c)) return -1;
-      return n;
-    }
+typedef struct {
+  esp_http_client_handle_t c;
+  char *url;
+  int64_t pos; /* the file's byte that read gives next */
+} http_src_t;
+
+static void http_drop(http_src_t *h) {
+  if (h->c) {
+    esp_http_client_close(h->c);
+    esp_http_client_cleanup(h->c);
   }
-  return -1;
+  h->c = NULL;
 }
 
-static void http_close(player_source_t *s) {
-  esp_http_client_handle_t c = s->ctx;
-  if (c) {
-    esp_http_client_close(c);
-    esp_http_client_cleanup(c);
-  }
-  s->ctx = NULL;
-}
-
-esp_err_t player_source_http_open(player_source_t *s, const char *url) {
-  memset(s, 0, sizeof(*s));
+/* A GET from byte off on (to last, when last >= off). Status 200 for the
+ * whole file, 206 for a part; a 200 to a Range request is
+ * ESP_ERR_NOT_SUPPORTED (the server does not seek). */
+static esp_err_t http_get(const char *url, int64_t off, int64_t last,
+                          esp_http_client_handle_t *out, int64_t *len) {
   const esp_http_client_config_t cfg = {
       .url = url,
       .timeout_ms = 5000,
@@ -44,22 +43,130 @@ esp_err_t player_source_http_open(player_source_t *s, const char *url) {
   };
   esp_http_client_handle_t c = esp_http_client_init(&cfg);
   if (!c) return ESP_ERR_NO_MEM;
+  if (off > 0 || last >= 0) {
+    char range[48];
+    if (last >= off)
+      snprintf(range, sizeof(range), "bytes=%lld-%lld", (long long)off, (long long)last);
+    else
+      snprintf(range, sizeof(range), "bytes=%lld-", (long long)off);
+    esp_http_client_set_header(c, "Range", range);
+  }
   esp_err_t err = esp_http_client_open(c, 0);
   if (err != ESP_OK) {
     esp_http_client_cleanup(c);
     return err;
   }
-  const int64_t len = esp_http_client_fetch_headers(c);
+  *len = esp_http_client_fetch_headers(c);
   const int status = esp_http_client_get_status_code(c);
-  if (status != 200) {
-    ESP_LOGW(TAG, "HTTP %d for %s", status, url);
+  const bool ranged = off > 0 || last >= 0;
+  if (status != (ranged ? 206 : 200)) {
+    ESP_LOGW(TAG, "HTTP %d for %s%s", status, url, ranged ? " (a Range request)" : "");
     esp_http_client_close(c);
     esp_http_client_cleanup(c);
-    return ESP_ERR_NOT_FOUND;
+    return ranged && status == 200 ? ESP_ERR_NOT_SUPPORTED : ESP_ERR_NOT_FOUND;
   }
-  s->ctx = c;
+  *out = c;
+  return ESP_OK;
+}
+
+static int http_read_once(http_src_t *h, uint8_t *buf, size_t len) {
+  if (!h->c) return -1;
+  for (int tries = 0; tries < 20; ++tries) {
+    const int n = esp_http_client_read(h->c, (char *)buf, (int)len);
+    if (n != -ESP_ERR_HTTP_EAGAIN) {
+      if (n == 0 && !esp_http_client_is_complete_data_received(h->c)) return -1;
+      return n;
+    }
+  }
+  return -1;
+}
+
+static esp_err_t http_seek(player_source_t *s, int64_t off) {
+  http_src_t *h = s->ctx;
+  esp_http_client_handle_t c = NULL;
+  int64_t len = 0;
+  const esp_err_t err = http_get(h->url, off, -1, &c, &len);
+  if (err != ESP_OK) return err;
+  http_drop(h);
+  h->c = c;
+  h->pos = off;
+  return ESP_OK;
+}
+
+static int http_read(player_source_t *s, uint8_t *buf, size_t len) {
+  http_src_t *h = s->ctx;
+  int n = http_read_once(h, buf, len);
+  if (n < 0 && h->pos > 0 && (s->size < 0 || h->pos < s->size)) {
+    /* the connection broke (the server gave up during a long pause, say):
+     * once more from where it was */
+    ESP_LOGW(TAG, "HTTP read failed at byte %lld: opening again there", (long long)h->pos);
+    for (int k = 0; k < 16 && n < 0; ++k) { /* up to ~8 s: a server that restarts */
+      if (k) vTaskDelay(pdMS_TO_TICKS(500));
+      if (http_seek(s, h->pos) == ESP_OK) n = http_read_once(h, buf, len);
+    }
+    if (n < 0) ESP_LOGW(TAG, "HTTP: the file is gone at byte %lld", (long long)h->pos);
+  }
+  if (n > 0) h->pos += n;
+  return n;
+}
+
+static int http_read_at(player_source_t *s, int64_t off, uint8_t *buf, size_t len) {
+  http_src_t *h = s->ctx;
+  if (!len) return 0;
+  esp_http_client_handle_t c = NULL;
+  int64_t clen = 0;
+  const int64_t t0 = esp_timer_get_time();
+  if (http_get(h->url, off, off + (int64_t)len - 1, &c, &clen) != ESP_OK) return -1;
+  const int64_t t1 = esp_timer_get_time();
+  size_t got = 0;
+  while (got < len) {
+    const int n = esp_http_client_read(c, (char *)buf + got, (int)(len - got));
+    if (n == -ESP_ERR_HTTP_EAGAIN) continue;
+    if (n <= 0) break;
+    got += (size_t)n;
+  }
+  const int64_t t2 = esp_timer_get_time();
+  esp_http_client_close(c);
+  esp_http_client_cleanup(c);
+  const int64_t t3 = esp_timer_get_time();
+  if (t3 - t0 > 200000)
+    ESP_LOGW(TAG, "slow read_at of %u bytes: open %lld ms, read %lld ms, close %lld ms",
+             (unsigned)len, (long long)((t1 - t0) / 1000), (long long)((t2 - t1) / 1000),
+             (long long)((t3 - t2) / 1000));
+  return (int)got;
+}
+
+static void http_close(player_source_t *s) {
+  http_src_t *h = s->ctx;
+  if (h) {
+    http_drop(h);
+    free(h->url);
+    free(h);
+  }
+  s->ctx = NULL;
+}
+
+esp_err_t player_source_http_open(player_source_t *s, const char *url) {
+  memset(s, 0, sizeof(*s));
+  http_src_t *h = calloc(1, sizeof(*h));
+  if (!h) return ESP_ERR_NO_MEM;
+  h->url = strdup(url);
+  if (!h->url) {
+    free(h);
+    return ESP_ERR_NO_MEM;
+  }
+  int64_t len = 0;
+  const esp_err_t err = http_get(url, 0, -1, &h->c, &len);
+  if (err != ESP_OK) {
+    free(h->url);
+    free(h);
+    return err;
+  }
+  s->ctx = h;
   s->read = http_read;
   s->close = http_close;
+  s->seek = http_seek;
+  s->read_at = http_read_at;
   s->size = len > 0 ? len : -1;
   return ESP_OK;
 }
@@ -313,4 +420,62 @@ esp_err_t m4a_probe(const uint8_t *buf, size_t len, m4a_info_t *m) {
     at += (size_t)size;
   }
   return ESP_ERR_INVALID_SIZE;
+}
+
+/* ---- FLAC frames, for seeking ---- */
+
+void flac_stream_info(const uint8_t *f, flac_stream_t *out) {
+  const uint8_t *si = f + 8;
+  memcpy(out->streaminfo, si, sizeof(out->streaminfo));
+  out->min_block = ((uint32_t)si[0] << 8) | si[1];
+  out->max_block = ((uint32_t)si[2] << 8) | si[3];
+}
+
+static uint8_t crc8_07(const uint8_t *b, size_t n) {
+  uint8_t c = 0;
+  while (n--) {
+    c ^= *b++;
+    for (int k = 0; k < 8; ++k) c = (uint8_t)((c & 0x80) ? (c << 1) ^ 0x07 : c << 1);
+  }
+  return c;
+}
+
+bool flac_frame_at(const uint8_t *b, size_t len, const flac_stream_t *st, int channels,
+                   int bits, uint64_t *first) {
+  if (len < 16 || b[0] != 0xFF || (b[1] & 0xFE) != 0xF8) return false;
+  const bool variable = b[1] & 1U;
+  const uint8_t bs = b[2] >> 4, rate = b[2] & 0x0F, chan = b[3] >> 4, size = (b[3] >> 1) & 7;
+  if (bs == 0 || rate == 15 || (b[3] & 1U) || chan > 10) return false;
+  if ((chan <= 7 ? chan + 1 : 2) != channels) return false;
+  static const int8_t depth[8] = {0, 8, 12, -1, 16, 20, 24, 32};
+  if (depth[size] < 0 || (depth[size] && depth[size] != bits)) return false;
+  /* the frame or sample number, UTF-8 style */
+  size_t at = 4;
+  uint64_t v = b[at];
+  int more = 0;
+  if (!(v & 0x80)) more = 0;
+  else if ((v & 0xE0) == 0xC0) { v &= 0x1F; more = 1; }
+  else if ((v & 0xF0) == 0xE0) { v &= 0x0F; more = 2; }
+  else if ((v & 0xF8) == 0xF0) { v &= 0x07; more = 3; }
+  else if ((v & 0xFC) == 0xF8) { v &= 0x03; more = 4; }
+  else if ((v & 0xFE) == 0xFC) { v &= 0x01; more = 5; }
+  else if (b[at] == 0xFE) { v = 0; more = 6; }
+  else return false;
+  at++;
+  for (int k = 0; k < more; ++k, ++at) {
+    if ((b[at] & 0xC0) != 0x80) return false;
+    v = (v << 6) | (b[at] & 0x3F);
+  }
+  if (bs == 6) at += 1;
+  else if (bs == 7) at += 2;
+  if (rate == 12) at += 1;
+  else if (rate == 13 || rate == 14) at += 2;
+  if (at + 1 > len || crc8_07(b, at) != b[at]) return false;
+  if (variable) {
+    *first = v;
+  } else {
+    if (!st->min_block || st->min_block != st->max_block) return false;
+    *first = v * st->min_block;
+  }
+  return true;
 }

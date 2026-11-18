@@ -15,11 +15,17 @@ struct player_source {
   /* > 0 bytes read, 0 at the end, < 0 on an error */
   int (*read)(player_source_t *s, uint8_t *buf, size_t len);
   void (*close)(player_source_t *s);
+  /* Phase 3d, NULL when the source cannot: read goes on from byte off of
+   * the file (ESP_ERR_NOT_SUPPORTED when the server ignores Range) */
+  esp_err_t (*seek)(player_source_t *s, int64_t off);
+  /* len bytes from byte off, apart from read's place; bytes read or < 0 */
+  int (*read_at)(player_source_t *s, int64_t off, uint8_t *buf, size_t len);
   int64_t size; /* -1 when unknown */
   void *ctx;
 };
 
-/* An http:// file (a plain GET; seeking comes in phase 3d). */
+/* An http:// file. Seeking and read_at use Range requests; a connection that
+ * breaks (a long pause) opens again where it was. */
 esp_err_t player_source_http_open(player_source_t *s, const char *url);
 
 /* ---- WAV ---- */
@@ -45,6 +51,21 @@ typedef struct {
  * total sample count (0 = unknown). Same returns as wav_parse. FLAC's own
  * channel order: 6 = FL FR FC LFE BL BR, 8 = FL FR FC LFE BL BR SL SR. */
 esp_err_t flac_parse(const uint8_t *buf, size_t len, wav_info_t *info, uint64_t *total_samples);
+
+/* FLAC's STREAMINFO, kept for seeking: the block sizes (a fixed-block
+ * stream numbers its frames, not its samples) and the 34 bytes to start a
+ * new decoder with. fLaC points at the file's "fLaC". */
+typedef struct {
+  uint32_t min_block, max_block;
+  uint8_t streaminfo[34];
+} flac_stream_t;
+void flac_stream_info(const uint8_t *fLaC, flac_stream_t *out);
+
+/* One FLAC frame header at b (sync 0xFFF8/0xFFF9, CRC-8 checked, the
+ * channel count and depth as the stream's): its first sample. False when
+ * it is not a frame header. */
+bool flac_frame_at(const uint8_t *b, size_t len, const flac_stream_t *st, int channels,
+                   int bits, uint64_t *first_sample);
 
 /* The size of an ID3v2 tag at the start of buf (header included), 0 if
  * there is none. */

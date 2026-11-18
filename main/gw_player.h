@@ -28,6 +28,11 @@ void gw_player_stop(void);
 
 void gw_player_set_volume(int volume_db);
 
+/* Phase 3d: pause (true) or resume (false), and seek to a place in the
+ * file (WAV and FLAC for now). ESP_ERR_INVALID_STATE when nothing plays. */
+esp_err_t gw_player_pause(bool pause);
+esp_err_t gw_player_seek(double position_s);
+
 /* The player holds the speakers. */
 bool gw_player_active(void);
 
@@ -36,6 +41,7 @@ void gw_player_yield(void);
 bool gw_player_clock_line(apple_clock_line_t *out);
 
 /* GET /api/player (status) and POST /api/player {"cmd":"play","url":...,
- * "vol":-30} | {"cmd":"stop"} | {"cmd":"volume","vol":-25}. POST asks the
+ * "vol":-30} | {"cmd":"stop"} | {"cmd":"volume","vol":-25} | {"cmd":"pause"}
+ * | {"cmd":"resume"} | {"cmd":"seek","pos":95.5}. POST asks the
  * admin password like the other settings. */
 void gw_player_register_web(httpd_handle_t server);

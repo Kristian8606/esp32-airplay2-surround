@@ -62,6 +62,8 @@ static const char *TAG = "gw_player";
 #define PL_MAX_LEAD_BUSY_NS 8000000000LL /* lanes over PL_BUSY_KBPS in all */
 #define PL_BUSY_KBPS      4000
 #define PL_MIN_LEAD_NS    250000000LL
+#define PL_RESUME_DELAY_NS 1000000000LL /* resume: the speakers start again after this */
+#define PL_RESEEK_DELAY_US 1000000LL    /* a new lane: wait for more speakers first */
 #define PL_SENDER_STOP_MS 8000
 #define PL_STOP_WAIT_MS   6000
 #define PL_STATUS_LOG_MS  10000
@@ -77,7 +79,7 @@ static const char *TAG = "gw_player";
 #define PL_WBUF_FLUSH     8192U
 
 typedef enum { P_IDLE = 0, P_STARTING, P_PLAYING, P_BUFFERING, P_FINISHING,
-               P_STOPPING, P_FAILED } player_state_t;
+               P_STOPPING, P_FAILED, P_PAUSED } player_state_t;
 
 static const char *state_name(player_state_t s) {
   switch (s) {
@@ -87,6 +89,7 @@ static const char *state_name(player_state_t s) {
     case P_FINISHING: return "finishing";
     case P_STOPPING: return "stopping";
     case P_FAILED: return "failed";
+    case P_PAUSED: return "paused";
     default: return "idle";
   }
 }
@@ -121,6 +124,8 @@ static apple_clock_line_t s_line;
 static int64_t s_owns_since_us;
 static uint16_t s_epoch = 0x5000;
 static char s_next_url[256];
+static atomic_int s_pause_req;   /* 1 pause, 2 resume */
+static atomic_llong s_seek_ms = -1;
 static int s_next_volume_db = -30;
 
 static void st_set(player_state_t state, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
@@ -231,6 +236,10 @@ typedef struct {
 enum { KIND_WAV = 0, KIND_FLAC, KIND_MP3, KIND_AAC, KIND_M4A };
 
 typedef struct {
+  uint64_t sample, offset;
+} flac_seekpt_t;
+
+typedef struct {
   /* source */
   player_source_t src;
   int kind;
@@ -262,6 +271,10 @@ typedef struct {
   /* lanes */
   lane_t lane[PL_LANES];
   uint32_t speakers_gen;
+  /* the roles last seen, by speaker name: a speaker that changes its role
+   * holds the old lane for the lead, so the player seeks to where it is */
+  char spk_name[SURROUND_MAX_SPEAKERS][24];
+  int8_t spk_role[SURROUND_MAX_SPEAKERS];
   uint8_t *out;
   uint8_t *pkt;
   uint8_t *wbuf;
@@ -283,6 +296,18 @@ typedef struct {
   /* MP3 / AAC length, estimated from what the decoder took so far */
   uint64_t dec_bytes, dec_frames;
   size_t id3_bytes;
+  /* pause and seek (phase 3d) */
+  bool paused, finishing;
+  uint32_t paused_rtp;
+  uint32_t burst_rtp;     /* the first second from here goes out at once */
+  uint64_t skip_frames;   /* decoded frames to drop: a seek lands before its place */
+  int64_t reseek_at_us;   /* a lane was added: seek to where the speakers are */
+  flac_stream_t flac;
+  bool flac_scanned;
+  int64_t flac_audio_start;
+  int64_t flac_walk_at;   /* the next metadata block header (0 = not started) */
+  flac_seekpt_t *seekpts;
+  size_t n_seekpts;
   uint64_t read_bytes;
   uint32_t frames_sent;
 } player_t;
@@ -315,6 +340,16 @@ static void lanes_refresh(player_t *p) {
     if (!t[i].name[0]) continue;
     const int role = t[i].channel;
     if (role >= -1 && role < 8) want[role + 1] = true;
+    for (size_t j = 0; j < SURROUND_MAX_SPEAKERS; ++j) {
+      if (strcmp(p->spk_name[j], t[i].name) != 0 || p->spk_role[j] == role) continue;
+      ESP_LOGI(TAG, "speaker %s: role %s -> %s", t[i].name, surround_role_name(p->spk_role[j]),
+               surround_role_name(role));
+      if (p->playing) p->reseek_at_us = esp_timer_get_time() + PL_RESEEK_DELAY_US;
+    }
+  }
+  for (size_t i = 0; i < SURROUND_MAX_SPEAKERS; ++i) {
+    strlcpy(p->spk_name[i], t[i].name, sizeof(p->spk_name[i]));
+    p->spk_role[i] = t[i].channel;
   }
   const bool mc = p->wav.layout >= 6;
   int kbps = 0;
@@ -333,6 +368,9 @@ static void lanes_refresh(player_t *p) {
       l->ssrc = f->ssrc;
       alac_lite_init(&l->enc, l->bits, PL_ENC_ORDER);
       l->on = true;
+      /* it would be heard only after the lead: start again from where the
+       * speakers are, once the speakers settle */
+      if (p->playing) p->reseek_at_us = esp_timer_get_time() + PL_RESEEK_DELAY_US;
       ESP_LOGI(TAG, "lane %s (%s): %s", surround_role_name(role),
                sig.kind == SURROUND_SIG_CHANNEL ? "its channel"
                : sig.kind == SURROUND_SIG_HALF_LR ? "0.5 (L + R)" : "mean without LFE",
@@ -454,7 +492,7 @@ static bool send_frame(player_t *p) {
   p->rtp += PL_FRAME;
   p->frames_sent++;
   /* the first second goes out at once: the speakers start sooner */
-  if (p->wlen >= PL_WBUF_FLUSH || (uint32_t)(p->rtp - p->rtp0) < (uint32_t)p->rate)
+  if (p->wlen >= PL_WBUF_FLUSH || (uint32_t)(p->rtp - p->burst_rtp) < (uint32_t)p->rate)
     return flush_wbuf(p);
   return true;
 }
@@ -469,6 +507,7 @@ static bool session_open(player_t *p, int volume_db) {
   p->seq = esp_random() & PL_SEQ_MASK;
   p->rtp = esp_random();
   p->rtp0 = p->rtp;
+  p->burst_rtp = p->rtp;
   p->clock_id = player_clock_id();
   while (esp_timer_get_time() - s_owns_since_us < 1000000LL && !atomic_load(&s_stop))
     vTaskDelay(pdMS_TO_TICKS(50));
@@ -568,6 +607,7 @@ static int sniff_kind(const uint8_t *h, size_t n) {
 }
 
 static bool decode_stream(player_t *p);
+static bool flac_walk(player_t *p, const uint8_t *buf, int64_t base, size_t have, bool may_read);
 
 /* Reads the start of the file: skips an ID3v2 tag, finds what it is and
  * its format. What was read after the header (WAV) or all of it (the
@@ -621,6 +661,8 @@ static bool open_input(player_t *p) {
                            : "Not a WAV, FLAC, MP3, AAC or M4A file");
     goto done;
   }
+  if (p->kind == KIND_FLAC) /* for seeking: what the header read shows */
+    (void)flac_walk(p, hdr, (int64_t)p->id3_bytes, have, false);
   if (p->kind == KIND_M4A) {
     memcpy(p->m4a_codec, m4a.codec, sizeof(p->m4a_codec));
     p->m4a_duration_s = m4a.duration_s;
@@ -743,6 +785,12 @@ static bool push_pcm(player_t *p, const uint8_t *d, size_t n, int bytes, int shi
   const int ch = p->wav.channels;
   const uint64_t crc_end = (uint64_t)p->wav.rate * 10U;
   p->dec_frames += n;
+  if (p->skip_frames) { /* a seek landed before its place */
+    const size_t k = p->skip_frames < n ? (size_t)p->skip_frames : n;
+    d += k * (size_t)ch * (size_t)bytes;
+    n -= k;
+    p->skip_frames -= k;
+  }
   for (size_t f = 0; f < n; ++f) {
     for (int c = 0; c < ch; ++c, d += bytes) {
       int32_t v;
@@ -930,17 +978,302 @@ static bool decode_stream(player_t *p) {
   return true;
 }
 
+/* ---- pause and seek (phase 3d) ---- */
+
+/* The RTP time the speakers play now (the next frame to send while the
+ * stream is not anchored). */
+static uint32_t play_rtp(const player_t *p) {
+  if (p->paused) return p->paused_rtp;
+  if (!p->playing) return p->rtp;
+  int64_t d = now_ns() - p->anchor_ns;
+  if (d < 0) d = 0;
+  uint64_t played = (uint64_t)d * (uint64_t)p->rate / 1000000000ULL;
+  const uint32_t sent = p->rtp - p->anchor_rtp;
+  if (played > sent) played = sent;
+  return p->anchor_rtp + (uint32_t)played;
+}
+
+static double play_pos_s(const player_t *p) {
+  return (double)(uint32_t)(play_rtp(p) - p->rtp0) / p->rate;
+}
+
+/* Pause as Apple's buffered senders do (SETRATEANCHORTIME rate 0): the
+ * speakers keep what they hold, and resume plays on from the same RTP time
+ * under a new anchor. */
+static void do_pause(player_t *p) {
+  if (p->paused) return;
+  p->paused_rtp = play_rtp(p);
+  (void)flush_wbuf(p);
+  sound_engine_pause();
+  p->playing = false;
+  p->paused = true;
+  ESP_LOGI(TAG, "paused at %.1f s", play_pos_s(p));
+  st_set(P_PAUSED, NULL);
+}
+
+static void do_resume(player_t *p) {
+  if (!p->paused) return;
+  p->paused = false;
+  if (!p->need_anchor) {
+    p->anchor_ns = now_ns() + PL_RESUME_DELAY_NS;
+    p->anchor_rtp = p->paused_rtp;
+    sound_engine_set_anchor_time(p->clock_id, (uint64_t)p->anchor_ns, p->anchor_rtp);
+    sound_engine_set_playing(true);
+    p->playing = true;
+  } /* else not anchored yet: the next frame anchors */
+  ESP_LOGI(TAG, "resumed at %.1f s", play_pos_s(p));
+  st_set(p->finishing ? P_FINISHING : P_PLAYING, NULL);
+}
+
+/* Bytes of the file: from buf when they are in it (buf holds the file from
+ * byte base on), else read_at (when may_read). */
+static bool file_bytes(player_t *p, const uint8_t *buf, int64_t base, size_t have, int64_t off,
+                       uint8_t *dst, size_t n, bool may_read) {
+  if (buf && off >= base && off + (int64_t)n <= base + (int64_t)have) {
+    memcpy(dst, buf + (off - base), n);
+    return true;
+  }
+  return may_read && p->src.read_at && p->src.read_at(&p->src, off, dst, n) == (int)n;
+}
+
+/* FLAC: STREAMINFO, the seek table and where the frames start. open_input
+ * walks what it read of the file (may_read false: it stops where that
+ * ends); the first seek goes on from there with read_at. */
+static bool flac_walk(player_t *p, const uint8_t *buf, int64_t base, size_t have, bool may_read) {
+  if (p->flac_scanned) return p->flac_audio_start > 0;
+  if (!p->flac_walk_at) {
+    uint8_t h[42];
+    if (!file_bytes(p, buf, base, have, (int64_t)p->id3_bytes, h, sizeof(h), may_read))
+      return false;
+    if (memcmp(h, "fLaC", 4) != 0) {
+      p->flac_scanned = true;
+      return false;
+    }
+    flac_stream_info(h, &p->flac);
+    p->flac_walk_at = (int64_t)p->id3_bytes + 4;
+  }
+  for (int k = 0; k < 128; ++k) {
+    const int64_t at = p->flac_walk_at;
+    uint8_t bh[4];
+    if (!file_bytes(p, buf, base, have, at, bh, 4, may_read)) {
+      if (may_read) p->flac_scanned = true;
+      return false;
+    }
+    const uint32_t len = ((uint32_t)bh[1] << 16) | ((uint32_t)bh[2] << 8) | bh[3];
+    if ((bh[0] & 0x7F) == 3 && !p->seekpts && len >= 18 && len <= 65536) {
+      uint8_t *t = heap_caps_malloc(len, MALLOC_CAP_SPIRAM);
+      if (!t) return false;
+      if (!file_bytes(p, buf, base, have, at + 4, t, len, may_read)) {
+        free(t);
+        if (may_read) p->flac_scanned = true;
+        return false; /* open_input: the first seek reads it */
+      }
+      p->seekpts = heap_caps_malloc((len / 18) * sizeof(flac_seekpt_t), MALLOC_CAP_SPIRAM);
+      for (uint32_t i = 0; p->seekpts && i + 18 <= len; i += 18) {
+        uint64_t smp = 0, off = 0;
+        for (int b = 0; b < 8; ++b) {
+          smp = (smp << 8) | t[i + b];
+          off = (off << 8) | t[i + 8 + b];
+        }
+        if (smp == UINT64_MAX) continue; /* a placeholder */
+        p->seekpts[p->n_seekpts].sample = smp;
+        p->seekpts[p->n_seekpts].offset = off;
+        p->n_seekpts++;
+      }
+      free(t);
+    }
+    p->flac_walk_at = at + 4 + (int64_t)len;
+    if (bh[0] & 0x80) {
+      p->flac_scanned = true;
+      p->flac_audio_start = p->flac_walk_at;
+      ESP_LOGI(TAG, "FLAC: frames from byte %lld, seek table of %u points, blocks %" PRIu32
+               "..%" PRIu32, (long long)p->flac_audio_start, (unsigned)p->n_seekpts,
+               p->flac.min_block, p->flac.max_block);
+      return true;
+    }
+  }
+  p->flac_scanned = true;
+  return false;
+}
+
+static bool flac_scan(player_t *p) { return flac_walk(p, NULL, 0, 0, true); }
+
+/* The first FLAC frame at or after byte off (looking 128 KiB on). */
+static bool flac_frame_near(player_t *p, int64_t off, int64_t *pos, uint64_t *sample) {
+  enum { CHUNK = 16384, HDR = 16 };
+  uint8_t *b = heap_caps_malloc(CHUNK, MALLOC_CAP_SPIRAM);
+  if (!b) return false;
+  bool found = false;
+  for (int k = 0; k < 8 && !found; ++k) {
+    const int n = p->src.read_at(&p->src, off, b, CHUNK);
+    if (n <= HDR) break;
+    for (int i = 0; i + HDR <= n; ++i) {
+      uint64_t s;
+      if (b[i] == 0xFF && flac_frame_at(b + i, (size_t)(n - i), &p->flac, p->wav.channels,
+                                        p->wav.bits, &s) &&
+          (!p->total_frames || s < p->total_frames)) {
+        *pos = off + i;
+        *sample = s;
+        found = true;
+        break;
+      }
+    }
+    off += n - HDR;
+  }
+  free(b);
+  return found;
+}
+
+/* The last FLAC frame that starts at or before sample target, or one up to
+ * half a second before it: the seek table (when there is one) brackets it,
+ * then a search by the bytes narrows it down. */
+static bool flac_locate(player_t *p, uint64_t target, int64_t *pos, uint64_t *sample) {
+  if (!flac_scan(p)) return false;
+  int64_t lo_off = p->flac_audio_start, hi_off = p->src.size;
+  uint64_t lo_s = 0, hi_s = p->total_frames;
+  for (size_t i = 0; i < p->n_seekpts; ++i) {
+    const flac_seekpt_t *sp = &p->seekpts[i];
+    if (sp->sample <= target) {
+      lo_s = sp->sample;
+      lo_off = p->flac_audio_start + (int64_t)sp->offset;
+    } else {
+      hi_s = sp->sample;
+      hi_off = p->flac_audio_start + (int64_t)sp->offset;
+      break;
+    }
+  }
+  int tries = 0;
+  if (hi_off > lo_off && hi_s > lo_s) {
+    for (; tries < 16 && target - lo_s > (uint64_t)p->rate / 2U; ++tries) {
+      if (hi_off - lo_off < 64) break;
+      int64_t guess = lo_off + (int64_t)((double)(target - lo_s) / (double)(hi_s - lo_s) *
+                                         (double)(hi_off - lo_off));
+      guess -= 8192; /* the frame found comes after the guess */
+      if (guess <= lo_off) guess = lo_off + 1;
+      if (guess >= hi_off) guess = lo_off + (hi_off - lo_off) / 2;
+      int64_t fpos;
+      uint64_t fs;
+      if (!flac_frame_near(p, guess, &fpos, &fs) || fpos >= hi_off) {
+        hi_off = guess; /* nothing new between the guess and hi */
+        continue;
+      }
+      if (fs > target) {
+        hi_off = fpos;
+        hi_s = fs;
+      } else if (fpos > lo_off) {
+        lo_off = fpos;
+        lo_s = fs;
+      } else {
+        break;
+      }
+    }
+  }
+  *pos = lo_off;
+  *sample = lo_s;
+  ESP_LOGI(TAG, "FLAC seek: frame at byte %lld, sample %llu (%d reads), %.2f s to drop",
+           (long long)lo_off, (unsigned long long)lo_s, tries,
+           (double)(target - lo_s) / p->rate);
+  return true;
+}
+
+/* A fresh FLAC decoder, fed fLaC and STREAMINFO before the frames. */
+static bool flac_restart(player_t *p) {
+  if (p->dec) esp_audio_simple_dec_close(p->dec);
+  p->dec = NULL;
+  esp_audio_simple_dec_cfg_t dc = {.dec_type = ESP_AUDIO_SIMPLE_DEC_TYPE_FLAC};
+  if (esp_audio_simple_dec_open(&dc, &p->dec) != ESP_AUDIO_ERR_OK) return false;
+  memcpy(p->buf, "fLaC", 4);
+  p->buf[4] = 0x80; /* STREAMINFO, the last block */
+  p->buf[5] = 0;
+  p->buf[6] = 0;
+  p->buf[7] = 34;
+  memcpy(p->buf + 8, p->flac.streaminfo, 34);
+  p->buf_len = 42;
+  p->buf_pos = 0;
+  return true;
+}
+
+/* To to_s seconds: the speakers drop what they hold (FLUSH up to the next
+ * frame's sequence number, as an AirPlay sender's FLUSHBUFFERED), the file
+ * goes on from there, and the stream starts again under a new anchor. The
+ * RTP time and sequence go on as they were. Nothing changes when the place
+ * cannot be found. */
+static void do_seek(player_t *p, double to_s, const char *why) {
+  if (p->kind != KIND_WAV && p->kind != KIND_FLAC) {
+    if (!why) ESP_LOGW(TAG, "seeking in %s comes later (phase 3d.2)", kind_name(p));
+    return;
+  }
+  if (!p->src.seek || !p->src.read_at) return;
+  uint64_t target = to_s > 0 ? (uint64_t)(to_s * p->rate) : 0;
+  if (p->total_frames && target >= p->total_frames) target = p->total_frames - 1;
+  const int64_t t0 = esp_timer_get_time();
+  int64_t pos;
+  uint64_t at = target;
+  if (p->kind == KIND_WAV) {
+    const uint64_t fb = (uint64_t)p->wav.channels * (uint64_t)p->wav.container_bits / 8U;
+    pos = (int64_t)p->id3_bytes + (int64_t)p->wav.data_offset + (int64_t)(target * fb);
+  } else if (!flac_locate(p, target, &pos, &at)) {
+    ESP_LOGW(TAG, "seek to %.1f s: no FLAC frame found there", to_s);
+    return;
+  }
+  const esp_err_t err = p->src.seek(&p->src, pos);
+  if (err != ESP_OK) {
+    ESP_LOGW(TAG, "seek to %.1f s: %s", to_s,
+             err == ESP_ERR_NOT_SUPPORTED ? "the server does not seek (no HTTP Range)"
+                                          : esp_err_to_name(err));
+    return;
+  }
+  /* the speakers and the relay drop what is not played yet */
+  p->wlen = 0;
+  sound_engine_pause();
+  sound_engine_set_immediate_flush(p->seq, p->rtp);
+  p->buf_len = p->buf_pos = 0;
+  p->eof = false;
+  p->dec_done = false;
+  p->dpcm_pending = 0;
+  p->fill = 0;
+  if (p->kind == KIND_FLAC && !flac_restart(p)) {
+    st_set(P_FAILED, "No FLAC decoder after the seek");
+    atomic_store(&s_stop, true);
+    return;
+  }
+  p->frames_read = at;
+  p->skip_frames = target - at;
+  p->rtp0 = p->rtp - (uint32_t)target;
+  p->burst_rtp = p->rtp;
+  p->playing = false;
+  p->paused = false;
+  p->finishing = false;
+  p->need_anchor = true;
+  if (!p->crc_logged) { /* the CRC is of the file's first 10 s */
+    p->crc_logged = true;
+    p->crc_frames = UINT64_MAX;
+  }
+  ESP_LOGI(TAG, "%s %.1f s: byte %lld, in %lld ms", why ? why : "seek to", (double)target / p->rate,
+           (long long)pos, (long long)((esp_timer_get_time() - t0) / 1000));
+  st_set(P_PLAYING, NULL);
+}
+
+/* Requests from the web (pause, resume, seek) and a re-seek after a lane
+ * was added. */
+static void controls(player_t *p) {
+  const int pr = atomic_exchange(&s_pause_req, 0);
+  if (pr == 1) do_pause(p);
+  else if (pr == 2) do_resume(p);
+  const long long ms = atomic_exchange(&s_seek_ms, -1LL);
+  if (ms >= 0) do_seek(p, (double)ms / 1000.0, NULL);
+  if (p->reseek_at_us && esp_timer_get_time() >= p->reseek_at_us) {
+    p->reseek_at_us = 0;
+    if (p->playing && !p->paused && !p->finishing)
+      do_seek(p, play_pos_s(p), "a speaker has a new role or lane: again from");
+  }
+}
+
 static void status_update(player_t *p) {
   const int lm = (int)(lead_ns(p) / 1000000LL);
   taskENTER_CRITICAL(&s_mux);
   s_st.lead_ms = lm;
-  {
-    /* what the speakers play now: sent minus the lead, never before 0 */
-    const double pos = p->playing
-        ? (double)(int64_t)((uint32_t)(p->rtp - p->rtp0)) / p->rate - (double)lm / 1000.0
-        : 0;
-    s_st.position_s = pos > 0 ? pos : 0;
-  }
+  s_st.position_s = play_pos_s(p); /* what the speakers play now */
   for (int k = 0; k < PL_LANES; ++k) s_st.lane_bytes[k] = p->lane[k].bytes;
   if ((p->kind == KIND_MP3 || p->kind == KIND_AAC) && p->src.size > 0 && p->dec_bytes &&
       p->dec_frames >= (uint64_t)p->rate * 2U) {
@@ -1009,6 +1342,19 @@ static void player_run(const char *url, int volume_db) {
   st_set(P_PLAYING, NULL);
 
   while (!atomic_load(&s_stop)) {
+    controls(p);
+    if (p->paused) {
+      status_update(p);
+      vTaskDelay(pdMS_TO_TICKS(50));
+      continue;
+    }
+    if (p->finishing) {
+      /* not anchored (the end came while buffering): nothing more to play */
+      if (!p->playing || lead_ns(p) <= -200000000LL) break;
+      status_update(p);
+      vTaskDelay(pdMS_TO_TICKS(100));
+      continue;
+    }
     if (p->playing && lead_ns(p) > p->max_lead_ns) {
       if (!flush_wbuf(p)) break;
       status_update(p);
@@ -1036,11 +1382,8 @@ static void player_run(const char *url, int volume_db) {
       }
       if (!flush_wbuf(p)) break;
       st_set(P_FINISHING, "End of the file: the speakers play what they hold");
-      while (!atomic_load(&s_stop) && lead_ns(p) > -200000000LL) {
-        status_update(p);
-        vTaskDelay(pdMS_TO_TICKS(100));
-      }
-      break;
+      p->finishing = true; /* a seek or a pause still works */
+      continue;
     }
     if (p->playing && s_st.state != P_PLAYING) st_set(P_PLAYING, NULL);
     status_update(p);
@@ -1052,6 +1395,7 @@ out:
     if (p->src.close) p->src.close(&p->src);
     if (p->dec) esp_audio_simple_dec_close(p->dec);
     free(p->dpcm);
+    free(p->seekpts);
     session_close(p);
     free(p->buf);
     free(p->out);
@@ -1158,6 +1502,19 @@ esp_err_t gw_player_play(const char *url, int volume_db) {
   return ESP_OK;
 }
 
+esp_err_t gw_player_pause(bool pause) {
+  if (!atomic_load(&s_running) || !atomic_load(&s_owns)) return ESP_ERR_INVALID_STATE;
+  atomic_store(&s_pause_req, pause ? 1 : 2);
+  return ESP_OK;
+}
+
+esp_err_t gw_player_seek(double position_s) {
+  if (!atomic_load(&s_running) || !atomic_load(&s_owns)) return ESP_ERR_INVALID_STATE;
+  if (position_s < 0) position_s = 0;
+  atomic_store(&s_seek_ms, (long long)(position_s * 1000.0));
+  return ESP_OK;
+}
+
 /* ---- web ---- */
 
 static esp_err_t status_handler(httpd_req_t *req) {
@@ -1234,6 +1591,13 @@ static esp_err_t control_handler(httpd_req_t *req) {
   } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "stop") == 0) {
     gw_player_stop();
     err = ESP_OK;
+  } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "pause") == 0) {
+    err = gw_player_pause(true);
+  } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "resume") == 0) {
+    err = gw_player_pause(false);
+  } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "seek") == 0 &&
+             cJSON_IsNumber(cJSON_GetObjectItem(j, "pos"))) {
+    err = gw_player_seek(cJSON_GetObjectItem(j, "pos")->valuedouble);
   } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "volume") == 0 && cJSON_IsNumber(vol)) {
     gw_player_set_volume(vol->valueint);
     err = ESP_OK;
