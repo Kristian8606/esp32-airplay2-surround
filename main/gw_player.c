@@ -2679,6 +2679,7 @@ static esp_err_t status_handler(httpd_req_t *req) {
   player_status_t st;
   taskENTER_CRITICAL(&s_mux);
   st = s_st;
+  st.volume_db = s_next_volume_db; /* the one it plays at, or the next file will */
   taskEXIT_CRITICAL(&s_mux);
   cJSON *root = cJSON_CreateObject();
   if (!root) return httpd_resp_send_500(req);
@@ -2785,11 +2786,11 @@ static esp_err_t control_handler(httpd_req_t *req) {
       }
       if (strings)
         err = gw_player_play_queue(list, n, cJSON_IsNumber(index) ? index->valueint : 0,
-                                   cJSON_IsNumber(vol) ? vol->valueint : -30);
+                                   cJSON_IsNumber(vol) ? vol->valueint : volume_now());
       free(list);
     }
   } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "play") == 0 && cJSON_IsString(url)) {
-    err = gw_player_play(url->valuestring, cJSON_IsNumber(vol) ? vol->valueint : -30);
+    err = gw_player_play(url->valuestring, cJSON_IsNumber(vol) ? vol->valueint : volume_now());
   } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "add") == 0 && cJSON_IsString(url)) {
     err = gw_player_add(url->valuestring);
   } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "next") == 0) {
@@ -2937,10 +2938,22 @@ static esp_err_t files_handler(httpd_req_t *req) {
 }
 #endif
 
+/* The Speakers page's player controls (data/www/player.js, phase 5). */
+extern const uint8_t web_player_js_start[] asm("_binary_web_player_js_start");
+extern const uint8_t web_player_js_end[] asm("_binary_web_player_js_end");
+
+static esp_err_t player_js_handler(httpd_req_t *req) {
+  httpd_resp_set_type(req, "application/javascript");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+  return httpd_resp_send(req, (const char *)web_player_js_start,
+                         web_player_js_end - web_player_js_start);
+}
+
 void gw_player_register_web(httpd_handle_t server) {
   const httpd_uri_t uris[] = {
       {.uri = "/api/player", .method = HTTP_GET, .handler = status_handler},
       {.uri = "/api/player", .method = HTTP_POST, .handler = control_handler},
+      {.uri = "/player.js", .method = HTTP_GET, .handler = player_js_handler},
 #if CONFIG_GATEWAY_USB_PLAYER_USB
       {.uri = "/api/player/files", .method = HTTP_GET, .handler = files_handler},
 #endif
