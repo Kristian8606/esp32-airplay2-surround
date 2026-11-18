@@ -24,17 +24,24 @@ const css = `
 .p-get{font-size:11px;padding:4px 10px;border-radius:10px;background:#0a0a0b;border:1px solid var(--line);color:var(--text);white-space:nowrap}
 .p-get b{font-weight:600;margin-right:6px}
 .p-get small{color:var(--muted);margin-left:6px}
-.p-path{display:flex;flex-wrap:wrap;gap:4px;align-items:center;font-size:12px;color:var(--muted);margin-top:10px}
-.p-path button{background:none;border:none;color:var(--accent);font-size:12px;cursor:pointer;font-family:inherit;padding:2px 0}
+.p-path{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:14px;color:var(--muted);margin-top:12px}
+.p-path button{background:#0a0a0b;border:1px solid var(--line2);border-radius:999px;color:var(--text);font-size:14px;cursor:pointer;font-family:inherit;padding:8px 14px;min-height:38px}
+.p-path button:hover{border-color:#fff}
+.p-path button.cur{background:var(--panel2);border-color:transparent;color:var(--muted);cursor:default}
+.p-path .p-back{background:#fff;color:#000;border-color:#fff;font-weight:600;padding:8px 18px}
+.p-path .p-back:hover{background:#dcdcdc}
 .p-list{overflow-y:auto;margin-top:10px;-webkit-overflow-scrolling:touch;display:flex;flex-direction:column;gap:6px;padding-bottom:4px}
-.p-row{display:flex;align-items:center;gap:10px;background:#0a0a0b;border:1px solid var(--line);border-radius:12px;padding:9px 10px;cursor:pointer;color:var(--text);text-align:left;font-family:inherit;font-size:13px;width:100%}
+.p-row{display:flex;align-items:center;gap:12px;background:#0a0a0b;border:1px solid var(--line);border-radius:14px;padding:11px 12px;cursor:pointer;color:var(--text);text-align:left;font-family:inherit;font-size:14px;width:100%;min-height:62px}
 .p-row:hover{border-color:var(--line2)}
 .p-row.on{box-shadow:0 0 0 2px #8b5cff;border-color:transparent}
 .p-row.off{cursor:default;opacity:.38}
-.p-row .ic{flex:none;width:30px;height:30px;border-radius:8px;background:var(--panel2);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.3px}
+.p-row .ic{flex:none;width:40px;height:40px;border-radius:10px;background:var(--panel2);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#c4b2ff;letter-spacing:.3px}
+.p-row .ic.dir{background:rgba(139,92,255,.16);color:#c4b2ff}
+.p-row .ic svg{width:24px;height:24px;fill:currentColor}
+.p-row .go{flex:none;color:var(--muted);font-size:20px;line-height:1;padding:0 4px}
 .p-row .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .p-row small{color:var(--muted);font-size:11px;white-space:nowrap}
-.p-add{flex:none;background:none;border:1px solid var(--line2);border-radius:999px;color:var(--text);font-size:13px;width:28px;height:28px;cursor:pointer;padding:0;font-family:inherit}
+.p-add{flex:none;background:none;border:1px solid var(--line2);border-radius:999px;color:var(--text);font-size:18px;width:38px;height:38px;cursor:pointer;padding:0;font-family:inherit}
 .p-add:hover{border-color:#fff}
 .p-tools{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
 `;
@@ -89,6 +96,7 @@ const mmss = s => { s = Math.max(0, Math.floor(s || 0)); const h = Math.floor(s 
 const baseName = u => { const n = (u || '').split('/').pop() || u || ''; return n.replace(/\.[^.]+$/, ''); };
 const folderOf = u => { const p = (u || '').replace(/^usb:/, '').split('/'); p.pop(); return p.join('/') || '/'; };
 const join = (d, n) => (d.endsWith('/') ? d : d + '/') + n;
+const FOLDER = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5A2.5 2.5 0 0 1 5.5 4h4.2l2 2.2h6.8A2.5 2.5 0 0 1 21 8.7v8.8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg>';
 function setMsg(t, err) { msg.textContent = t || ''; msg.className = 'r-msg' + (err ? ' err' : ''); }
 function chip(t, c) { return el('span', 'chip ' + c, t); }
 
@@ -108,10 +116,15 @@ function drawPath() {
   path.textContent = '';
   if (tab !== 'usb') return;
   const parts = dir.split('/').filter(Boolean);
-  const mk = (t, d) => { const b = el('button', '', t); b.type = 'button'; b.onclick = () => openDir(d); return b; };
-  path.appendChild(mk('USB', '/'));
+  const mk = (t, d, here) => { const b = el('button', here ? 'cur' : '', t); b.type = 'button'; if (!here) b.onclick = () => openDir(d); return b; };
+  if (parts.length) { /* one folder up */
+    const up = '/' + parts.slice(0, -1).join('/');
+    const back = el('button', 'p-back', '‹ Back'); back.type = 'button'; back.onclick = () => openDir(up);
+    path.appendChild(back);
+  }
+  path.appendChild(mk('USB', '/', !parts.length));
   let acc = '';
-  parts.forEach(p => { acc += '/' + p; path.append(el('span', '', '›'), mk(p, acc)); });
+  parts.forEach((p, i) => { acc += '/' + p; path.append(el('span', '', '›'), mk(p, acc, i === parts.length - 1)); });
 }
 const playable = () => entries.filter(e => !e.dir && e.play);
 function drawTools(more) {
@@ -131,10 +144,12 @@ function drawList() {
   const playing = cur && cur.active ? cur.url : '';
   entries.forEach(e => {
     const r = el('div', 'p-row'); r.tabIndex = 0;
-    const ic = el('div', 'ic', e.dir ? '▸' : (e.type || '·').toUpperCase().slice(0, 4));
+    const ic = el('div', e.dir ? 'ic dir' : 'ic', e.dir ? '' : (e.type || '·').toUpperCase().slice(0, 4));
+    if (e.dir) ic.innerHTML = FOLDER;
     const nm = el('div', 'nm', e.dir ? e.name : e.name);
     r.append(ic, nm);
     if (e.dir) {
+      r.append(el('span', 'go', '›'));
       r.onclick = () => openDir(join(dir, e.name));
     } else if (e.play) {
       r.append(el('small', '', sizeOf(e.size || 0)));
@@ -245,7 +260,7 @@ function render(d) {
   bName.textContent = baseName(d.url) || 'Starting…';
   const q = d.queue || [];
   const where = q.length > 1 ? (d.index + 1) + ' of ' + q.length + ' · ' : '';
-  bSub.textContent = d.state === 'failed' || (d.message && d.state !== 'playing') ? (d.message || '') : where + folderOf(d.url);
+  bSub.textContent = d.state === 'failed' || (d.message && d.state !== 'playing') ? (d.message || '') : where + folderOf(d.url) + (d.warning ? ' · ' + d.warning : '');
   bChips.textContent = '';
   const m = /^(.*?) (\d+) Hz \/ (\d+) bit \/ (\S+?)(?:, \/(\d) to (\d+))?$/.exec(fmt);
   if (m) {
@@ -258,6 +273,7 @@ function render(d) {
     if (m[5]) bChips.appendChild(chip('down ÷' + m[5], 'c-dim'));
     else if (lossless) bChips.appendChild(chip('bit for bit', 'c-ok'));
   }
+  if (d.warning) { const w = chip('Heavy for USB', 'c-warn'); w.title = d.warning; bChips.appendChild(w); }
   if (d.state !== 'playing') bChips.appendChild(chip(d.state === 'paused' ? 'Paused' : d.state === 'buffering' ? 'Buffering…' : d.state === 'finishing' ? 'Ending…' : d.state === 'stopping' ? 'Stopping…' : 'Starting…', 'c-warn'));
   bPlay.textContent = d.state === 'paused' ? '▶' : '⏸'; bPlay.title = d.state === 'paused' ? 'Play' : 'Pause';
   bNext.disabled = !(q.length > d.index + 1);

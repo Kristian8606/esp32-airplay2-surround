@@ -108,6 +108,7 @@ typedef struct {
   char message[96];
   char url[256];
   char format[64];  /* "WAV 48000 Hz / 24 bit / 5.1" */
+  char warning[96]; /* a file heavier than the USB port reads (phase 4.3) */
   int rate, bits, channels, layout;
   int volume_db;
   int lead_ms;
@@ -265,6 +266,7 @@ typedef struct {
   int ix;
   char url[PL_URL_MAX];
   char format[64];
+  char warning[96];
   int rate, bits, channels, layout;
   double duration_s;
 } track_info_t;
@@ -358,6 +360,7 @@ typedef struct {
   uint64_t out_left;      /* frames of music left in the input (UINT64_MAX: all) */
   uint64_t trim_start, trim_total; /* encoder delay to drop; music frames (0 = all) */
   uint64_t track_frames;  /* frames of the input that went out (the log: gapless) */
+  bool src_usb;           /* the input is on the USB drive */
   /* hi-res (phase 3e): 88.2/96 kHz by 2, 176.4/192 by 4; pcm[] then holds
    * the filters' 24-bit output at the stream's rate */
   decim_t hr;
@@ -934,6 +937,19 @@ static bool open_input(player_t *p) {
   ti->channels = p->wav.channels;
   ti->layout = p->wav.layout;
   ti->duration_s = dur;
+  /* phase 4.3: the S3's full-speed USB port reads about 8 Mbit/s (measured
+   * 8.4); a heavier file has to stop and buffer now and then */
+  ti->warning[0] = '\0';
+  if (p->src_usb && dur > 1.0 && p->src.size > 0) {
+    const double mbps = (double)p->src.size * 8.0 / dur / 1e6;
+    if (mbps > 8.0)
+      snprintf(ti->warning, sizeof(ti->warning),
+               "%.1f Mbit/s: more than the USB port reads (about 8), it will stop to buffer", mbps);
+    else if (mbps > 6.0)
+      snprintf(ti->warning, sizeof(ti->warning),
+               "%.1f Mbit/s: close to what the USB port reads (about 8)", mbps);
+    if (ti->warning[0]) ESP_LOGW(TAG, "%s", ti->warning);
+  }
   ESP_LOGI(TAG, "file: %s %d Hz, %d bit, %d channels (%s), %.1f s%s", kind, p->wav.rate,
            p->wav.bits, p->wav.channels, layout_name(p->wav.layout), dur,
            p->hr.factor > 1 ? " (hi-res: down to the stream's rate, 24-bit lanes)" : "");
@@ -2100,6 +2116,7 @@ static void publish_track(const track_info_t *ti) {
   s_st.channels = ti->channels;
   s_st.layout = ti->layout;
   s_st.duration_s = ti->duration_s;
+  strlcpy(s_st.warning, ti->warning, sizeof(s_st.warning));
   s_st.duration_estimated = false;
   s_st.index = ti->ix;
   taskEXIT_CRITICAL(&s_mux);
@@ -2151,6 +2168,7 @@ static void track_close(player_t *p) {
   p->out_left = UINT64_MAX;
   p->trim_start = p->trim_total = 0;
   p->track_frames = 0;
+  p->src_usb = false;
   p->in_done = true; /* nothing to read: the decoder task waits */
 }
 
@@ -2166,6 +2184,7 @@ static bool open_track(player_t *p, int *k) {
       char path[PL_URL_MAX + 8];
       snprintf(path, sizeof(path), "%s%s", GW_USB_MOUNT, url + 4);
       serr = gw_usb_ready() ? player_source_file_open(&p->src, path) : ESP_ERR_INVALID_STATE;
+      p->src_usb = serr == ESP_OK;
       if (serr != ESP_OK)
         st_set(P_FAILED, "%s", gw_usb_ready() ? "The file is not on the USB drive" : "No USB drive");
     } else
@@ -2688,6 +2707,7 @@ static esp_err_t status_handler(httpd_req_t *req) {
   cJSON_AddStringToObject(root, "message", st.message);
   cJSON_AddStringToObject(root, "url", st.url);
   cJSON_AddStringToObject(root, "format", st.format);
+  if (st.warning[0]) cJSON_AddStringToObject(root, "warning", st.warning);
   cJSON_AddNumberToObject(root, "rate", st.rate);
   cJSON_AddNumberToObject(root, "bits", st.bits);
   cJSON_AddNumberToObject(root, "channels", st.channels);
