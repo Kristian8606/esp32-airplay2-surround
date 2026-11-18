@@ -3014,6 +3014,26 @@ bool gw_player_button(uint8_t command) {
   }
 }
 
+bool gw_player_lane_status(int role, int *channels, int *output_channel, char *label,
+                           size_t label_len) {
+  /* the speaker's names (aac_speaker_name), so the page reads both alike */
+  static const char *const names[] = {"Mono mix",        "Front Left (L)", "Front Right (R)",
+                                      "Centre (C)",      "Subwoofer (LFE)", "Side Left (Ls)",
+                                      "Side Right (Rs)", "Rear Left (Lrs)", "Rear Right (Rrs)"};
+  if (role < -1 || role + 1 >= PL_LANES || role + 1 >= (int)(sizeof(names) / sizeof(names[0])) ||
+      !atomic_load(&s_owns))
+    return false;
+  taskENTER_CRITICAL(&s_mux);
+  const int ch = s_st.channels;
+  const bool lane = s_st.lane_bits[role + 1] != 0;
+  taskEXIT_CRITICAL(&s_mux);
+  if (ch <= 2) return false; /* stereo and mono: the page's own stereo table is right */
+  *channels = ch;
+  *output_channel = lane ? role : -1;
+  strlcpy(label, lane ? names[role + 1] : "silent", label_len);
+  return true;
+}
+
 esp_err_t gw_player_seek(double position_s) {
   if (!atomic_load(&s_running) || !atomic_load(&s_owns)) return ESP_ERR_INVALID_STATE;
   if (position_s < 0) position_s = 0;

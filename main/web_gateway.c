@@ -83,6 +83,18 @@ static esp_err_t speakers_get_handler(httpd_req_t *req) {
         cJSON_AddNumberToObject(pb, "output_channel", st->output_channel);
         cJSON_AddStringToObject(pb, "label", st->label);
       }
+#if CONFIG_GATEWAY_USB_PLAYER
+      /* the Gateway's player: the channel of a 5.1/7.1 file the speaker's lane carries */
+      else if (sp->config_valid && (st->flags & SURROUND_STATUS_ACTIVE)) {
+        int ch = 0, oc = -1;
+        char lb[24];
+        if (gw_player_lane_status(sp->config.channel, &ch, &oc, lb, sizeof(lb))) {
+          cJSON_ReplaceItemInObject(pb, "channels", cJSON_CreateNumber(ch));
+          cJSON_AddNumberToObject(pb, "output_channel", oc);
+          cJSON_AddStringToObject(pb, "label", lb);
+        }
+      }
+#endif
       if (st->flags & SURROUND_STATUS_SYNC) {
         cJSON_AddNumberToObject(pb, "sync_ms", st->sync_us / 1000.0);
         cJSON_AddNumberToObject(pb, "i2s_ppm", st->servo_ppm);

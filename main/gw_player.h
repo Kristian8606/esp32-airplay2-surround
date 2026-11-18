@@ -13,6 +13,7 @@
  * sender's first sound_engine call stops the player (gw_local_src.h). */
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "apple_clock.h"
@@ -56,6 +57,15 @@ bool gw_player_active(void);
  * it holds the speakers. False when it does not: the button goes to AirPlay
  * as before. */
 bool gw_player_button(uint8_t command);
+
+/* For /api/speakers: a 5.1/7.1 file in lane mode sends each speaker its
+ * own channel in a stream the speaker sees as 2-channel ALAC, so the speaker
+ * cannot say which channel it plays (an Apple 5.1 stream it decodes itself).
+ * While the player holds the speakers with more than 2 channels: true, with
+ * the file's channels, the role's channel (-1 for the mono mix) and a label
+ * like the speaker's own ("Centre (C)", or "silent" with no lane). */
+bool gw_player_lane_status(int role, int *channels, int *output_channel, char *label,
+                           size_t label_len);
 
 /* The queue has a usb: file (phase 4: the drive is pulled out). */
 bool gw_player_plays_usb(void);
