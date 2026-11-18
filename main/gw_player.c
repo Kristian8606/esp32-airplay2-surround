@@ -2812,6 +2812,144 @@ esp_err_t gw_player_play_queue(const char *const *urls, int n, int start, int vo
   return ESP_OK;
 }
 
+/* ---- playlists (phase 6b) ----
+ * An .m3u/.m3u8 file on the drive or over HTTP: one entry a line, # lines
+ * (#EXTM3U, #EXTINF) skipped; a relative entry is from the playlist's
+ * folder, a /path from the drive's root (or the server's), an http:// one
+ * as it is; Windows' backslashes and file:/// work. On the drive, entries
+ * that are not there are left out. The first 64 make the queue. */
+
+#define PL_M3U_MAX (64U * 1024U)
+
+/* a/b/../c -> a/c, ./ dropped: in the path part of an entry */
+static void path_tidy(char *p) {
+  char *out = p, *seg = p;
+  char *starts[64];
+  int depth = 0;
+  if (*seg == '/') { *out++ = '/'; seg++; }
+  while (*seg) {
+    char *end = strchr(seg, '/');
+    const size_t n = end ? (size_t)(end - seg) : strlen(seg);
+    if (n == 0 || (n == 1 && seg[0] == '.')) {
+      /* nothing */
+    } else if (n == 2 && seg[0] == '.' && seg[1] == '.') {
+      if (depth > 0) out = starts[--depth];
+    } else {
+      if (depth < 64) starts[depth++] = out;
+      memmove(out, seg, n);
+      out += n;
+      if (end) *out++ = '/';
+    }
+    if (!end) break;
+    seg = end + 1;
+  }
+  *out = '\0';
+}
+
+static int m3u_read(const char *url, char *buf, size_t cap) {
+  int got = 0;
+#if CONFIG_GATEWAY_USB_PLAYER_USB
+  if (strncmp(url, "usb:", 4) == 0) {
+    char path[PL_URL_MAX + 8];
+    snprintf(path, sizeof(path), "%s%s", GW_USB_MOUNT, url + 4);
+    const int fd = gw_usb_ready() ? open(path, O_RDONLY) : -1;
+    if (fd < 0) return -1;
+    ssize_t n;
+    while ((size_t)got < cap && (n = read(fd, buf + got, cap - (size_t)got)) > 0) got += (int)n;
+    close(fd);
+    return got;
+  }
+#endif
+  player_source_t src;
+  if (player_source_http_open(&src, url) != ESP_OK) return -1;
+  int n;
+  while ((size_t)got < cap && (n = src.read(&src, (uint8_t *)buf + got, cap - (size_t)got)) > 0) got += n;
+  src.close(&src);
+  return got;
+}
+
+esp_err_t gw_player_play_playlist(const char *url, int volume_db) {
+  if (!url_ok(url)) return ESP_ERR_INVALID_ARG;
+  char *buf = heap_caps_malloc(PL_M3U_MAX + 1U, MALLOC_CAP_SPIRAM);
+  char (*list)[PL_URL_MAX] = heap_caps_calloc(PL_QUEUE_MAX, PL_URL_MAX, MALLOC_CAP_SPIRAM);
+  const char **ptrs = calloc(PL_QUEUE_MAX, sizeof(char *));
+  esp_err_t err = ESP_ERR_NO_MEM;
+  if (!buf || !list || !ptrs) goto out;
+  const int len = m3u_read(url, buf, PL_M3U_MAX);
+  if (len < 0) {
+    err = ESP_ERR_NOT_FOUND;
+    goto out;
+  }
+  buf[len] = '\0';
+  /* where relative entries start, and the root of absolute ones */
+  char base[PL_URL_MAX], root[PL_URL_MAX];
+  strlcpy(base, url, sizeof(base));
+  char *slash = strrchr(base, '/');
+  if (slash) slash[1] = '\0';
+  if (strncmp(url, "usb:", 4) == 0) {
+    strlcpy(root, "usb:", sizeof(root));
+  } else {
+    strlcpy(root, url, sizeof(root));
+    char *h = strchr(root + 7, '/'); /* http://host[:port] */
+    if (h) *h = '\0';
+  }
+  int n = 0;
+  char *line = buf;
+  if ((uint8_t)line[0] == 0xEF && (uint8_t)line[1] == 0xBB && (uint8_t)line[2] == 0xBF) line += 3;
+  while (line && *line && n < (int)PL_QUEUE_MAX) {
+    char *next = strpbrk(line, "\r\n");
+    if (next) {
+      *next++ = '\0';
+      while (*next == '\r' || *next == '\n') next++;
+    }
+    while (*line == ' ' || *line == '\t') line++;
+    size_t l = strlen(line);
+    while (l && (line[l - 1] == ' ' || line[l - 1] == '\t')) line[--l] = '\0';
+    if (l && line[0] != '#') {
+      for (char *c = line; *c; ++c)
+        if (*c == '\\') *c = '/';
+      if (strncmp(line, "file://", 7) == 0) line += 7;
+      char e[PL_URL_MAX];
+      bool ok = true;
+      if (strncmp(line, "http://", 7) == 0) {
+        ok = strlen(line) < sizeof(e);
+        if (ok) strlcpy(e, line, sizeof(e));
+      } else {
+        const char *pre = line[0] == '/' ? root : base;
+        const size_t pl = strncmp(pre, "usb:", 4) == 0 ? 4 : strlen(pre);
+        char path[PL_URL_MAX];
+        ok = snprintf(path, sizeof(path), "%s%s", pre + pl, line) < (int)sizeof(path);
+        if (ok) {
+          path_tidy(path);
+          ok = snprintf(e, sizeof(e), "%.*s%s", (int)pl, pre, path) < (int)sizeof(e);
+        }
+      }
+#if CONFIG_GATEWAY_USB_PLAYER_USB
+      if (ok && strncmp(e, "usb:", 4) == 0) { /* left out when it is not on the drive */
+        char fp[PL_URL_MAX + 8];
+        struct stat st;
+        snprintf(fp, sizeof(fp), "%s%s", GW_USB_MOUNT, e + 4);
+        ok = stat(fp, &st) == 0 && !S_ISDIR(st.st_mode);
+        if (!ok) ESP_LOGW(TAG, "playlist: %s is not on the drive", e + 4);
+      }
+#endif
+      if (ok && url_ok(e)) {
+        strlcpy(list[n], e, PL_URL_MAX);
+        ptrs[n] = list[n];
+        n++;
+      }
+    }
+    line = next;
+  }
+  ESP_LOGI(TAG, "playlist %s: %d entries", url, n);
+  err = n ? gw_player_play_queue(ptrs, n, 0, volume_db) : ESP_ERR_NOT_FOUND;
+out:
+  free(buf);
+  free(list);
+  free(ptrs);
+  return err;
+}
+
 esp_err_t gw_player_add(const char *url) {
   if (!url_ok(url)) return ESP_ERR_INVALID_ARG;
   if (!init_once()) return ESP_ERR_NO_MEM;
@@ -2977,6 +3115,10 @@ static esp_err_t control_handler(httpd_req_t *req) {
     }
   } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "play") == 0 && cJSON_IsString(url)) {
     err = gw_player_play(url->valuestring, cJSON_IsNumber(vol) ? vol->valueint : volume_now());
+  } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "play") == 0 &&
+             cJSON_IsString(cJSON_GetObjectItem(j, "playlist"))) {
+    err = gw_player_play_playlist(cJSON_GetObjectItem(j, "playlist")->valuestring,
+                                  cJSON_IsNumber(vol) ? vol->valueint : volume_now());
   } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "add") == 0 && cJSON_IsString(url)) {
     err = gw_player_add(url->valuestring);
   } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "next") == 0) {
@@ -3040,7 +3182,7 @@ static void url_decode(char *s) {
 static const char *file_type(const char *name) {
   const char *dot = strrchr(name, '.');
   if (!dot) return NULL;
-  static const char *const known[] = {"flac", "wav", "m4a", "mp4", "alac", "mp3", "aac"};
+  static const char *const known[] = {"flac", "wav", "m4a", "mp4", "alac", "mp3", "aac", "m3u", "m3u8"};
   for (size_t i = 0; i < sizeof(known) / sizeof(known[0]); ++i)
     if (strcasecmp(dot + 1, known[i]) == 0) return known[i];
   return NULL;

@@ -30,6 +30,8 @@ esp_err_t gw_player_play(const char *url, int volume_db);
  * and jump go to another track at once. */
 esp_err_t gw_player_play_queue(const char *const *urls, int n, int start, int volume_db);
 esp_err_t gw_player_add(const char *url);
+/* Phase 6b: an .m3u/.m3u8 (usb: or http://) as the queue. */
+esp_err_t gw_player_play_playlist(const char *url, int volume_db);
 esp_err_t gw_player_next(void);
 esp_err_t gw_player_prev(void);
 esp_err_t gw_player_jump(int index);

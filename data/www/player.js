@@ -127,7 +127,8 @@ function drawPath() {
   let acc = '';
   parts.forEach((p, i) => { acc += '/' + p; path.append(el('span', '', '›'), mk(p, acc, i === parts.length - 1)); });
 }
-const playable = () => entries.filter(e => !e.dir && e.play);
+const isList = e => e.type === 'm3u' || e.type === 'm3u8';
+const playable = () => entries.filter(e => !e.dir && e.play && !isList(e));
 function drawTools(more) {
   tools.textContent = '';
   if (tab !== 'usb') return;
@@ -145,13 +146,16 @@ function drawList() {
   const playing = cur && cur.active ? cur.url : '';
   entries.forEach(e => {
     const r = el('div', 'p-row'); r.tabIndex = 0;
-    const ic = el('div', e.dir ? 'ic dir' : 'ic', e.dir ? '' : (e.type || '·').toUpperCase().slice(0, 4));
+    const ic = el('div', e.dir || isList(e) ? 'ic dir' : 'ic', e.dir ? '' : isList(e) ? 'LIST' : (e.type || '·').toUpperCase().slice(0, 4));
     if (e.dir) ic.innerHTML = FOLDER;
     const nm = el('div', 'nm', e.dir ? e.name : e.name);
     r.append(ic, nm);
     if (e.dir) {
       r.append(el('span', 'go', '›'));
       r.onclick = () => openDir(join(dir, e.name));
+    } else if (isList(e)) { /* a playlist: the Gateway reads it and plays its files */
+      r.append(el('small', '', 'playlist'));
+      r.onclick = () => playList(e.name);
     } else if (e.play) {
       r.append(el('small', '', sizeOf(e.size || 0)));
       const add = el('button', 'p-add', '+'); add.type = 'button'; add.title = 'Add to Up next';
@@ -175,6 +179,12 @@ async function playFrom(i) {
   const urls = files.slice(first, first + 64).map(e => 'usb:' + join(dir, e.name));
   setMsg((cur && cur.active ? 'Switching to ' : 'Starting ') + files[first].name + '…');
   try { render(await post({ cmd: 'play', urls, index: 0 })); close(); } catch (e) { setMsg(String(e.message || e), true); } /* the Gateway keeps the volume */
+  poll(500);
+}
+async function playList(name) {
+  setMsg('Reading ' + name + '…');
+  try { render(await post({ cmd: 'play', playlist: 'usb:' + join(dir, name) })); close(); }
+  catch (e) { setMsg('The playlist does not play: ' + String(e.message || e), true); }
   poll(500);
 }
 async function addOne(name) {
