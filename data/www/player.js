@@ -9,7 +9,8 @@
 const css = `
 .p-bar{position:relative;overflow:hidden;margin-bottom:14px}
 .p-bar::before{content:'';position:absolute;left:0;right:0;top:0;height:2px;background:var(--glow)}
-.p-art{flex:none;width:52px;height:52px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;letter-spacing:.5px;color:#c4b2ff}
+.p-art{flex:none;width:64px;height:64px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;letter-spacing:.5px;color:#c4b2ff;overflow:hidden}
+.p-art img{width:100%;height:100%;object-fit:cover;display:block}
 .p-seek{display:flex;align-items:center;gap:10px;margin-top:12px}
 .p-seek span{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;min-width:38px}
 .p-seek span:last-child{text-align:right}
@@ -256,11 +257,23 @@ function render(d) {
   if (root.classList.contains('r-open') && tab === 'next') drawQueue();
   if (!active) { lastKib = {}; kbps = {}; return; }
   const fmt = d.format || '';
-  art.textContent = (fmt.split(' ')[0] || '♪').slice(0, 4);
-  bName.textContent = baseName(d.url) || 'Starting…';
+  /* the cover when there is one, the codec's name otherwise */
+  const artKey = d.cover || ('fmt:' + fmt);
+  if (art.dataset.k !== artKey) {
+    art.dataset.k = artKey;
+    art.textContent = (fmt.split(' ')[0] || '♪').slice(0, 4);
+    if (d.cover) {
+      const im = el('img'); im.alt = '';
+      im.onload = () => { art.textContent = ''; art.appendChild(im); };
+      im.src = d.cover;
+    }
+  }
+  bName.textContent = d.title || baseName(d.url) || 'Starting…';
+  bName.title = (d.url || '').split('/').pop();
   const q = d.queue || [];
   const where = q.length > 1 ? (d.index + 1) + ' of ' + q.length + ' · ' : '';
-  bSub.textContent = d.state === 'failed' || (d.message && d.state !== 'playing') ? (d.message || '') : where + folderOf(d.url) + (d.warning ? ' · ' + d.warning : '');
+  const who = [d.artist, d.album].filter(Boolean).join(' — ') || folderOf(d.url);
+  bSub.textContent = d.state === 'failed' || (d.message && d.state !== 'playing') ? (d.message || '') : where + who + (d.warning ? ' · ' + d.warning : '');
   bChips.textContent = '';
   const m = /^(.*?) (\d+) Hz \/ (\d+) bit \/ (\S+?)(?:, \/(\d) to (\d+))?$/.exec(fmt);
   if (m) {

@@ -302,6 +302,53 @@ static void parse_itunsmpb(m4a_track_t *t, const uint8_t *moov, size_t len) {
   }
 }
 
+/* iTunes-style tags: moov/udta/meta/ilst, each item a data box. base is the
+ * file's byte at moov[0], for the cover's place. */
+static void parse_ilst(m4a_track_t *t, const uint8_t *moov, size_t len, int64_t base) {
+  size_t n;
+  const uint8_t *udta = child(moov, len, "udta", &n);
+  if (!udta) return;
+  size_t mn;
+  const uint8_t *meta = child(udta, n, "meta", &mn);
+  if (!meta || mn < 8) return;
+  if (be32(meta) == 0) { /* a full box: version and flags first */
+    meta += 4;
+    mn -= 4;
+  }
+  size_t ln;
+  const uint8_t *ilst = child(meta, mn, "ilst", &ln);
+  if (!ilst) return;
+  size_t pos = 0;
+  const uint8_t *type, *item;
+  size_t il;
+  player_tags_t *tg = &t->tags;
+  while (next_box(ilst, ln, &pos, &type, &item, &il)) {
+    size_t dl;
+    const uint8_t *d = child(item, il, "data", &dl);
+    if (!d || dl < 8) continue;
+    const uint32_t dtype = be32(d) & 0x00FFFFFFU;
+    const uint8_t *v = d + 8;
+    const size_t vl = dl - 8;
+    char *dst = NULL;
+    size_t dsz = 0;
+    if (!memcmp(type, "\xa9" "nam", 4)) { dst = tg->title; dsz = sizeof(tg->title); }
+    else if (!memcmp(type, "\xa9" "ART", 4) || (!memcmp(type, "aART", 4) && !tg->artist[0])) { dst = tg->artist; dsz = sizeof(tg->artist); }
+    else if (!memcmp(type, "\xa9" "alb", 4)) { dst = tg->album; dsz = sizeof(tg->album); }
+    else if (!memcmp(type, "\xa9" "day", 4)) { dst = tg->year; dsz = sizeof(tg->year); }
+    if (dst && dtype == 1 && !dst[0]) {
+      const size_t c = vl < dsz - 1 ? vl : dsz - 1;
+      memcpy(dst, v, c);
+      dst[c] = '\0';
+    } else if (!memcmp(type, "trkn", 4) && vl >= 4) {
+      snprintf(tg->track, sizeof(tg->track), "%u", (unsigned)((v[2] << 8) | v[3]));
+    } else if (!memcmp(type, "covr", 4) && vl > 0 && !tg->cover_len) {
+      tg->cover_off = base + (int64_t)(v - moov);
+      tg->cover_len = (uint32_t)vl;
+      strlcpy(tg->cover_mime, dtype == 14 ? "image/png" : "image/jpeg", sizeof(tg->cover_mime));
+    }
+  }
+}
+
 static bool parse_moov(m4a_track_t *t, const uint8_t *moov, size_t len, char *why,
                        size_t why_len) {
   uint32_t movie_ts = 0;
@@ -411,8 +458,10 @@ esp_err_t m4a_open(player_source_t *src, int64_t base, m4a_track_t *t, char *why
   } else {
     size_t pos = 0, blen;
     const uint8_t *type, *body;
-    if (next_box(moov, got, &pos, &type, &body, &blen) && parse_moov(t, body, blen, why, why_len))
+    if (next_box(moov, got, &pos, &type, &body, &blen) && parse_moov(t, body, blen, why, why_len)) {
       err = ESP_OK;
+      parse_ilst(t, body, blen, moov_at + (int64_t)(body - moov));
+    }
   }
   free(moov);
   if (err != ESP_OK) {

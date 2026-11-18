@@ -43,6 +43,7 @@
 #include "gw_calib.h"
 #include "gw_player_decim.h"
 #include "gw_player_m4a.h"
+#include "gw_player_tags.h"
 #if CONFIG_GATEWAY_USB_PLAYER_USB
 #include "gw_usb.h"
 #endif
@@ -109,6 +110,11 @@ typedef struct {
   char url[256];
   char format[64];  /* "WAV 48000 Hz / 24 bit / 5.1" */
   char warning[96]; /* a file heavier than the USB port reads (phase 4.3) */
+  /* tags and the cover (phase 6a) */
+  char title[96], artist[96], album[96], track[12], year[12];
+  char cover_url[256], cover_mime[24];
+  int64_t cover_off;
+  uint32_t cover_len, cover_id;
   int rate, bits, channels, layout;
   int volume_db;
   int lead_ms;
@@ -141,6 +147,8 @@ static char (*s_queue)[PL_URL_MAX];
 static int s_queue_n;
 static int s_queue_start;
 static SemaphoreHandle_t s_qlock;
+#define PL_COVER_MAX (2U * 1024U * 1024U)
+static uint32_t s_cover_id;
 #define PL_GOTO_NONE (-100)
 #define PL_GOTO_NEXT (-1)
 #define PL_GOTO_PREV (-2)
@@ -267,6 +275,10 @@ typedef struct {
   char url[PL_URL_MAX];
   char format[64];
   char warning[96];
+  char title[96], artist[96], album[96], track[12], year[12];
+  char cover_url[PL_URL_MAX], cover_mime[24];
+  int64_t cover_off;
+  uint32_t cover_len, cover_id;
   int rate, bits, channels, layout;
   double duration_s;
 } track_info_t;
@@ -2107,6 +2119,139 @@ static bool queue_url(int k, char *out, size_t len) {
 }
 
 /* What the speakers play now, for the status. */
+static void publish_track(const track_info_t *ti);
+/* ---- tags and the cover (phase 6a) ---- */
+
+/* The input's tags; without a picture in the file, a cover.jpg or the like
+ * next to it on the drive. */
+static void read_tags(player_t *p, const char *url) {
+  player_tags_t t;
+  memset(&t, 0, sizeof(t));
+  if (p->id3_bytes) tags_read_id3(&p->src, (int64_t)p->id3_bytes, &t);
+  if (p->kind == KIND_FLAC && p->flac_audio_start)
+    tags_read_flac(&p->src, (int64_t)p->id3_bytes, p->flac_audio_start, &t);
+  if (p->kind == KIND_M4A) {
+    const player_tags_t *m = &p->m4a.tags;
+    if (!t.title[0]) strlcpy(t.title, m->title, sizeof(t.title));
+    if (!t.artist[0]) strlcpy(t.artist, m->artist, sizeof(t.artist));
+    if (!t.album[0]) strlcpy(t.album, m->album, sizeof(t.album));
+    if (!t.track[0]) strlcpy(t.track, m->track, sizeof(t.track));
+    if (!t.year[0]) strlcpy(t.year, m->year, sizeof(t.year));
+    if (!t.cover_len && m->cover_len) {
+      t.cover_off = m->cover_off;
+      t.cover_len = m->cover_len;
+      strlcpy(t.cover_mime, m->cover_mime, sizeof(t.cover_mime));
+    }
+  }
+  track_info_t *ti = &p->ti;
+  strlcpy(ti->title, t.title, sizeof(ti->title));
+  strlcpy(ti->artist, t.artist, sizeof(ti->artist));
+  strlcpy(ti->album, t.album, sizeof(ti->album));
+  strlcpy(ti->track, t.track, sizeof(ti->track));
+  strlcpy(ti->year, t.year, sizeof(ti->year));
+  ti->cover_len = 0;
+  if (t.cover_len && t.cover_len <= PL_COVER_MAX) {
+    strlcpy(ti->cover_url, url, sizeof(ti->cover_url));
+    ti->cover_off = t.cover_off;
+    ti->cover_len = t.cover_len;
+    strlcpy(ti->cover_mime, t.cover_mime, sizeof(ti->cover_mime));
+  }
+#if CONFIG_GATEWAY_USB_PLAYER_USB
+  if (!ti->cover_len && strncmp(url, "usb:", 4) == 0) {
+    static const char *const names[] = {"cover.jpg", "folder.jpg", "Cover.jpg", "Folder.jpg",
+                                        "front.jpg", "Front.jpg", "cover.png", "folder.png"};
+    char dir[PL_URL_MAX];
+    strlcpy(dir, url + 4, sizeof(dir));
+    char *slash = strrchr(dir, '/');
+    if (slash) slash[1] = '\0';
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]) && !ti->cover_len; ++i) {
+      char path[PL_URL_MAX + 32];
+      snprintf(path, sizeof(path), "%s%s%s", GW_USB_MOUNT, dir, names[i]);
+      struct stat st;
+      if (stat(path, &st) == 0 && st.st_size > 0 && st.st_size <= (off_t)PL_COVER_MAX) {
+        if (snprintf(ti->cover_url, sizeof(ti->cover_url), "usb:%.*s%s", (int)(sizeof(ti->cover_url) - 16U),
+                     dir, names[i]) >= (int)sizeof(ti->cover_url))
+          continue;
+        ti->cover_off = 0;
+        ti->cover_len = (uint32_t)st.st_size;
+        strlcpy(ti->cover_mime, strstr(names[i], ".png") ? "image/png" : "image/jpeg",
+                sizeof(ti->cover_mime));
+      }
+    }
+  }
+#endif
+  if (ti->cover_len) ti->cover_id = ++s_cover_id;
+  if (ti->title[0] || ti->cover_len)
+    ESP_LOGI(TAG, "tags: \"%s\" by \"%s\" (%s), cover %u B", ti->title, ti->artist, ti->album,
+             (unsigned)ti->cover_len);
+}
+
+static bool cover_sink(void *ctx, const uint8_t *b, size_t n) {
+  return httpd_resp_send_chunk((httpd_req_t *)ctx, (const char *)b, (ssize_t)n) == ESP_OK;
+}
+
+/* GET /api/player/cover: the picture of what the speakers play, from the
+ * file itself (USB or HTTP), a piece at a time. */
+static esp_err_t cover_handler(httpd_req_t *req) {
+  char url[PL_URL_MAX], mime[24];
+  int64_t off;
+  uint32_t len;
+  taskENTER_CRITICAL(&s_mux);
+  strlcpy(url, s_st.cover_url, sizeof(url));
+  strlcpy(mime, s_st.cover_mime, sizeof(mime));
+  off = s_st.cover_off;
+  len = s_st.cover_len;
+  taskEXIT_CRITICAL(&s_mux);
+  if (!len) return httpd_resp_send_404(req);
+  if (strncmp(url, "http://", 7) == 0) { /* one Range request for all of it */
+    httpd_resp_set_type(req, mime);
+    httpd_resp_set_hdr(req, "Cache-Control", "max-age=86400");
+    if (player_http_span(url, off, len, cover_sink, req) != ESP_OK) {
+      httpd_resp_send_chunk(req, NULL, 0);
+      return ESP_OK;
+    }
+    return httpd_resp_send_chunk(req, NULL, 0);
+  }
+  uint8_t *buf = heap_caps_malloc(8192, MALLOC_CAP_SPIRAM);
+  if (!buf) return httpd_resp_send_500(req);
+  player_source_t src;
+  esp_err_t err = ESP_FAIL;
+  int fd = -1;
+#if CONFIG_GATEWAY_USB_PLAYER_USB
+  if (strncmp(url, "usb:", 4) == 0) {
+    char path[PL_URL_MAX + 8];
+    snprintf(path, sizeof(path), "%s%s", GW_USB_MOUNT, url + 4);
+    fd = gw_usb_ready() ? open(path, O_RDONLY) : -1;
+    err = fd >= 0 && lseek(fd, (off_t)off, SEEK_SET) == (off_t)off ? ESP_OK : ESP_FAIL;
+  } else
+#endif
+  {
+    err = player_source_http_open(&src, url);
+  }
+  if (err != ESP_OK) {
+    if (fd >= 0) close(fd);
+    free(buf);
+    return httpd_resp_send_404(req);
+  }
+  httpd_resp_set_type(req, mime);
+  httpd_resp_set_hdr(req, "Cache-Control", "max-age=86400");
+  uint32_t done = 0;
+  while (done < len) {
+    const size_t want = len - done < 8192U ? len - done : 8192U;
+    int n;
+    if (fd >= 0) n = (int)read(fd, buf, want);
+    else n = src.read_at(&src, off + done, buf, want);
+    if (n <= 0) break;
+    if (httpd_resp_send_chunk(req, (const char *)buf, n) != ESP_OK) break;
+    done += (uint32_t)n;
+  }
+  if (fd >= 0) close(fd);
+  else src.close(&src);
+  free(buf);
+  return httpd_resp_send_chunk(req, NULL, 0);
+}
+
+/* What the speakers play now, for the status. */
 static void publish_track(const track_info_t *ti) {
   taskENTER_CRITICAL(&s_mux);
   strlcpy(s_st.url, ti->url, sizeof(s_st.url));
@@ -2117,6 +2262,16 @@ static void publish_track(const track_info_t *ti) {
   s_st.layout = ti->layout;
   s_st.duration_s = ti->duration_s;
   strlcpy(s_st.warning, ti->warning, sizeof(s_st.warning));
+  strlcpy(s_st.title, ti->title, sizeof(s_st.title));
+  strlcpy(s_st.artist, ti->artist, sizeof(s_st.artist));
+  strlcpy(s_st.album, ti->album, sizeof(s_st.album));
+  strlcpy(s_st.track, ti->track, sizeof(s_st.track));
+  strlcpy(s_st.year, ti->year, sizeof(s_st.year));
+  strlcpy(s_st.cover_url, ti->cover_url, sizeof(s_st.cover_url));
+  strlcpy(s_st.cover_mime, ti->cover_mime, sizeof(s_st.cover_mime));
+  s_st.cover_off = ti->cover_off;
+  s_st.cover_len = ti->cover_len;
+  s_st.cover_id = ti->cover_id;
   s_st.duration_estimated = false;
   s_st.index = ti->ix;
   taskEXIT_CRITICAL(&s_mux);
@@ -2195,6 +2350,7 @@ static bool open_track(player_t *p, int *k) {
       p->ti.ix = *k;
       p->in_done = false;
       strlcpy(p->ti.url, url, sizeof(p->ti.url));
+      read_tags(p, url);
       ESP_LOGI(TAG, "track %d of %d: %s", *k + 1, queue_len(), url);
       return true;
     }
@@ -2708,6 +2864,16 @@ static esp_err_t status_handler(httpd_req_t *req) {
   cJSON_AddStringToObject(root, "url", st.url);
   cJSON_AddStringToObject(root, "format", st.format);
   if (st.warning[0]) cJSON_AddStringToObject(root, "warning", st.warning);
+  if (st.title[0]) cJSON_AddStringToObject(root, "title", st.title);
+  if (st.artist[0]) cJSON_AddStringToObject(root, "artist", st.artist);
+  if (st.album[0]) cJSON_AddStringToObject(root, "album", st.album);
+  if (st.track[0]) cJSON_AddStringToObject(root, "track", st.track);
+  if (st.year[0]) cJSON_AddStringToObject(root, "year", st.year);
+  if (st.cover_len) {
+    char c[48];
+    snprintf(c, sizeof(c), "/api/player/cover?id=%" PRIu32, st.cover_id);
+    cJSON_AddStringToObject(root, "cover", c);
+  }
   cJSON_AddNumberToObject(root, "rate", st.rate);
   cJSON_AddNumberToObject(root, "bits", st.bits);
   cJSON_AddNumberToObject(root, "channels", st.channels);
@@ -2974,6 +3140,7 @@ void gw_player_register_web(httpd_handle_t server) {
       {.uri = "/api/player", .method = HTTP_GET, .handler = status_handler},
       {.uri = "/api/player", .method = HTTP_POST, .handler = control_handler},
       {.uri = "/player.js", .method = HTTP_GET, .handler = player_js_handler},
+      {.uri = "/api/player/cover", .method = HTTP_GET, .handler = cover_handler},
 #if CONFIG_GATEWAY_USB_PLAYER_USB
       {.uri = "/api/player/files", .method = HTTP_GET, .handler = files_handler},
 #endif

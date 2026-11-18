@@ -955,3 +955,31 @@ surround_sig_t surround_role_signal(int8_t role, int source_channels);
 - **Предупреждение:** tones_71_48k24.wav от USB: „9.2 Mbit/s: more than the USB port reads (about 8)“, чипът се вижда.
 - Library: Back от /Music към корена, иконите на папките, по-големите бутони, видяно в браузъра.
 - **Хъб:** не е пробван (няма хъб на Gateway-я); поддръжката му е включена (`CONFIG_USB_HOST_HUBS_SUPPORTED`).
+
+---
+
+## 25. Фаза 6a — тагове и обложки (2026-11-18)
+
+Фаза 6 е разделена: **6a** тагове и обложки, **6b** m3u плейлисти, **6c** продължаване от мястото след рестарт, **6d** физическите бутони. Индексът на библиотеката е за накрая, ако потрябва (папките стигат).
+
+- **`gw_player_tags.c`:**
+  - **FLAC:** VORBIS_COMMENT (TITLE, ARTIST, ALBUM, TRACKNUMBER, DATE) и PICTURE (предната обложка, тип 3, има предимство);
+  - **ID3v2.3/2.4** (MP3 и всеки файл с ID3 отпред): TIT2, TPE1, TALB, TRCK, TYER/TDRC, APIC. Текстът е в UTF-8 от Latin-1, UTF-16 (с BOM или BE) и UTF-8. ID3v2.2 и unsynchronisation не се четат.
+  - **M4A:** `moov/udta/meta/ilst` (`©nam`, `©ART`/`aART`, `©alb`, `trkn`, `©day`, `covr`) в `gw_player_m4a.c`, заедно с индекса.
+  - Всичко минава през `read_at`, а за обложката се пази само мястото ѝ във файла.
+- **Обложка от папката:** ако файлът няма вградена обложка, плейърът търси `cover.jpg`, `folder.jpg`, `front.jpg` (и главни букви, и `.png`) в папката му на флашката. Обложки над 2 MB не се показват.
+- **`/api/player`:** `title`, `artist`, `album`, `track`, `year` и `cover` (`/api/player/cover?id=N`; номерът се сменя с всяка песен, а браузърът я пази един ден).
+- **`/api/player/cover`:** обложката направо от файла. От USB се чете с отделен дескриптор; от HTTP идва с една Range заявка (отначало по заявка на 8 KB, 15 s за 375 KB).
+- **Лентата:** обложката (64 px) вместо името на кодека, заглавието от тага (иначе името на файла), под него „изпълнител — албум“ (иначе папката).
+
+**Тест (2026-11-18):** парсърите — първо на Mac-а със същия C код, после на Gateway-я:
+
+| Файл | Тагове | Обложка |
+|---|---|---|
+| Boney M. - Rasputin.flac (USB) | Rasputin · Boney M. · Nightflight to Venus · 2/12 · 2007-03-30 | 169 KB, вижда се в лентата |
+| Bonnie Tyler - Total Eclipse… (USB) | Total Eclipse of the Heart · Bonnie Tyler · Faster Than the Speed of Night | 164 KB |
+| song_44k16.flac (USB) | Livin' On A Prayer · Bon Jovi · Slippery When Wet · 3/10 | 375 KB |
+| tag_test.mp3 (HTTP, ID3v2.3, UTF-16) | Ливин он е прейър · Бон Джоуви | 375 KB за 1.05 s |
+| tag_test.m4a (HTTP, ilst/covr) | Livin On A Prayer · Bon Jovi | 375 KB за 2.2 s |
+
+- Докато плейърът пълни резерва в началото на песен, уеб сървърът отговаря бавно (до няколко секунди); обложката идва след това.

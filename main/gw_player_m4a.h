@@ -12,6 +12,7 @@
 
 #include "esp_err.h"
 #include "gw_player_src.h"
+#include "gw_player_tags.h"
 
 typedef enum { M4A_ALAC = 1, M4A_AAC, M4A_MP3 } m4a_codec_t;
 
@@ -46,6 +47,7 @@ typedef struct {
   /* gapless (phase 3d.3): the encoder's priming samples at the start and
    * the samples that are music (iTunSMPB, else the edit list); 0 = none */
   uint64_t priming_ts, valid_ts; /* in timescale units */
+  player_tags_t tags;         /* moov/udta/meta/ilst (phase 6a) */
   int64_t moov_off;           /* where moov is, for the log */
   bool moov_last;             /* moov after mdat */
 } m4a_track_t;

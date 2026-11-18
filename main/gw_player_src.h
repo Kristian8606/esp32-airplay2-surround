@@ -28,6 +28,11 @@ struct player_source {
  * breaks (a long pause) opens again where it was. */
 esp_err_t player_source_http_open(player_source_t *s, const char *url);
 
+/* len bytes of an http:// file from byte off, in one Range request, given
+ * to sink a piece at a time (sink false: stop). For the cover art. */
+esp_err_t player_http_span(const char *url, int64_t off, uint32_t len,
+                           bool (*sink)(void *ctx, const uint8_t *b, size_t n), void *ctx);
+
 /* A file on a mounted file system (phase 4: the USB drive at /usb). The
  * stream and read_at have a file descriptor each. */
 esp_err_t player_source_file_open(player_source_t *s, const char *path);

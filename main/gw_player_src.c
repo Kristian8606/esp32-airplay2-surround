@@ -144,6 +144,30 @@ static int http_read_at(player_source_t *s, int64_t off, uint8_t *buf, size_t le
   return (int)got;
 }
 
+esp_err_t player_http_span(const char *url, int64_t off, uint32_t len,
+                           bool (*sink)(void *ctx, const uint8_t *b, size_t n), void *ctx) {
+  esp_http_client_handle_t c = NULL;
+  int64_t clen = 0;
+  if (!len) return ESP_OK;
+  const esp_err_t err = http_get(url, off, off + (int64_t)len - 1, &c, &clen);
+  if (err != ESP_OK) return err;
+  uint8_t *buf = heap_caps_malloc(8192, MALLOC_CAP_SPIRAM);
+  esp_err_t r = buf ? ESP_OK : ESP_ERR_NO_MEM;
+  uint32_t done = 0;
+  while (buf && done < len) {
+    const int want = len - done < 8192U ? (int)(len - done) : 8192;
+    const int n = esp_http_client_read(c, (char *)buf, want);
+    if (n == -ESP_ERR_HTTP_EAGAIN) continue;
+    if (n <= 0) { r = ESP_FAIL; break; }
+    if (!sink(ctx, buf, (size_t)n)) { r = ESP_FAIL; break; }
+    done += (uint32_t)n;
+  }
+  free(buf);
+  esp_http_client_close(c);
+  esp_http_client_cleanup(c);
+  return r;
+}
+
 static void http_close(player_source_t *s) {
   http_src_t *h = s->ctx;
   if (h) {
