@@ -15,12 +15,17 @@ CONFIG_LWIP_MAX_ACTIVE_TCP=48
 # keep them on the Gateway.
 CONFIG_AIRPLAY_LOG_RUNTIME=y
 
-# The Gateway is watched over its USB port: make USB Serial/JTAG the primary
-# console so a panic backtrace reaches `idf.py monitor` (the panic handler
-# writes only to the primary console, UART0 on the speakers).
-CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+# The native USB port (GPIO19/20) is the USB player's drive port (USB host),
+# so the console, the logs and flashing are on UART0 (GPIO43/44, the board's
+# UART port), where a panic backtrace reaches `idf.py monitor` too.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
 # CONFIG_ESP_CONSOLE_UART_CUSTOM is not set
+# CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG is not set
+CONFIG_ESP_CONSOLE_UART_BAUDRATE=115200
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# USB player: on by default (Kconfig); file names on the drive in UTF-8.
+CONFIG_FATFS_API_ENCODING_UTF_8=y
 
 # One HomeKit AirPlay speaker representing the whole surround system.
 CONFIG_AIRPLAY_HOMEKIT=y

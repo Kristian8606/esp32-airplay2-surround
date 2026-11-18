@@ -43,6 +43,10 @@ system.
 - 📻 **Web radio** on the Gateway: stations of your country, a search, your
   favourites or any stream address (MP3 or AAC over HTTP / HTTPS), played on
   all speakers like an AirPlay stream. AirPlay always takes over.
+- 💾 **USB player** on the Gateway (experimental): FLAC,
+  WAV, ALAC, AAC and MP3 from a USB drive, **bit for bit** to the speakers,
+  5.1 / 7.1 files each channel on its own speaker, gapless, with tags,
+  covers and m3u playlists ([USB player](#usb-player-experimental)).
 - 🎛️ **One page for all speakers**: role, level and delay of every speaker,
   and a live view of what each one plays. Each speaker keeps its own
   2 × 24-band parametric EQ, mono or **bi-amp** (woofer + tweeter through a
@@ -72,7 +76,6 @@ system.
 > boards now, buy N16R8.** 8 MB boards build and update as before.
 >
 > **Planned:**
-> - 💾 Music from a **USB drive** on the Gateway.
 > - 🔊 **USB sound card** support.
 > - 📺 **DLNA**: play to the system from DLNA / UPnP apps, not only AirPlay.
 
@@ -86,6 +89,7 @@ system.
 - [Installation](#installation)
 - [First start](#first-start)
 - [Settings](#settings)
+- [USB player (experimental)](#usb-player-experimental)
 - [Technical details](#technical-details)
 - [Measuring sync](#measuring-sync)
 - [Limitations](#limitations)
@@ -133,6 +137,12 @@ Click an image to open it full size.
     <td align="center" colspan="2">
       <a href="images/roomeq-page.png"><img src="images/roomeq-page.png" alt="Room EQ page: measured response of a 2-way speaker, its target and the expected result, with the filters for the woofer and the tweeter" width="100%"></a>
       <br><sub><b>Room EQ:</b> a 2-way speaker measured with the Gateway's microphone, and the filters that correct its woofer and tweeter (<a href="#room-eq">more</a>)</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2">
+      <a href="images/player-bar.png"><img src="images/player-bar.png" alt="USB player bar on the speakers page: cover, title and album, a FLAC bit for bit on the front pair" width="100%"></a>
+      <br><sub><b>USB player:</b> an album from the USB stick with its cover, bit for bit on the front pair (<a href="#usb-player-experimental">more</a>)</sub>
     </td>
   </tr>
 </table>
@@ -251,8 +261,9 @@ page as well, or the bass is cut twice.
 
 | Part | Notes |
 |---|---|
-| **One ESP32-S3 board**, the same type as the speakers (N8R8, or N16R8: see the note at the top) | It has no audio output: no DAC, no amplifier, no wiring. A USB supply is all it needs. |
+| **One ESP32-S3 board**, the same type as the speakers (N8R8, or N16R8: see the note at the top), with a **UART port** besides its native USB port (DevKitC boards have both) | It has no audio output: no DAC, no amplifier, no wiring. A USB supply is all it needs. It is flashed and logs over its UART port; the native USB port takes the [USB player](#usb-player-experimental)'s drive. |
 | **A place with a good signal** | It receives the stream from the Apple TV and sends it again to every speaker, so it carries the most Wi-Fi traffic. Near the access point is best. |
+| *Optional:* **a USB stick** | Music for the [USB player](#usb-player-experimental): FAT32, on the native USB port, which needs 5 V from the board. |
 | *Optional:* **INMP441 I2S microphone** | For [room calibration](#room-calibration): VDD → 3V3, GND and L/R → GND, SCK → GPIO 5, WS → GPIO 6, SD → GPIO 4 (changeable in `menuconfig`). |
 
 ### Per speaker (one set for every position)
@@ -437,6 +448,7 @@ the same menus; some options matter for one firmware only:
 | **I2S Playout** | BCLK / LRCK / DATA / MCLK GPIOs, output latency of your DAC, wired latency test; web admin password | speakers (password both) |
 | **Amplifier Power Control** | amplifier enable GPIO and level | speakers |
 | **RGB Audio/VU LED** | LED on/off and GPIO | both |
+| **USB Player (experimental)** | player streams (speakers), the Gateway's player and its USB drive; all on by default | both |
 | **AirPlay Logs and Diagnostics** | log detail | both |
 
 Every speaker runs the same firmware: its role is set later on the Gateway's
@@ -450,7 +462,8 @@ A board with **16 MB** (N16R8) uses all of it with `partitions_16mb.csv`:
 1. `idf.py menuconfig` → **Serial flasher config → Flash size** → **16 MB**.
 2. **Partition Table → Custom partition CSV file** →
    `partitions_16mb.csv` (in `speaker/`: `../partitions_16mb.csv`).
-3. `idf.py build flash` **over USB, once**: a partition table reaches the
+3. `idf.py build flash` **over a cable, once** (the Gateway over its UART
+   port): a partition table reaches the
    board only so, not with an update over Wi-Fi. Afterwards updates work
    over Wi-Fi as before.
 
@@ -468,7 +481,7 @@ speakers can stay on the 8 MB table, their firmware fits their slot.
 
 ### 5. Build and flash
 
-Connect a board over USB.
+Connect a speaker over its USB port, the Gateway over its UART port.
 
 **Speakers** (repeat for every speaker):
 
@@ -477,15 +490,18 @@ cd speaker
 idf.py -p /dev/cu.usbmodem101 build flash monitor
 ```
 
-**Gateway**, from the repository folder:
+**Gateway**, from the repository folder, over its **UART** port (the native
+USB port is the [USB player](#usb-player-experimental)'s drive port):
 
 ```bash
-idf.py -p /dev/cu.usbmodem101 build flash monitor
+idf.py -p /dev/cu.usbserial-0001 build flash monitor
 ```
 
-On macOS list the ports with `ls /dev/cu.*`; on Windows the port is `COMx`,
-on Linux usually `/dev/ttyACM0`. Every board's log goes to its USB port
-(USB Serial/JTAG, so `idf.py monitor` shows it) and to its `/logs` page.
+On macOS list the ports with `ls /dev/cu.*` (a speaker's USB port is a
+`usbmodem`, a UART port a `usbserial` or `wchusbserial`); on Windows the port
+is `COMx`, on Linux `/dev/ttyACM0` (USB) or `/dev/ttyUSB0` (UART). A
+speaker's log goes to its USB port, the Gateway's to its UART port, so
+`idf.py monitor` shows it, and every board's to its `/logs` page.
 
 ### 6. Updates
 
@@ -803,6 +819,95 @@ and correct it with the speaker's EQ:
 updates, restart, Wi-Fi and name changes and the latency test require the
 user `admin` and that password.
 
+## USB player (experimental)
+
+<a href="images/player-bar.png"><img src="images/player-bar.png" alt="Player bar: cover, title, artist and album, format chips, seek, controls, volume and the channel each speaker gets" width="100%"></a>
+
+**Plug in a USB stick, open the page, press play.** No phone, no app, no
+streaming service: the Gateway itself becomes a music player for the whole
+surround system.
+
+And it does not cut corners. A FLAC or WAV reaches every speaker **bit for
+bit**, exactly as it is in the file: not squeezed into AAC on the way, as
+many AirPlay streams are, and not mixed down. Every speaker gets **only its own channel**, so a 5.1
+or 7.1 music file or film soundtrack plays the way it was mixed: centre in
+the centre, surrounds around you, each from its own speaker. A stereo album
+plays on the front pair with the subwoofer underneath, like on an AV
+receiver.
+
+**What you get**
+
+- 🎵 **Lossless and then some:** FLAC, WAV and ALAC bit for bit, AAC and
+  MP3 too. Hi-res files up to 192 kHz play as well (brought down to
+  48 kHz / 24-bit, which the speakers play).
+- 🖼️ **Covers and tags:** the album art, title, artist and album, from the
+  file itself or a `cover.jpg` / `folder.jpg` next to it. Names in
+  Cyrillic and any other script.
+- 🔁 **Albums without gaps:** live albums and DJ mixes flow from track to
+  track without a click or a pause.
+- 📂 **A library on the page:** browse the stick's folders, play a whole
+  folder, start from any song, add songs to the queue, see what comes next,
+  or play your **m3u playlists**.
+- ⏯️ **All the controls:** seek, pause, next, previous and its own volume,
+  from the page or the hardware buttons on the Gateway.
+- 📊 **You see what plays where:** the format, a *bit for bit* badge, which
+  speaker gets which channel, and the room map lighting up.
+- 🔌 **Plug and play:** put the stick in and pull it out while the Gateway
+  runs. AirPlay and the web radio still work as before; whoever starts
+  playing takes the speakers.
+
+**Which files**
+
+| Plays | |
+|---|---|
+| FLAC, WAV, ALAC (`.m4a`) | lossless, bit for bit, 16 / 24-bit |
+| AAC (`.m4a`, `.aac`), MP3 | including VBR and gapless albums |
+| m3u / m3u8 playlists | from the stick or a web server |
+| Mono, stereo, 5.1, 7.1 | 44.1 / 48 kHz, and hi-res 88.2 / 96 / 176.4 / 192 kHz |
+
+Not played: 32-bit and floating-point WAV, Ogg, Opus, WMA and DSD. A file
+the player cannot play just shows a message, and the next song starts.
+
+**Which USB stick**
+
+- **Any small USB 2.0 stick** is enough. A USB 3 stick works too but is not
+  faster: the ESP32-S3's USB port runs at USB 1.1 speed (about 1 MB/s).
+- Format it **FAT32** with a **Master Boot Record** (on a Mac: Disk Utility →
+  *MS-DOS (FAT)*, scheme *Master Boot Record*). exFAT, NTFS and APFS are
+  not read.
+- It is powered by the Gateway board, so pick one that draws little power;
+  a hard disk needs a powered USB hub.
+- **Prefer FLAC to WAV.** FLAC is the same sound, bit for bit, at half the
+  size. Stereo WAV plays fine, but a 5.1 / 7.1 WAV is too heavy for the
+  port and stops every few seconds to catch up. One command turns it into
+  FLAC: `ffmpeg -i film.wav -c:a flac film.flac`.
+
+The player can also play files from a web server on your network, through
+the Gateway's `/api/player` (play, pause, seek, next, previous, queue,
+volume, stop).
+
+### Build
+
+The player is **on by default** in both firmwares: a plain `idf.py build`
+gives a Gateway with the player and the USB drive, and speakers that take
+its streams. Because the drive takes the Gateway's **native USB port**
+(GPIO19/20), the Gateway's **console, logs and flashing are on its UART
+port** (UART0, GPIO43/44, 115200 baud; on a DevKitC the connector marked
+*UART* or *COM*), or OTA from its page. The speakers keep their USB port as
+before.
+
+To build a Gateway without the player (and with the console back on the
+native USB port), turn off **USB Player (experimental) → Gateway player** in
+`idf.py menuconfig`, and set **Component config → ESP System Settings →
+Channel for console output** to **USB Serial/JTAG**. The player image is
+about 2.1 MB and fits the 8 MB table; the speaker image with player streams
+still fits the Gateway's copy of it.
+
+> [!NOTE]
+> An existing `sdkconfig` keeps the choices it already has: after an update
+> from an older version, delete `sdkconfig` (or set the options above in
+> `menuconfig`) to get the new defaults.
+
 ## Technical details
 
 ### Audio formats
@@ -1070,6 +1175,7 @@ are listed in
 | Audio engine | `speaker/main/audio` | FIFO, FDK AAC / ALAC decode, PCM store, I2S playout and servo |
 | Room calibration and Room EQ | `main/gw_calib.c`, `main/gw_mic.c`, `common/surround/cal_chirp.c`, `data/www/roomeq.html` | microphone capture, chirp search and level / delay suggestions; the sweeps of Room EQ, whose response and filters the browser computes (`gw_calib` in the log); the speaker side plays the chirps and sweeps (`ROOM CAL …`) |
 | Web radio | `main/gw_radio.c`, `data/www/radio.js` | reads a station, decodes MP3 / AAC, encodes ALAC and sends it to the buffered relay like an Apple sender (`gw_radio` in the log); the stations panel and player bar |
+| USB player | `main/gw_player*.c`, `main/gw_usb.c`, `data/www/player.js` | reads a file (USB drive or HTTP), decodes it on core 0, encodes one ALAC lane per speaker on core 1 and sends them to the buffered relay in lane mode (`gw_player`, `gw_usb` in the log); the Library and the player bar. The speakers take the lanes with **Player streams** (`common/surround/surround_player_formats.h`) |
 | Speaker EQ | `speaker/main/audio/audio_eq.c`, `data/www/eq.html` | 24 biquads per output, mono or bi-amp with a Linkwitz-Riley crossover, delay and polarity per output |
 
 ## Measuring sync
@@ -1118,6 +1224,10 @@ are listed in
   reconfigured.
 - **Rear and side channels are often nearly silent in music**; they come
   alive with films and Atmos mixes.
+- **USB player** (experimental): a file heavier than about 5 Mbit/s (WAV
+  5.1 / 7.1) stops to buffer every few seconds; FAT32 only, one drive, hubs
+  not yet tested; no shuffle or repeat, and the queue is not kept over a
+  restart.
 - A sender can postpone audio after AirPlay setup. Distinguish that from
   clock acquisition using `apple_clock` readiness and the speaker's
   `PLAYOUT START` / timing-watchdog logs; a long wait is not automatically

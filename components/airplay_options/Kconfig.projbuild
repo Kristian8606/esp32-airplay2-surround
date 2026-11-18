@@ -575,7 +575,7 @@ menu "USB Player (experimental)"
 
     config AIRPLAY_SURROUND_PLAYER_STREAMS
         bool "Player streams: one channel per speaker (ALAC)"
-        default n
+        default y
         help
             ROADMAP_USB_PLAYER.md, phase 1. Speaker: also takes the
             Gateway player's lane formats (common/surround/
@@ -586,24 +586,25 @@ menu "USB Player (experimental)"
             unknown, as today.
 
     config GATEWAY_USB_PLAYER
-        bool "Gateway player (phase 3: files over HTTP; WAV, FLAC, MP3, AAC, M4A)"
+        bool "Gateway player (FLAC, WAV, ALAC, AAC, MP3 over HTTP)"
         depends on AIRPLAY_ROLE_GATEWAY && AIRPLAY_SURROUND_PLAYER_STREAMS
-        default n
+        default y
         help
-            ROADMAP_USB_PLAYER.md, phase 3. The Gateway plays a file (for
-            now WAV over HTTP from the LAN) to the speakers, one lane per
-            role in the relay's lane mode: L and R bit for bit, the
-            subwoofer and a mono mix 0.5 * (L + R) as 24 bit, a 5.1/7.1
-            file's channels each on its own speaker. Controlled through
-            GET/POST /api/player. Leave off.
+            The Gateway plays music files of its own (FLAC, WAV, ALAC,
+            AAC, MP3, m3u playlists; README: USB player) to the speakers,
+            one lane per role in the relay's lane mode: L and R bit for
+            bit, the subwoofer and a mono mix 0.5 * (L + R) as 24 bit, a
+            5.1/7.1 file's channels each on its own speaker. The page's
+            player bar and GET/POST /api/player control it. The speakers
+            need Player streams. Experimental; on by default.
 
     config GATEWAY_USB_PLAYER_USB
-        bool "Gateway player: a USB drive (phase 4)"
+        bool "Gateway player: a USB drive"
         depends on GATEWAY_USB_PLAYER && !ESP_CONSOLE_USB_SERIAL_JTAG && !ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
         select GATEWAY_USB_PLAYER_USB_COMPONENTS
-        default n
+        default y
         help
-            ROADMAP_USB_PLAYER.md, phase 4. The native USB port (GPIO19/20)
+            The native USB port (GPIO19/20)
             becomes a USB host: a FAT32 drive is mounted at /usb when it is
             plugged in and let go when it is pulled out, and the player
             plays "usb:/folder/file.flac". The drive needs 5 V on that
@@ -611,7 +612,8 @@ menu "USB Player (experimental)"
             port: the console has to be on UART0, flashing goes over OTA
             (the web page) or the UART port. Needs the components
             espressif/usb and usb_host_msc (fetched only with this on).
-            Leave off.
+            Shown once the console is on UART0. FAT32 with UTF-8 names:
+            set FAT Filesystem support -> API character encoding to UTF-8.
 
     config GATEWAY_USB_PLAYER_USB_COMPONENTS
         bool "Fetch the USB host components (the USB drive turns this on)"
