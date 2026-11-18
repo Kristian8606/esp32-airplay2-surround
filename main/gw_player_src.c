@@ -2,16 +2,24 @@
 
 #include "gw_player_src.h"
 
+#include <errno.h>
+#include <fcntl.h>
 #include <inttypes.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "esp_http_client.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"
+#include "freertos/semphr.h"
+#include "freertos/stream_buffer.h"
 
 static const char *TAG = "gw_player_src";
 
@@ -175,6 +183,175 @@ esp_err_t player_source_http_open(player_source_t *s, const char *url) {
  * (gw_player_decim.c) */
 static bool rate_ok(int r) {
   return r == 44100 || r == 48000 || r == 88200 || r == 96000 || r == 176400 || r == 192000;
+}
+
+/* ---- a file (the USB drive) ----
+ * A reader task reads ahead into a stream buffer in PSRAM, so the USB
+ * transfers (the bus waits, not the CPU) run beside the decoder: on the S3's
+ * full-speed port a 7.1 ALAC file took as long to read as to decode. read_at
+ * has a descriptor of its own, so the stream keeps its place. */
+
+#define FILE_AHEAD_BYTES (1024U * 1024U) /* half of it when PSRAM is short */
+#define FILE_CHUNK       (32U * 1024U)
+#define FILE_TASK_STACK  8192 /* VFS, FatFs and the USB transfer below read() */
+#define FILE_TASK_PRIO   3
+#define FILE_TASK_CORE   1
+/* at least one tick: the Gateway runs FreeRTOS at 100 Hz, where
+ * pdMS_TO_TICKS(5) is 0 and a wait becomes a busy loop */
+#define FILE_TICKS(ms) (pdMS_TO_TICKS(ms) ? pdMS_TO_TICKS(ms) : 1)
+
+typedef struct {
+  int fd, fd_at;
+  StreamBufferHandle_t sb;
+  /* made here, not with xStreamBufferCreateWithCaps: IDF 6.1's
+   * vStreamBufferDeleteWithCaps deletes a stream buffer as a queue
+   * (vSemaphoreDelete) and then frees it again: a double free */
+  StaticStreamBuffer_t *sb_ctl;
+  uint8_t *sb_mem;
+  TaskHandle_t task;
+  SemaphoreHandle_t done;
+  uint8_t *chunk;
+  volatile uint32_t gen, ack;  /* a seek: gen moves on, the reader answers in ack */
+  volatile uint32_t drained;   /* the old bytes are out of the buffer: read on */
+  volatile int64_t target;
+  volatile bool eof, err, quit;
+} file_src_t;
+
+static void file_reader(void *arg) {
+  file_src_t *f = arg;
+  uint32_t mine = 0; /* gen starts at 0: a seek before this task runs is seen */
+  while (!f->quit) {
+    const uint32_t g = f->gen;
+    if (g != mine) { /* a seek: from the new place */
+      f->err = lseek(f->fd, (off_t)f->target, SEEK_SET) != (off_t)f->target;
+      f->eof = false;
+      mine = g;
+      f->ack = g;
+      continue;
+    }
+    if (f->drained != mine) { /* the seek's old bytes are still being thrown away */
+      vTaskDelay(FILE_TICKS(1));
+      continue;
+    }
+    if (f->eof || f->err) {
+      vTaskDelay(pdMS_TO_TICKS(10));
+      continue;
+    }
+    const ssize_t n = read(f->fd, f->chunk, FILE_CHUNK);
+    if (n <= 0) {
+      if (n < 0) f->err = true;
+      else f->eof = true;
+      continue;
+    }
+    size_t sent = 0;
+    while (sent < (size_t)n && !f->quit && f->gen == mine)
+      sent += xStreamBufferSend(f->sb, f->chunk + sent, (size_t)n - sent, pdMS_TO_TICKS(20));
+  }
+  xSemaphoreGive(f->done);
+  vTaskDeleteWithCaps(NULL);
+}
+
+static int file_read(player_source_t *s, uint8_t *buf, size_t len) {
+  file_src_t *f = s->ctx;
+  for (;;) {
+    const size_t n = xStreamBufferReceive(f->sb, buf, len, pdMS_TO_TICKS(50));
+    if (n) return (int)n;
+    if (f->err) return -1;
+    if (f->eof && xStreamBufferIsEmpty(f->sb)) return 0;
+  }
+}
+
+/* Drops what was read ahead; the reader goes on from off. Not while another
+ * task reads (the player parks the decoder task first). */
+static esp_err_t file_seek(player_source_t *s, int64_t off) {
+  file_src_t *f = s->ctx;
+  f->target = off;
+  const uint32_t g = f->gen + 1U;
+  f->gen = g;
+  uint8_t tmp[256];
+  const int64_t until = esp_timer_get_time() + 2000000; /* up to 2 s for the reader */
+  while (f->ack != g && esp_timer_get_time() < until) {
+    /* make room, so a reader waiting for it sees the seek */
+    if (!xStreamBufferReceive(f->sb, tmp, sizeof(tmp), 0)) vTaskDelay(FILE_TICKS(2));
+  }
+  while (xStreamBufferReceive(f->sb, tmp, sizeof(tmp), 0)) {
+  }
+  f->drained = g; /* only bytes from off come now */
+  if (f->ack != g) ESP_LOGW(TAG, "file seek to %lld: the reader did not answer in 2 s", (long long)off);
+  if (f->ack != g) return ESP_ERR_TIMEOUT;
+  return f->err ? ESP_FAIL : ESP_OK;
+}
+
+static int file_read_at(player_source_t *s, int64_t off, uint8_t *buf, size_t len) {
+  file_src_t *f = s->ctx;
+  if (lseek(f->fd_at, (off_t)off, SEEK_SET) != (off_t)off) return -1;
+  size_t got = 0;
+  while (got < len) {
+    const ssize_t n = read(f->fd_at, buf + got, len - got);
+    if (n <= 0) break;
+    got += (size_t)n;
+  }
+  return (int)got;
+}
+
+static void file_close(player_source_t *s) {
+  file_src_t *f = s->ctx;
+  if (f) {
+    if (f->task) {
+      f->quit = true;
+      uint8_t tmp[256];
+      while (xSemaphoreTake(f->done, FILE_TICKS(5)) != pdTRUE)
+        (void)xStreamBufferReceive(f->sb, tmp, sizeof(tmp), 0);
+    }
+    if (f->sb) vStreamBufferDelete(f->sb); /* static: frees nothing */
+    free(f->sb_ctl);
+    free(f->sb_mem);
+    if (f->done) vSemaphoreDelete(f->done);
+    free(f->chunk);
+    if (f->fd >= 0) close(f->fd);
+    if (f->fd_at >= 0) close(f->fd_at);
+    free(f);
+  }
+  s->ctx = NULL;
+}
+
+esp_err_t player_source_file_open(player_source_t *s, const char *path) {
+  memset(s, 0, sizeof(*s));
+  file_src_t *f = calloc(1, sizeof(*f));
+  if (!f) return ESP_ERR_NO_MEM;
+  f->fd = open(path, O_RDONLY);
+  f->fd_at = f->fd >= 0 ? open(path, O_RDONLY) : -1;
+  struct stat st;
+  if (f->fd < 0 || f->fd_at < 0 || fstat(f->fd, &st) != 0) {
+    ESP_LOGW(TAG, "%s: errno %d", path, errno);
+    if (f->fd >= 0) close(f->fd);
+    if (f->fd_at >= 0) close(f->fd_at);
+    free(f);
+    return ESP_ERR_NOT_FOUND;
+  }
+  s->ctx = f;
+  s->read = file_read;
+  s->close = file_close;
+  s->seek = file_seek;
+  s->read_at = file_read_at;
+  s->size = (int64_t)st.st_size;
+  f->sb_ctl = heap_caps_malloc(sizeof(StaticStreamBuffer_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  size_t ahead = FILE_AHEAD_BYTES;
+  f->sb_mem = heap_caps_malloc(ahead, MALLOC_CAP_SPIRAM);
+  if (!f->sb_mem) f->sb_mem = heap_caps_malloc(ahead /= 2U, MALLOC_CAP_SPIRAM);
+  if (f->sb_ctl && f->sb_mem) f->sb = xStreamBufferCreateStatic(ahead, 1, f->sb_mem, f->sb_ctl);
+  f->chunk = heap_caps_malloc(FILE_CHUNK, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+  if (!f->chunk) f->chunk = heap_caps_malloc(FILE_CHUNK, MALLOC_CAP_SPIRAM);
+  f->done = xSemaphoreCreateBinary();
+  if (!f->sb || !f->chunk || !f->done ||
+      xTaskCreatePinnedToCoreWithCaps(file_reader, "gw_player_rd", FILE_TASK_STACK, f,
+                                      FILE_TASK_PRIO, &f->task, FILE_TASK_CORE,
+                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
+    f->task = NULL;
+    file_close(s);
+    return ESP_ERR_NO_MEM;
+  }
+  return ESP_OK;
 }
 
 /* ---- WAV ---- */

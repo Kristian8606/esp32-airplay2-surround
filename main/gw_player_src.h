@@ -28,6 +28,10 @@ struct player_source {
  * breaks (a long pause) opens again where it was. */
 esp_err_t player_source_http_open(player_source_t *s, const char *url);
 
+/* A file on a mounted file system (phase 4: the USB drive at /usb). The
+ * stream and read_at have a file descriptor each. */
+esp_err_t player_source_file_open(player_source_t *s, const char *path);
+
 /* ---- WAV ---- */
 
 typedef struct {

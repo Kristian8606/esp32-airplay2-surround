@@ -8,6 +8,9 @@
 #if CONFIG_GATEWAY_PLAYER_BENCH
 #include "gw_bench.h"
 #endif
+#if CONFIG_GATEWAY_USB_PLAYER_USB
+#include "gw_usb.h"
+#endif
 #include "apple_clock.h"
 #include "gw_speakers.h"
 #include "ap2_hap.h"
@@ -126,6 +129,9 @@ void app_main(void) {
     /* Without the listener AirPlay still works; speakers just cannot join. */
 #if CONFIG_GATEWAY_PLAYER_BENCH
     gw_bench_start(); /* phase 0 measurements, off by default */
+#endif
+#if CONFIG_GATEWAY_USB_PLAYER_USB
+    if (gw_usb_start() != ESP_OK) ESP_LOGE(TAG, "USB host unavailable: the player has no drive");
 #endif
     esp_err_t gw_err = gw_speakers_start();
     if (gw_err != ESP_OK) {

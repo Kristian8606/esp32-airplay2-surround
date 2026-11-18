@@ -597,6 +597,31 @@ menu "USB Player (experimental)"
             file's channels each on its own speaker. Controlled through
             GET/POST /api/player. Leave off.
 
+    config GATEWAY_USB_PLAYER_USB
+        bool "Gateway player: a USB drive (phase 4)"
+        depends on GATEWAY_USB_PLAYER && !ESP_CONSOLE_USB_SERIAL_JTAG && !ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
+        select GATEWAY_USB_PLAYER_USB_COMPONENTS
+        default n
+        help
+            ROADMAP_USB_PLAYER.md, phase 4. The native USB port (GPIO19/20)
+            becomes a USB host: a FAT32 drive is mounted at /usb when it is
+            plugged in and let go when it is pulled out, and the player
+            plays "usb:/folder/file.flac". The drive needs 5 V on that
+            port. That port is then no longer the console or the flashing
+            port: the console has to be on UART0, flashing goes over OTA
+            (the web page) or the UART port. Needs the components
+            espressif/usb and usb_host_msc (fetched only with this on).
+            Leave off.
+
+    config GATEWAY_USB_PLAYER_USB_COMPONENTS
+        bool "Fetch the USB host components (the USB drive turns this on)"
+        default n
+        help
+            espressif/usb and usb_host_msc for the USB drive
+            (main/idf_component.yml). The component manager only reads
+            options that are always in sdkconfig, so this one has a prompt;
+            "Gateway player: a USB drive" selects it. Leave it to that.
+
     config GATEWAY_PLAYER_TEST_RADIO_ONE_CHANNEL
         bool "Test: the web radio sends one channel to all speakers"
         depends on AIRPLAY_ROLE_GATEWAY && AIRPLAY_SURROUND_PLAYER_STREAMS

@@ -21,6 +21,8 @@
 /* Plays url (http://) at volume_db (-60..0). Stops the radio or a file
  * that plays. Returns at once; GET /api/player shows how it goes. */
 esp_err_t gw_player_play(const char *url, int volume_db);
+/* url: http://... or, with CONFIG_GATEWAY_USB_PLAYER_USB, usb:/folder/file
+ * (the drive mounted at /usb). */
 
 /* Phase 3d.3: a queue of up to 64 URLs from index start; same-format
  * tracks follow each other gapless. add puts one more at the end (also
@@ -45,6 +47,9 @@ esp_err_t gw_player_seek(double position_s);
 
 /* The player holds the speakers. */
 bool gw_player_active(void);
+
+/* The queue has a usb: file (phase 4: the drive is pulled out). */
+bool gw_player_plays_usb(void);
 
 /* See gw_local_src.h. */
 void gw_player_yield(void);

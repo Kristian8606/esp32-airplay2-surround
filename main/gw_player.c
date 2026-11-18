@@ -15,7 +15,10 @@
 
 #include "gw_player.h"
 
+#include <dirent.h>
 #include <errno.h>
+#include <strings.h>
+#include <sys/stat.h>
 #include <inttypes.h>
 #include <math.h>
 #include <stdarg.h>
@@ -40,6 +43,9 @@
 #include "gw_calib.h"
 #include "gw_player_decim.h"
 #include "gw_player_m4a.h"
+#if CONFIG_GATEWAY_USB_PLAYER_USB
+#include "gw_usb.h"
+#endif
 #include "gw_player_src.h"
 #include "gw_radio.h"
 #include "gw_relay.h"
@@ -971,6 +977,8 @@ enum { REC_PCM = 1, REC_END, REC_ERR, REC_SLOTS };
 /* REC_SLOTS: filtered frames (hi-res), int32, the present slots in order */
 #define PL_PIPE_BYTES (512U * 1024U)
 #define PL_PIPE_ITEM  8192U
+/* at least one tick (FreeRTOS runs at 100 Hz on the Gateway) */
+#define PL_TICKS(ms) (pdMS_TO_TICKS(ms) ? pdMS_TO_TICKS(ms) : 1)
 
 /* One record into the queue; waits while it is full, unless the player
  * wants the decoder parked or stopped (then the record is dropped). */
@@ -1622,8 +1630,15 @@ static bool decode_any(player_t *p) {
 #define PL_WORKER_CORE     0 /* alone there: reading and decoding are the heaviest part */
 
 static void worker_loop(player_t *p) {
+  int64_t rest_us = esp_timer_get_time();
   for (;;) {
     if (p->w_quit || atomic_load(&s_stop)) return;
+    /* a heavy file keeps it busy for long: one tick a second for core 0's
+     * idle task (the task watchdog) and the tasks below it */
+    if (esp_timer_get_time() - rest_us > 1000000) {
+      vTaskDelay(1);
+      rest_us = esp_timer_get_time();
+    }
     if (atomic_load(&p->park_req)) {
       atomic_store(&p->w_parked, true);
       xSemaphoreTake(p->w_resume, portMAX_DELAY);
@@ -1631,7 +1646,7 @@ static void worker_loop(player_t *p) {
       continue;
     }
     if (p->in_done) { /* the end is in the queue: the player goes on from there */
-      vTaskDelay(pdMS_TO_TICKS(5));
+      vTaskDelay(PL_TICKS(5));
       continue;
     }
     fill_buf(p);
@@ -1681,8 +1696,10 @@ static void worker_stop(player_t *p) {
   if (p->w_alive) {
     p->w_quit = true;
     xSemaphoreGive(p->w_resume); /* in case it is parked */
-    for (int i = 0; i < 100 && xSemaphoreTake(p->w_exit, pdMS_TO_TICKS(100)) != pdTRUE; ++i)
+    bool gone = false;
+    for (int i = 0; i < 100 && !(gone = xSemaphoreTake(p->w_exit, pdMS_TO_TICKS(100)) == pdTRUE); ++i)
       (void)xMessageBufferReceive(p->rb, p->r_msg, PL_PIPE_ITEM + sizeof(pcm_rec_t), 0);
+    if (!gone) ESP_LOGE(TAG, "the decoder task did not stop in 10 s");
     p->w_alive = false;
   }
   if (p->rb) vMessageBufferDeleteWithCaps(p->rb);
@@ -1703,7 +1720,7 @@ static void pipe_park(player_t *p) {
   if (p->park_depth++ > 0 || !p->w_alive) return;
   atomic_store(&p->park_req, true);
   const size_t cap = PL_PIPE_ITEM + sizeof(pcm_rec_t);
-  while (!atomic_load(&p->w_parked)) (void)xMessageBufferReceive(p->rb, p->r_msg, cap, pdMS_TO_TICKS(5));
+  while (!atomic_load(&p->w_parked)) (void)xMessageBufferReceive(p->rb, p->r_msg, cap, PL_TICKS(5));
   while (xMessageBufferReceive(p->rb, p->r_msg, cap, 0) > 0) {
   }
 }
@@ -2143,7 +2160,18 @@ static bool open_track(player_t *p, int *k) {
     char url[PL_URL_MAX];
     if (!queue_url(*k, url, sizeof(url))) break;
     st_set(P_STARTING, "Opening %s", url);
-    if (player_source_http_open(&p->src, url) == ESP_OK && open_input(p)) {
+    esp_err_t serr;
+#if CONFIG_GATEWAY_USB_PLAYER_USB
+    if (strncmp(url, "usb:", 4) == 0) {
+      char path[PL_URL_MAX + 8];
+      snprintf(path, sizeof(path), "%s%s", GW_USB_MOUNT, url + 4);
+      serr = gw_usb_ready() ? player_source_file_open(&p->src, path) : ESP_ERR_INVALID_STATE;
+      if (serr != ESP_OK)
+        st_set(P_FAILED, "%s", gw_usb_ready() ? "The file is not on the USB drive" : "No USB drive");
+    } else
+#endif
+    serr = player_source_http_open(&p->src, url);
+    if (serr == ESP_OK && open_input(p)) {
       p->in_ix = *k;
       p->ti.ix = *k;
       p->in_done = false;
@@ -2379,13 +2407,23 @@ static void player_run(int start, int volume_db) {
     p->play_ix = k;
     publish_track(&p->ti);
     if (!worker_start(p)) {
+      ESP_LOGE(TAG, "decoder task: %u KiB PSRAM free (largest block %u KiB)",
+               (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024U),
+               (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024U));
       st_set(P_FAILED, "Out of memory for the decoder task");
       goto out;
     }
   }
   st_set(P_PLAYING, NULL);
 
+  int64_t rest_us = esp_timer_get_time();
   while (!atomic_load(&s_stop)) {
+    /* filling the lead goes flat out for seconds: one tick a second for
+     * core 1's idle task (the task watchdog) */
+    if (esp_timer_get_time() - rest_us > 1000000) {
+      vTaskDelay(1);
+      rest_us = esp_timer_get_time();
+    }
     if (!controls(p)) break;
     if (p->paused) {
       status_update(p);
@@ -2533,7 +2571,21 @@ void gw_player_set_volume(int volume_db) {
 }
 
 static bool url_ok(const char *url) {
-  return url && strncmp(url, "http://", 7) == 0 && strlen(url) < PL_URL_MAX;
+  if (!url || strlen(url) >= PL_URL_MAX) return false;
+  if (strncmp(url, "http://", 7) == 0) return true;
+#if CONFIG_GATEWAY_USB_PLAYER_USB
+  if (strncmp(url, "usb:/", 5) == 0 && !strstr(url, "/../")) return true;
+#endif
+  return false;
+}
+
+bool gw_player_plays_usb(void) {
+  if (!s_qlock || !s_queue) return false;
+  bool usb = false;
+  xSemaphoreTake(s_qlock, portMAX_DELAY);
+  for (int i = 0; i < s_queue_n && !usb; ++i) usb = strncmp(s_queue[i], "usb:", 4) == 0;
+  xSemaphoreGive(s_qlock);
+  return usb;
 }
 
 esp_err_t gw_player_play(const char *url, int volume_db) {
@@ -2643,6 +2695,19 @@ static esp_err_t status_handler(httpd_req_t *req) {
   cJSON_AddNumberToObject(root, "position_s", st.position_s);
   cJSON_AddNumberToObject(root, "duration_s", st.duration_s);
   cJSON_AddNumberToObject(root, "index", st.index);
+#if CONFIG_GATEWAY_USB_PLAYER_USB
+  {
+    gw_usb_status_t u;
+    gw_usb_status(&u);
+    cJSON *usb = cJSON_AddObjectToObject(root, "usb");
+    if (usb) {
+      cJSON_AddStringToObject(usb, "state", u.state);
+      if (u.message[0]) cJSON_AddStringToObject(usb, "message", u.message);
+      if (u.size_bytes) cJSON_AddNumberToObject(usb, "size_mb", (double)(u.size_bytes / 1048576U));
+      if (u.free_bytes) cJSON_AddNumberToObject(usb, "free_mb", (double)(u.free_bytes / 1048576U));
+    }
+  }
+#endif
   cJSON *q = cJSON_AddArrayToObject(root, "queue");
   if (q && s_qlock && s_queue) {
     xSemaphoreTake(s_qlock, portMAX_DELAY);
@@ -2753,10 +2818,132 @@ static esp_err_t control_handler(httpd_req_t *req) {
   return status_handler(req);
 }
 
+#if CONFIG_GATEWAY_USB_PLAYER_USB
+/* ---- the drive's folders (phase 4) ----
+ * GET /api/player/files?path=/Music: the folders and files there, folders
+ * first, by name; "play" is a file the player takes (by its extension). */
+
+#define PL_LIST_MAX 400
+
+typedef struct {
+  char name[128];
+  bool dir;
+  int64_t size;
+} list_entry_t;
+
+static int url_unhex(int c) {
+  return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10
+       : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
+
+/* %XX and + in a query value */
+static void url_decode(char *s) {
+  char *o = s;
+  for (const char *i = s; *i; ++i) {
+    if (*i == '%' && url_unhex(i[1]) >= 0 && url_unhex(i[2]) >= 0) {
+      *o++ = (char)(url_unhex(i[1]) * 16 + url_unhex(i[2]));
+      i += 2;
+    } else {
+      *o++ = *i == '+' ? ' ' : *i;
+    }
+  }
+  *o = '\0';
+}
+
+static const char *file_type(const char *name) {
+  const char *dot = strrchr(name, '.');
+  if (!dot) return NULL;
+  static const char *const known[] = {"flac", "wav", "m4a", "mp4", "alac", "mp3", "aac"};
+  for (size_t i = 0; i < sizeof(known) / sizeof(known[0]); ++i)
+    if (strcasecmp(dot + 1, known[i]) == 0) return known[i];
+  return NULL;
+}
+
+static int entry_cmp(const void *a, const void *b) {
+  const list_entry_t *x = a, *y = b;
+  if (x->dir != y->dir) return x->dir ? -1 : 1;
+  return strcasecmp(x->name, y->name);
+}
+
+static esp_err_t files_handler(httpd_req_t *req) {
+  char path[PL_URL_MAX] = "/";
+  char q[PL_URL_MAX + 16];
+  if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK &&
+      httpd_query_key_value(q, "path", path, sizeof(path)) == ESP_OK)
+    url_decode(path);
+  if (path[0] != '/' || strstr(path, "..")) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "path");
+  gw_usb_status_t u;
+  gw_usb_status(&u);
+  cJSON *root = cJSON_CreateObject();
+  if (!root) return httpd_resp_send_500(req);
+  cJSON_AddStringToObject(root, "path", path);
+  cJSON_AddStringToObject(root, "usb", u.state);
+  cJSON *arr = cJSON_AddArrayToObject(root, "entries");
+  if (gw_usb_ready()) {
+    char full[PL_URL_MAX + 8];
+    snprintf(full, sizeof(full), "%s%s", GW_USB_MOUNT, path);
+    DIR *dir = opendir(full);
+    list_entry_t *ents = heap_caps_calloc(PL_LIST_MAX, sizeof(list_entry_t), MALLOC_CAP_SPIRAM);
+    int n = 0;
+    bool more = false;
+    if (dir && ents) {
+      struct dirent *de;
+      while ((de = readdir(dir)) != NULL) {
+        if (de->d_name[0] == '.') continue; /* ., .., and the Mac's ._ files */
+        if (n == PL_LIST_MAX) {
+          more = true;
+          break;
+        }
+        list_entry_t *e = &ents[n++];
+        strlcpy(e->name, de->d_name, sizeof(e->name));
+        e->dir = de->d_type == DT_DIR;
+        e->size = -1;
+        if (!e->dir) {
+          char fp[PL_URL_MAX + 8 + 260];
+          const bool slash = full[strlen(full) - 1] == '/';
+          const int w = snprintf(fp, sizeof(fp), "%s%s%s", full, slash ? "" : "/", de->d_name);
+          struct stat st;
+          if (w > 0 && (size_t)w < sizeof(fp) && stat(fp, &st) == 0) e->size = (int64_t)st.st_size;
+        }
+      }
+      qsort(ents, (size_t)n, sizeof(ents[0]), entry_cmp);
+      for (int i = 0; i < n && arr; ++i) {
+        cJSON *o = cJSON_CreateObject();
+        cJSON_AddStringToObject(o, "name", ents[i].name);
+        if (ents[i].dir) {
+          cJSON_AddBoolToObject(o, "dir", true);
+        } else {
+          const char *t = file_type(ents[i].name);
+          cJSON_AddNumberToObject(o, "size", (double)ents[i].size);
+          if (t) cJSON_AddStringToObject(o, "type", t);
+          cJSON_AddBoolToObject(o, "play", t != NULL);
+        }
+        cJSON_AddItemToArray(arr, o);
+      }
+      if (more) cJSON_AddBoolToObject(root, "more", true);
+    } else {
+      cJSON_AddStringToObject(root, "error", dir ? "Out of memory" : "No such folder");
+    }
+    if (dir) closedir(dir);
+    free(ents);
+  }
+  char *s = cJSON_PrintUnformatted(root);
+  cJSON_Delete(root);
+  if (!s) return httpd_resp_send_500(req);
+  httpd_resp_set_type(req, "application/json; charset=utf-8");
+  const esp_err_t r = httpd_resp_sendstr(req, s);
+  free(s);
+  return r;
+}
+#endif
+
 void gw_player_register_web(httpd_handle_t server) {
   const httpd_uri_t uris[] = {
       {.uri = "/api/player", .method = HTTP_GET, .handler = status_handler},
       {.uri = "/api/player", .method = HTTP_POST, .handler = control_handler},
+#if CONFIG_GATEWAY_USB_PLAYER_USB
+      {.uri = "/api/player/files", .method = HTTP_GET, .handler = files_handler},
+#endif
   };
   for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); ++i) {
     const esp_err_t err = httpd_register_uri_handler(server, &uris[i]);
