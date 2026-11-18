@@ -244,8 +244,33 @@ static bool airplay_release(void) {
   return rtsp_server_is_idle() && sound_engine_is_idle();
 }
 
+/* rtsp_server_start() reads NVS (the device name): a flash read needs a
+ * stack in internal RAM, and the player's task has its stack in PSRAM, so a
+ * short task with an internal stack starts the listener and the player
+ * waits for it. */
+#define PL_LISTEN_STACK 4096
+
+typedef struct {
+  SemaphoreHandle_t done;
+  esp_err_t err;
+} listen_job_t;
+
+static void listen_task(void *arg) {
+  listen_job_t *j = arg;
+  j->err = rtsp_server_start();
+  xSemaphoreGive(j->done);
+  vTaskDelete(NULL);
+}
+
 static bool airplay_listen(void) {
-  const esp_err_t err = rtsp_server_start();
+  static StaticSemaphore_t done_buf;
+  static SemaphoreHandle_t done;
+  if (!done) done = xSemaphoreCreateBinaryStatic(&done_buf);
+  listen_job_t j = {.done = done, .err = ESP_ERR_NO_MEM};
+  if (xTaskCreatePinnedToCore(listen_task, "gw_pl_listen", PL_LISTEN_STACK, &j, PL_TASK_PRIORITY,
+                              NULL, PL_TASK_CORE) == pdPASS)
+    (void)xSemaphoreTake(done, portMAX_DELAY);
+  const esp_err_t err = j.err;
   if (err != ESP_OK)
     ESP_LOGE(TAG, "AirPlay listener did not start again: %s", esp_err_to_name(err));
   return err == ESP_OK;
