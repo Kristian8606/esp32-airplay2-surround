@@ -38,6 +38,18 @@ typedef struct {
   char why[64];      /* why it is not supported */
 } wav_info_t;
 
+/* ---- FLAC ----
+ * fLaC and its STREAMINFO (at the start of buf, after any ID3v2 tag the
+ * caller skipped). Fills rate, channels, bits, layout, slot map and present
+ * of info (container_bits stays 0: the decoder's output decides it) and the
+ * total sample count (0 = unknown). Same returns as wav_parse. FLAC's own
+ * channel order: 6 = FL FR FC LFE BL BR, 8 = FL FR FC LFE BL BR SL SR. */
+esp_err_t flac_parse(const uint8_t *buf, size_t len, wav_info_t *info, uint64_t *total_samples);
+
+/* The size of an ID3v2 tag at the start of buf (header included), 0 if
+ * there is none. */
+size_t id3v2_size(const uint8_t *buf, size_t len);
+
 /* Parses the RIFF/WAVE header in buf. ESP_OK with *info filled once the
  * data chunk starts inside buf; ESP_ERR_INVALID_SIZE when more of the file
  * is needed; ESP_ERR_NOT_SUPPORTED (info->why) or ESP_FAIL otherwise. */

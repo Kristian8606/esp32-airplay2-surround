@@ -127,6 +127,57 @@ static bool map_channels(wav_info_t *w) {
   return ch == w->channels;
 }
 
+size_t id3v2_size(const uint8_t *buf, size_t len) {
+  if (len < 10 || memcmp(buf, "ID3", 3) != 0) return 0;
+  const size_t body = ((size_t)(buf[6] & 0x7F) << 21) | ((size_t)(buf[7] & 0x7F) << 14) |
+                      ((size_t)(buf[8] & 0x7F) << 7) | (buf[9] & 0x7F);
+  return 10U + body + ((buf[5] & 0x10) ? 10U : 0U); /* footer */
+}
+
+esp_err_t flac_parse(const uint8_t *buf, size_t len, wav_info_t *w, uint64_t *total) {
+  memset(w, 0, sizeof(*w));
+  memset(w->slot, -1, sizeof(w->slot));
+  *total = 0;
+  if (len < 4 + 4 + 34) return ESP_ERR_INVALID_SIZE;
+  if (memcmp(buf, "fLaC", 4) != 0) {
+    strlcpy(w->why, "Not a FLAC file", sizeof(w->why));
+    return ESP_ERR_NOT_SUPPORTED;
+  }
+  const uint8_t *b = buf + 4;
+  if ((b[0] & 0x7F) != 0) return ESP_FAIL; /* STREAMINFO must come first */
+  const uint8_t *si = b + 4;
+  w->rate = (int)(((uint32_t)si[10] << 12) | ((uint32_t)si[11] << 4) | (si[12] >> 4));
+  w->channels = ((si[12] >> 1) & 0x07) + 1;
+  w->bits = (((si[12] & 0x01) << 4) | (si[13] >> 4)) + 1;
+  *total = ((uint64_t)(si[13] & 0x0F) << 32) | ((uint64_t)si[14] << 24) |
+           ((uint64_t)si[15] << 16) | ((uint64_t)si[16] << 8) | si[17];
+  w->data_offset = 0; /* the decoder takes the file from its start */
+  if (w->rate != 44100 && w->rate != 48000) {
+    snprintf(w->why, sizeof(w->why), "%d Hz (phase 3b plays 44.1 and 48 kHz)", w->rate);
+    return ESP_ERR_NOT_SUPPORTED;
+  }
+  if (w->bits != 16 && w->bits != 24) {
+    snprintf(w->why, sizeof(w->why), "%d-bit FLAC (16 and 24 only)", w->bits);
+    return ESP_ERR_NOT_SUPPORTED;
+  }
+  static const int8_t k6[6] = {0, 1, 2, 3, 4, 5};       /* BL/BR as Ls/Rs */
+  static const int8_t k8[8] = {0, 1, 2, 3, 6, 7, 4, 5}; /* BL/BR = Lrs/Rrs, SL/SR = Ls/Rs */
+  const int8_t *map = NULL;
+  switch (w->channels) {
+    case 1: w->slot[0] = 0; w->layout = 1; break;
+    case 2: w->slot[0] = 0; w->slot[1] = 1; w->layout = 2; break;
+    case 6: map = k6; w->layout = 6; break;
+    case 8: map = k8; w->layout = 8; break;
+    default:
+      snprintf(w->why, sizeof(w->why), "%d channels (mono, stereo, 5.1, 7.1)", w->channels);
+      return ESP_ERR_NOT_SUPPORTED;
+  }
+  if (map) memcpy(w->slot, map, (size_t)w->channels);
+  for (int c = 0; c < w->channels; ++c)
+    if (w->slot[c] >= 0) w->present |= (uint8_t)(1U << w->slot[c]);
+  return ESP_OK;
+}
+
 esp_err_t wav_parse(const uint8_t *buf, size_t len, wav_info_t *w) {
   memset(w, 0, sizeof(*w));
   memset(w->slot, -1, sizeof(w->slot));

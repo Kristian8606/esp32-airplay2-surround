@@ -586,7 +586,7 @@ menu "USB Player (experimental)"
             unknown, as today.
 
     config GATEWAY_USB_PLAYER
-        bool "Gateway player (phase 3: files over HTTP, WAV)"
+        bool "Gateway player (phase 3: files over HTTP, WAV and FLAC)"
         depends on AIRPLAY_ROLE_GATEWAY && AIRPLAY_SURROUND_PLAYER_STREAMS
         default n
         help

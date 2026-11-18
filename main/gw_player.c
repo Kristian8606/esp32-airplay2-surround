@@ -25,6 +25,7 @@
 #include <string.h>
 
 #include "cJSON.h"
+#include "esp_audio_simple_dec_default.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_mac.h"
@@ -102,6 +103,7 @@ typedef struct {
   uint8_t lane_bits[PL_LANES];   /* 0 = no lane */
   double position_s, duration_s;
   /* the last status window (PL_STATUS_LOG_MS): where the time went */
+  uint32_t pcm_crc10;  /* CRC-32 of the first 10 s of decoded PCM (0 = not yet) */
   double perf_speed;   /* frames sent / real time */
   int perf_read_ms, perf_enc_ms, perf_send_ms, perf_read_kib;
 } player_status_t;
@@ -225,10 +227,25 @@ typedef struct {
   uint32_t bytes;
 } lane_t;
 
+enum { KIND_WAV = 0, KIND_FLAC };
+
 typedef struct {
   /* source */
   player_source_t src;
-  wav_info_t wav;
+  int kind;
+  wav_info_t wav;     /* the format, for WAV and FLAC alike */
+  uint64_t total_frames;
+  /* FLAC: esp_audio_simple_dec (the file from its start, eos at the end) */
+  esp_audio_simple_dec_handle_t dec;
+  uint8_t *dpcm;
+  uint32_t dpcm_cap;
+  bool dec_done;
+  int pcm_bytes, pcm_shift; /* decoded sample layout, found on the first frame */
+  /* CRC-32 (zlib) of the first 10 s, file channel order, int32 LE samples:
+   * compared with Apple's decoder on the Mac (bit for bit) */
+  uint32_t crc;
+  uint64_t crc_frames;
+  bool crc_logged;
   uint8_t *buf;
   size_t buf_len, buf_pos;
   uint64_t frames_read;
@@ -515,81 +532,243 @@ static int fill_buf(player_t *p) {
   return n;
 }
 
-static bool open_wav(player_t *p) {
+static const char *layout_name(int layout) {
+  return layout == 1 ? "mono" : layout == 2 ? "stereo" : layout == 6 ? "5.1" : "7.1";
+}
+
+/* Reads the start of the file: skips an ID3v2 tag, finds WAV or FLAC and
+ * its format. What was read after the header (WAV) or all of it from fLaC
+ * on (FLAC, the decoder wants it whole) waits in p->buf. */
+static bool open_input(player_t *p) {
   uint8_t *hdr = heap_caps_malloc(PL_HEADER_MAX, MALLOC_CAP_SPIRAM);
   if (!hdr) return false;
   size_t have = 0;
-  esp_err_t err = ESP_ERR_INVALID_SIZE;
-  while (have < PL_HEADER_MAX && !atomic_load(&s_stop)) {
-    const int n = p->src.read(&p->src, hdr + have, PL_HEADER_MAX - have > 4096 ? 4096 : PL_HEADER_MAX - have);
+  bool ok = false;
+  while (have < 10) {
+    const int n = p->src.read(&p->src, hdr + have, 4096);
     if (n <= 0) break;
     have += (size_t)n;
-    err = wav_parse(hdr, have, &p->wav);
-    if (err != ESP_ERR_INVALID_SIZE) break;
+  }
+  size_t skip = id3v2_size(hdr, have);
+  if (skip) {
+    ESP_LOGI(TAG, "ID3v2 tag of %u bytes skipped", (unsigned)skip);
+    while (skip >= have && !atomic_load(&s_stop)) { /* the tag goes on past what we have */
+      skip -= have;
+      const int n = p->src.read(&p->src, hdr, skip > PL_HEADER_MAX ? PL_HEADER_MAX : (skip ? skip : 4096));
+      if (n <= 0) { have = 0; break; }
+      have = (size_t)n;
+    }
+    memmove(hdr, hdr + skip, have - skip);
+    have -= skip;
+  }
+  esp_err_t err = ESP_ERR_INVALID_SIZE;
+  p->kind = have >= 4 && memcmp(hdr, "fLaC", 4) == 0 ? KIND_FLAC : KIND_WAV;
+  while (!atomic_load(&s_stop)) {
+    err = p->kind == KIND_FLAC ? flac_parse(hdr, have, &p->wav, &p->total_frames)
+                               : wav_parse(hdr, have, &p->wav);
+    if (err != ESP_ERR_INVALID_SIZE || have >= PL_HEADER_MAX) break;
+    const int n = p->src.read(&p->src, hdr + have,
+                              PL_HEADER_MAX - have > 4096 ? 4096 : PL_HEADER_MAX - have);
+    if (n <= 0) break;
+    have += (size_t)n;
   }
   if (err != ESP_OK) {
     st_set(P_FAILED, "%s", err == ESP_ERR_NOT_SUPPORTED ? p->wav.why
-                           : "Not a WAV file this player reads (phase 3a: WAV only)");
-    free(hdr);
-    return false;
+                           : "Neither WAV nor FLAC (phase 3b plays these two)");
+    goto done;
   }
-  /* what came after the header is the first PCM */
   p->buf_len = have - p->wav.data_offset;
   if (p->buf_len > PL_READ_CHUNK * 2U) {
-    st_set(P_FAILED, "WAV header too large");
-    free(hdr);
-    return false;
+    st_set(P_FAILED, "File header too large");
+    goto done;
   }
   memcpy(p->buf, hdr + p->wav.data_offset, p->buf_len);
   p->buf_pos = 0;
-  free(hdr);
-  const char *lay = p->wav.layout == 1 ? "mono" : p->wav.layout == 2 ? "stereo"
-                  : p->wav.layout == 6 ? "5.1" : "7.1";
-  const size_t fb = (size_t)p->wav.channels * (size_t)p->wav.container_bits / 8U;
   double dur = 0;
-  if (p->wav.data_size && p->wav.data_size != 0xFFFFFFFFU && fb)
-    dur = (double)(p->wav.data_size / fb) / p->wav.rate;
+  if (p->kind == KIND_WAV) {
+    const size_t fb = (size_t)p->wav.channels * (size_t)p->wav.container_bits / 8U;
+    if (p->wav.data_size && p->wav.data_size != 0xFFFFFFFFU && fb)
+      p->total_frames = p->wav.data_size / fb;
+  } else {
+    static bool registered;
+    if (!registered) {
+      (void)esp_flac_dec_register();
+      (void)esp_audio_simple_dec_register_default();
+      registered = true;
+    }
+    esp_audio_simple_dec_cfg_t dc = {.dec_type = ESP_AUDIO_SIMPLE_DEC_TYPE_FLAC};
+    if (esp_audio_simple_dec_open(&dc, &p->dec) != ESP_AUDIO_ERR_OK) {
+      st_set(P_FAILED, "No FLAC decoder");
+      goto done;
+    }
+    p->dpcm_cap = 4608U * 8U * 4U;
+    p->dpcm = heap_caps_malloc(p->dpcm_cap, MALLOC_CAP_SPIRAM);
+    if (!p->dpcm) {
+      st_set(P_FAILED, "Out of memory");
+      goto done;
+    }
+  }
+  if (p->total_frames) dur = (double)p->total_frames / p->wav.rate;
+  const char *kind = p->kind == KIND_FLAC ? "FLAC" : "WAV";
   taskENTER_CRITICAL(&s_mux);
-  snprintf(s_st.format, sizeof(s_st.format), "WAV %d Hz / %d bit / %s", p->wav.rate,
-           p->wav.bits, lay);
+  snprintf(s_st.format, sizeof(s_st.format), "%s %d Hz / %d bit / %s", kind, p->wav.rate,
+           p->wav.bits, layout_name(p->wav.layout));
   s_st.rate = p->wav.rate;
   s_st.bits = p->wav.bits;
   s_st.channels = p->wav.channels;
   s_st.layout = p->wav.layout;
   s_st.duration_s = dur;
   taskEXIT_CRITICAL(&s_mux);
-  ESP_LOGI(TAG, "file: WAV %d Hz, %d-bit in %d, %d channels (mask 0x%" PRIx32 ", %s), %.1f s",
-           p->wav.rate, p->wav.bits, p->wav.container_bits, p->wav.channels, p->wav.mask, lay,
-           dur);
+  ESP_LOGI(TAG, "file: %s %d Hz, %d bit, %d channels (%s), %.1f s", kind, p->wav.rate,
+           p->wav.bits, p->wav.channels, layout_name(p->wav.layout), dur);
+  ok = true;
+done:
+  free(hdr);
+  return ok;
+}
+
+/* ---- PCM into frames ---- */
+
+static uint32_t crc32_update(uint32_t crc, const uint8_t *b, size_t n) {
+  static uint32_t table[256];
+  if (!table[1]) {
+    for (uint32_t i = 0; i < 256; ++i) {
+      uint32_t c = i;
+      for (int k = 0; k < 8; ++k) c = (c & 1U) ? 0xEDB88320U ^ (c >> 1) : c >> 1;
+      table[i] = c;
+    }
+  }
+  crc = ~crc;
+  while (n--) crc = table[(crc ^ *b++) & 0xFFU] ^ (crc >> 8);
+  return ~crc;
+}
+
+/* n frames of interleaved PCM, bytes per sample 2/3/4 little-endian, a
+ * 4-byte sample shifted right by shift (8 = left-justified 24 bit): into
+ * the internal slots; every full 352-sample frame goes out. */
+static bool push_pcm(player_t *p, const uint8_t *d, size_t n, int bytes, int shift) {
+  const int ch = p->wav.channels;
+  const uint64_t crc_end = (uint64_t)p->wav.rate * 10U;
+  for (size_t f = 0; f < n; ++f) {
+    for (int c = 0; c < ch; ++c, d += bytes) {
+      int32_t v;
+      if (bytes == 2) v = (int16_t)(d[0] | (d[1] << 8));
+      else if (bytes == 3) v = (int32_t)(((uint32_t)d[0] << 8) | ((uint32_t)d[1] << 16) | ((uint32_t)d[2] << 24)) >> 8;
+      else v = (int32_t)((uint32_t)d[0] | ((uint32_t)d[1] << 8) | ((uint32_t)d[2] << 16) | ((uint32_t)d[3] << 24)) >> shift;
+      if (p->crc_frames < crc_end) {
+        const uint8_t le[4] = {(uint8_t)v, (uint8_t)(v >> 8), (uint8_t)(v >> 16), (uint8_t)(v >> 24)};
+        p->crc = crc32_update(p->crc, le, 4);
+      }
+      const int8_t slot = p->wav.slot[c];
+      if (slot >= 0) p->pcm[slot][p->fill] = v;
+    }
+    if (p->crc_frames < crc_end && ++p->crc_frames == crc_end && !p->crc_logged) {
+      p->crc_logged = true;
+      ESP_LOGI(TAG, "PCM CRC-32 of the first 10 s (%u ch, int32 LE, file order): 0x%08" PRIx32,
+               (unsigned)ch, p->crc);
+      taskENTER_CRITICAL(&s_mux);
+      s_st.pcm_crc10 = p->crc;
+      taskEXIT_CRITICAL(&s_mux);
+    }
+    if (++p->fill == PL_FRAME) {
+      p->fill = 0;
+      if (!send_frame(p)) return false;
+    }
+  }
   return true;
 }
 
-/* PCM bytes into frames; a full frame goes out. */
+/* WAV: PCM bytes into frames; a full frame goes out. */
 static bool take_pcm(player_t *p) {
   const size_t cb = (size_t)p->wav.container_bits / 8U;
   const size_t fb = (size_t)p->wav.channels * cb;
   const uint32_t data_end_frames =
       p->wav.data_size && p->wav.data_size != 0xFFFFFFFFU ? p->wav.data_size / (uint32_t)fb : 0;
-  while (p->buf_len - p->buf_pos >= fb) {
-    if (data_end_frames && p->frames_read >= data_end_frames) {
+  size_t n = (p->buf_len - p->buf_pos) / fb;
+  if (data_end_frames) {
+    const uint64_t left = p->frames_read < data_end_frames ? data_end_frames - p->frames_read : 0;
+    if (n > left) n = (size_t)left;
+    if (!left) {
       p->eof = true; /* chunks after the data chunk are not audio */
       p->buf_pos = p->buf_len;
-      break;
+      return true;
     }
-    const uint8_t *s = p->buf + p->buf_pos;
-    for (int c = 0; c < p->wav.channels; ++c, s += cb) {
-      int32_t v;
-      if (cb == 2) v = (int16_t)(s[0] | (s[1] << 8));
-      else if (cb == 3) v = (int32_t)(((uint32_t)s[0] << 8) | ((uint32_t)s[1] << 16) | ((uint32_t)s[2] << 24)) >> 8;
-      else v = (int32_t)((uint32_t)s[0] | ((uint32_t)s[1] << 8) | ((uint32_t)s[2] << 16) | ((uint32_t)s[3] << 24)) >> 8;
-      const int8_t slot = p->wav.slot[c];
-      if (slot >= 0) p->pcm[slot][p->fill] = v;
+  }
+  if (!n) return true;
+  const uint8_t *d = p->buf + p->buf_pos;
+  p->buf_pos += n * fb;
+  p->frames_read += n;
+  return push_pcm(p, d, n, (int)cb, 8);
+}
+
+/* The decoder's sample layout from its first output: packed little-endian
+ * samples of the file's depth (16 bit in 2 bytes, 24 bit in 3; seen on the
+ * board 2026-11-18 for stereo, 5.1 and 7.1). A guess from the data alone
+ * failed on files that start with silence. */
+static bool flac_layout(player_t *p, const esp_audio_simple_dec_info_t *info, uint32_t size) {
+  const int ch = p->wav.channels;
+  if (info->sample_rate != (uint32_t)p->wav.rate || info->channel != ch) {
+    st_set(P_FAILED, "FLAC decoder gives %" PRIu32 " Hz / %u ch, the file says %d / %d",
+           info->sample_rate, (unsigned)info->channel, p->wav.rate, ch);
+    return false;
+  }
+  p->pcm_bytes = p->wav.bits / 8;
+  p->pcm_shift = 0;
+  if (info->bits_per_sample != p->wav.bits || size % (uint32_t)(ch * p->pcm_bytes) != 0) {
+    st_set(P_FAILED, "FLAC decoder output not as expected: %u bit, %" PRIu32 " bytes",
+           (unsigned)info->bits_per_sample, size);
+    return false;
+  }
+  ESP_LOGI(TAG, "FLAC decoder output: %u bit, %d bytes per sample (first block %" PRIu32 " B)",
+           (unsigned)info->bits_per_sample, p->pcm_bytes, size);
+  return true;
+}
+
+/* FLAC: what is in p->buf through the decoder; PCM goes on to push_pcm. */
+static bool decode_flac(player_t *p) {
+  while (!atomic_load(&s_stop)) {
+    esp_audio_simple_dec_raw_t raw = {.buffer = p->buf + p->buf_pos,
+                                      .len = (uint32_t)(p->buf_len - p->buf_pos),
+                                      .eos = p->eof};
+    if (!raw.len && !p->eof) return true; /* more of the file first */
+    esp_audio_simple_dec_out_t out = {.buffer = p->dpcm, .len = p->dpcm_cap};
+    const esp_audio_err_t r = esp_audio_simple_dec_process(p->dec, &raw, &out);
+    if (r == ESP_AUDIO_ERR_BUFF_NOT_ENOUGH) {
+      uint8_t *n = heap_caps_realloc(p->dpcm, out.needed_size, MALLOC_CAP_SPIRAM);
+      if (!n) {
+        st_set(P_FAILED, "Out of memory");
+        return false;
+      }
+      p->dpcm = n;
+      p->dpcm_cap = out.needed_size;
+      continue;
     }
-    p->buf_pos += fb;
-    p->frames_read++;
-    if (++p->fill == PL_FRAME) {
-      p->fill = 0;
-      if (!send_frame(p)) return false;
+    p->buf_pos += raw.consumed;
+    if (out.decoded_size > 0) {
+      if (!p->pcm_bytes) {
+        esp_audio_simple_dec_info_t info = {0};
+        esp_audio_simple_dec_get_info(p->dec, &info);
+        if (!flac_layout(p, &info, out.decoded_size)) return false;
+      }
+      const size_t fb = (size_t)p->wav.channels * (size_t)p->pcm_bytes;
+      if (out.decoded_size % fb) {
+        st_set(P_FAILED, "FLAC decoder output of %" PRIu32 " bytes", out.decoded_size);
+        return false;
+      }
+      if (!push_pcm(p, p->dpcm, out.decoded_size / fb, p->pcm_bytes, p->pcm_shift)) return false;
+    }
+    if (r != ESP_AUDIO_ERR_OK && r != ESP_AUDIO_ERR_DATA_LACK && raw.consumed == 0 &&
+        out.decoded_size == 0) {
+      if (p->eof) {
+        p->dec_done = true;
+        return true;
+      }
+      ESP_LOGW(TAG, "FLAC decode error %d", (int)r);
+      return true; /* more data may help */
+    }
+    if (raw.consumed == 0 && out.decoded_size == 0) {
+      if (p->eof) p->dec_done = true;
+      return true;
     }
   }
   return true;
@@ -660,7 +839,7 @@ static void player_run(const char *url, int volume_db) {
     st_set(P_FAILED, "The file is not reachable");
     goto out;
   }
-  if (!open_wav(p)) goto out;
+  if (!open_input(p)) goto out;
   if (!session_open(p, volume_db)) goto out;
   st_set(P_PLAYING, NULL);
 
@@ -679,8 +858,11 @@ static void player_run(const char *url, int volume_db) {
       st_set(P_BUFFERING, "The file comes too slowly: buffering");
     }
     fill_buf(p);
-    if (!take_pcm(p)) break;
-    if (p->eof && p->buf_len - p->buf_pos < (size_t)p->wav.channels * p->wav.container_bits / 8U) {
+    if (!(p->kind == KIND_FLAC ? decode_flac(p) : take_pcm(p))) break;
+    const bool drained = p->kind == KIND_FLAC
+        ? p->dec_done
+        : p->buf_len - p->buf_pos < (size_t)p->wav.channels * p->wav.container_bits / 8U;
+    if (p->eof && drained) {
       if (p->fill) { /* the last frame, filled with silence */
         for (int c = 0; c < 8; ++c)
           memset(&p->pcm[c][p->fill], 0, sizeof(int32_t) * (PL_FRAME - p->fill));
@@ -703,6 +885,8 @@ out:
   if (p) {
     if (s_st.state != P_FAILED) st_set(P_STOPPING, "Stopping");
     if (p->src.close) p->src.close(&p->src);
+    if (p->dec) esp_audio_simple_dec_close(p->dec);
+    free(p->dpcm);
     session_close(p);
     free(p->buf);
     free(p->out);
@@ -830,6 +1014,11 @@ static esp_err_t status_handler(httpd_req_t *req) {
   cJSON_AddNumberToObject(root, "lead_ms", st.lead_ms);
   cJSON_AddNumberToObject(root, "position_s", st.position_s);
   cJSON_AddNumberToObject(root, "duration_s", st.duration_s);
+  if (st.pcm_crc10) {
+    char crc[12];
+    snprintf(crc, sizeof(crc), "%08" PRIx32, st.pcm_crc10);
+    cJSON_AddStringToObject(root, "pcm_crc10", crc);
+  }
   cJSON *perf = cJSON_AddObjectToObject(root, "perf_10s");
   if (perf) {
     cJSON_AddNumberToObject(perf, "speed", st.perf_speed);
