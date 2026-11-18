@@ -11,6 +11,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "airplay_log.h"
+#if CONFIG_GATEWAY_USB_PLAYER
+#include "gw_player.h"
+#endif
 
 #define BUTTON_STACK_BYTES 3072
 #define BUTTON_POLL_MS 10
@@ -103,6 +106,9 @@ static void button_worker(void *arg) {
       b->stable_pressed = true;
       if (!b->armed) continue;
       b->armed = false;
+#if CONFIG_GATEWAY_USB_PLAYER
+      if (gw_player_button(b->command)) continue; /* the player has the speakers (phase 6d) */
+#endif
       uint32_t id = 0;
       esp_err_t err = rtsp_remote_enqueue(b->command, &id);
       if (err == ESP_OK)

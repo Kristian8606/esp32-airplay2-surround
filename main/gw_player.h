@@ -13,6 +13,7 @@
  * sender's first sound_engine call stops the player (gw_local_src.h). */
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "apple_clock.h"
 #include "esp_err.h"
@@ -49,6 +50,12 @@ esp_err_t gw_player_seek(double position_s);
 
 /* The player holds the speakers. */
 bool gw_player_active(void);
+
+/* A hardware button (phase 6d; playback_buttons.c, rtsp_remote command
+ * numbers): play/pause, next, previous, volume -/+ go to the player while
+ * it holds the speakers. False when it does not: the button goes to AirPlay
+ * as before. */
+bool gw_player_button(uint8_t command);
 
 /* The queue has a usb: file (phase 4: the drive is pulled out). */
 bool gw_player_plays_usb(void);

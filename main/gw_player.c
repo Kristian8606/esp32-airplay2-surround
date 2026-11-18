@@ -51,6 +51,7 @@
 #include "gw_radio.h"
 #include "gw_relay.h"
 #include "gw_speakers.h"
+#include "rtsp_remote.h"
 #include "lwip/sockets.h"
 #include "rtsp_server.h"
 #include "sodium.h"
@@ -2977,6 +2978,40 @@ esp_err_t gw_player_pause(bool pause) {
   if (!atomic_load(&s_running) || !atomic_load(&s_owns)) return ESP_ERR_INVALID_STATE;
   atomic_store(&s_pause_req, pause ? 1 : 2);
   return ESP_OK;
+}
+
+#define PL_BUTTON_VOLUME_DB 2 /* a press of Volume -/+, as a step of Apple's slider */
+
+bool gw_player_button(uint8_t command) {
+  if (!atomic_load(&s_running) || !atomic_load(&s_owns)) return false;
+  taskENTER_CRITICAL(&s_mux);
+  const player_state_t state = s_st.state;
+  const int vol = s_next_volume_db;
+  taskEXIT_CRITICAL(&s_mux);
+  switch (command) {
+    case 2: /* play/pause */
+      ESP_LOGI(TAG, "button: %s", state == P_PAUSED ? "play" : "pause");
+      (void)gw_player_pause(state != P_PAUSED);
+      return true;
+    case 4:
+      ESP_LOGI(TAG, "button: next");
+      (void)gw_player_next();
+      return true;
+    case 5:
+      ESP_LOGI(TAG, "button: previous");
+      (void)gw_player_prev();
+      return true;
+    case RTSP_REMOTE_VOLUME_DOWN:
+    case RTSP_REMOTE_VOLUME_UP: {
+      const int to = clamp_db(vol + (command == RTSP_REMOTE_VOLUME_UP ? PL_BUTTON_VOLUME_DB
+                                                                      : -PL_BUTTON_VOLUME_DB));
+      ESP_LOGI(TAG, "button: volume %d dB", to);
+      gw_player_set_volume(to);
+      return true;
+    }
+    default:
+      return false;
+  }
 }
 
 esp_err_t gw_player_seek(double position_s) {
