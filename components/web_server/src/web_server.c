@@ -410,7 +410,13 @@ esp_err_t web_server_start(uint16_t port) {
   config.server_port = port;
   config.task_priority = 3;
   config.stack_size = 8192; /* internal RAM (default): handlers write flash */
+#if defined(CONFIG_GATEWAY_USB_PLAYER) && CONFIG_GATEWAY_USB_PLAYER
+  /* the Gateway's role registers first; the player's /api/player made the
+   * shared handlers and /ws/logs the 41st and later (2026-11-18) */
+  config.max_uri_handlers = 48;
+#else
   config.max_uri_handlers = 40;
+#endif
   config.lru_purge_enable = true;
 
   httpd_handle_t server = NULL;

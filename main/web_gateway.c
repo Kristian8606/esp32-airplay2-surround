@@ -17,6 +17,9 @@
 #include "gw_mic.h"
 #include "gw_fw.h"
 #include "gw_radio.h"
+#if CONFIG_GATEWAY_USB_PLAYER
+#include "gw_player.h"
+#endif
 #include "gw_speakers.h"
 #include "sound_engine.h"
 #include "rtsp_remote.h"
@@ -614,4 +617,7 @@ void web_role_register(httpd_handle_t server) {
   REG(SURROUND_FW_PATH, HTTP_GET, speaker_fw_bin_handler);
 #undef REG
   gw_radio_register_web(server);
+#if CONFIG_GATEWAY_USB_PLAYER
+  gw_player_register_web(server);
+#endif
 }

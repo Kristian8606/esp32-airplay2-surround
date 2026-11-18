@@ -585,6 +585,18 @@ menu "USB Player (experimental)"
             radio streams are untouched. Off: those SSRCs are skipped as
             unknown, as today.
 
+    config GATEWAY_USB_PLAYER
+        bool "Gateway player (phase 3: files over HTTP, WAV)"
+        depends on AIRPLAY_ROLE_GATEWAY && AIRPLAY_SURROUND_PLAYER_STREAMS
+        default n
+        help
+            ROADMAP_USB_PLAYER.md, phase 3. The Gateway plays a file (for
+            now WAV over HTTP from the LAN) to the speakers, one lane per
+            role in the relay's lane mode: L and R bit for bit, the
+            subwoofer and a mono mix 0.5 * (L + R) as 24 bit, a 5.1/7.1
+            file's channels each on its own speaker. Controlled through
+            GET/POST /api/player. Leave off.
+
     config GATEWAY_PLAYER_TEST_RADIO_ONE_CHANNEL
         bool "Test: the web radio sends one channel to all speakers"
         depends on AIRPLAY_ROLE_GATEWAY && AIRPLAY_SURROUND_PLAYER_STREAMS

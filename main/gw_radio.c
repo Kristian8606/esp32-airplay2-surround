@@ -17,6 +17,10 @@
  * the audio it belongs to and is shown when that audio plays. */
 
 #include "gw_radio.h"
+#include "sdkconfig.h"
+#if CONFIG_GATEWAY_USB_PLAYER
+#include "gw_player.h"
+#endif
 
 #include <ctype.h>
 #include <math.h>
@@ -1131,6 +1135,9 @@ esp_err_t gw_radio_start(const char *url, const char *name, const char *logo,
   if (!init_once()) return ESP_ERR_NO_MEM;
   if (gw_calib_running()) return ESP_ERR_INVALID_STATE;
   volume_db = volume_db == GW_RADIO_SAVED_VOLUME ? saved_volume() : clamp_db(volume_db);
+#if CONFIG_GATEWAY_USB_PLAYER
+  gw_player_stop(); /* one local sender at a time (gw_local_src.h) */
+#endif
   xSemaphoreTake(s_ctl, portMAX_DELAY);
   stop_locked();
   if (atomic_load(&s_running)) {
