@@ -37,6 +37,15 @@ static const char *TAG = "gw_speakers";
  * sends. Bound that retry so a failed link cannot hold TIME for 20 seconds. */
 #define GW_CONTROL_CLOSE_TIMEOUT_MS 200
 #define GW_FRAME_MAX          (3U + SURROUND_MAX_PAYLOAD)
+/* What the control socket did not take (a Wi-Fi dropout: TIME goes out
+ * 8 times a second, TCP_NODELAY, and lwIP queues ~90 segments, ~11 s, while a
+ * speaker in a stream may be away 20 s): sent on as soon as it can. TIME and
+ * PING are skipped meanwhile (the next one says the same). Full, the speaker
+ * is dropped as before. */
+#define GW_TX_BACKLOG         512U
+/* A START the speaker answered with an error (no memory yet, the engine
+ * busy): sent again after 1, 2 and 4 s; then it waits for the next FLUSH. */
+#define GW_START_TRIES        3
 #define GW_BSSID_REFRESH_MS   2000
 #define GW_TIME_LOG_MS        10000
 /* A speaker playing calibration chirps answers within this time. */
@@ -86,6 +95,10 @@ typedef struct {
   bool fw_only;
   uint8_t rx[GW_FRAME_MAX];
   size_t rx_have;
+  uint8_t tx[GW_TX_BACKLOG]; /* GW_TX_BACKLOG */
+  size_t tx_len;
+  uint8_t start_tries;       /* GW_START_TRIES */
+  int64_t start_retry_us;    /* 0 = none */
 } gw_speaker_t;
 
 /* The session state the active speakers already have, replayed to a waiting
@@ -177,24 +190,64 @@ static void clear_audio(gw_speaker_t *sp) {
 }
 
 /* Caller holds s_lock. */
+static void drop_link(gw_speaker_t *sp, const char *what, uint8_t type, int n) {
+  AP_LOGW(TAG, "speaker %s dropped: %s of message 0x%02x (%d, errno=%d)",
+          spk_label(sp), what, type, n, errno);
+  sp->dead = true;
+  shutdown(sp->fd, SHUT_RDWR);
+  clear_audio(sp);
+}
+
+/* Caller holds s_lock. The backlog on; false when the link broke. */
+static bool tx_flush(gw_speaker_t *sp) {
+  if (sp->fd < 0 || sp->dead) return false;
+  if (!sp->tx_len) return true;
+  const int n = send(sp->fd, sp->tx, sp->tx_len, MSG_DONTWAIT);
+  if (n > 0) {
+    sp->tx_len -= (size_t)n;
+    memmove(sp->tx, sp->tx + n, sp->tx_len);
+    return true;
+  }
+  if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) return true;
+  drop_link(sp, "send of the backlog failed", sp->tx[2], n);
+  return false;
+}
+
+/* Caller holds s_lock. */
 static void send_frame(gw_speaker_t *sp, uint8_t type, const void *payload,
                        size_t len) {
   if (sp->fd < 0 || sp->dead || len > SURROUND_MAX_PAYLOAD) return;
   uint8_t buf[GW_FRAME_MAX];
   const size_t body = 1U + len;
+  const size_t total = 2U + body;
   buf[0] = (uint8_t)(body >> 8);
   buf[1] = (uint8_t)body;
   buf[2] = type;
   if (len) memcpy(buf + 3, payload, len);
-  const int n = send(sp->fd, buf, 2U + body, MSG_DONTWAIT);
-  if (n != (int)(2U + body)) {
-    /* A partial frame would break the framing: drop the speaker. */
-    AP_LOGW(TAG, "speaker %s dropped: send of message 0x%02x failed (%d, errno=%d)",
-            spk_label(sp), type, n, errno);
-    sp->dead = true;
-    shutdown(sp->fd, SHUT_RDWR);
-    clear_audio(sp);
-    return;
+  const bool skippable = type == SURROUND_MSG_TIME || type == SURROUND_MSG_PING;
+  if (!tx_flush(sp)) return;
+  if (sp->tx_len) { /* behind what waits: in order, after it */
+    if (skippable) return;
+    if (sp->tx_len + total > sizeof(sp->tx)) {
+      drop_link(sp, "the control link is full: no room", type, -1);
+      return;
+    }
+    memcpy(sp->tx + sp->tx_len, buf, total);
+    sp->tx_len += total;
+  } else {
+    const int n = send(sp->fd, buf, total, MSG_DONTWAIT);
+    if (n != (int)total) {
+      if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+        drop_link(sp, "send failed", type, n);
+        return;
+      }
+      const size_t sent = n > 0 ? (size_t)n : 0U;
+      if (!sent && skippable) return; /* the next one says the same */
+      /* the rest goes when the socket has room: a partial frame never
+       * breaks the framing */
+      memcpy(sp->tx, buf + sent, total - sent);
+      sp->tx_len = total - sent;
+    }
   }
   /* The speaker opens (START_*) or closes (STOP) its audio ports: the
    * relays follow. */
@@ -370,6 +423,7 @@ void gw_speakers_send(surround_msg_type_t type, const void *payload,
     for (size_t i = 0; i < SURROUND_MAX_SPEAKERS; ++i) {
       gw_speaker_t *sp = &s_spk[i];
       if (sp->fd < 0 || sp->dead || sp->state != SPK_WAITING) continue;
+      sp->start_tries = 0; /* new tries for its START */
       replay(sp);
       if (!sp->dead) {
         sp->state = SPK_ACTIVE;
@@ -390,6 +444,8 @@ void gw_speakers_send(surround_msg_type_t type, const void *payload,
     }
     for (size_t i = 0; i < SURROUND_MAX_SPEAKERS; ++i) {
       if (s_spk[i].state == SPK_WAITING) s_spk[i].state = SPK_ACTIVE;
+      s_spk[i].start_tries = 0;
+      s_spk[i].start_retry_us = 0;
     }
   } else {
     const int k = rec_kind(type);
@@ -534,6 +590,23 @@ static void handle_message(gw_speaker_t *sp, uint8_t type, const uint8_t *p,
       }
       sp->audio_pending = false;
       audio_changed();
+      if (ok) {
+        sp->start_tries = 0;
+        sp->start_retry_us = 0;
+      } else if (r.err != ESP_ERR_NOT_SUPPORTED && sp->state == SPK_ACTIVE &&
+                 s_rec[REC_START].valid) {
+        if (sp->start_tries < GW_START_TRIES) {
+          const int s = 1 << sp->start_tries;
+          sp->start_retry_us = esp_timer_get_time() + (int64_t)s * 1000000LL;
+          AP_LOGW(TAG, "speaker %s could not start (%s): again in %d s", spk_label(sp),
+                  esp_err_to_name(r.err), s);
+        } else {
+          /* it takes the stream at the next FLUSH, like a speaker that joins */
+          sp->state = SPK_WAITING;
+          AP_LOGW(TAG, "speaker %s could not start %d times (%s): it waits for the next FLUSH",
+                  spk_label(sp), GW_START_TRIES + 1, esp_err_to_name(r.err));
+        }
+      }
       if (r.rt_data_port || r.rt_control_port) {
         AP_LOGI(TAG, "speaker %s start_stream: %s, realtime ports %u/%u",
                 spk_label(sp), esp_err_to_name(r.err),
@@ -774,6 +847,17 @@ static void speakers_task(void *arg) {
     for (size_t i = 0; i < SURROUND_MAX_SPEAKERS; ++i) {
       gw_speaker_t *sp = &s_spk[i];
       if (sp->fd < 0) continue;
+      if (!sp->dead) (void)tx_flush(sp);
+      if (sp->start_retry_us && now_us >= sp->start_retry_us && !sp->dead) {
+        sp->start_retry_us = 0;
+        sp->start_tries++;
+        if (sp->state == SPK_ACTIVE && s_rec[REC_START].valid) {
+          /* the session's state again, as a joining speaker gets it */
+          AP_LOGI(TAG, "speaker %s: START again (%u of %d)", spk_label(sp),
+                  (unsigned)sp->start_tries, GW_START_TRIES);
+          replay(sp);
+        }
+      }
       if (sp->dead) {
         close_speaker(sp, "send failed");
       } else if (now_us - sp->last_rx_us > link_timeout_us(sp) &&
