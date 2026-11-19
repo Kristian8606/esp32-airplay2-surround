@@ -1592,7 +1592,10 @@ static bool decode_flac(player_t *p) {
       continue;
     }
     size_t end = 0;
-    for (size_t q = p->flac_scan > 6 ? p->flac_scan : 6; q + 16 <= avail; ++q) {
+    /* the next header needs 16 bytes to be sure of, except at the end of
+     * the file: a last frame of digital silence can be 12 bytes long */
+    const size_t room = p->eof ? 6U : 16U;
+    for (size_t q = p->flac_scan > 6 ? p->flac_scan : 6; q + room <= avail; ++q) {
       if (b[q] == 0xFF && (b[q + 1] & 0xFE) == 0xF8 &&
           flac_frame_at(b + q, avail - q, &p->flac, ch, bits, &first) && flac_frame_crc_ok(b, q)) {
         end = q;
@@ -1643,9 +1646,14 @@ static bool decode_flac(player_t *p) {
       r = esp_audio_dec_process(p->adec, &raw, &out);
     }
     p->t_dec_us += esp_timer_get_time() - t0;
-    p->buf_pos += end;
+    /* Two frames given as one (their CRC-16 checks as the second's: after a
+     * whole frame the CRC register is 0 again) are decoded one at a time:
+     * on from what the decoder took. */
+    const size_t used = r == ESP_AUDIO_ERR_OK && raw.consumed > 0 && raw.consumed < end
+                            ? (size_t)raw.consumed : end;
+    p->buf_pos += used;
     p->flac_scan = 0;
-    p->dec_bytes += end;
+    p->dec_bytes += used;
     if (r != ESP_AUDIO_ERR_OK) {
       if (!p->m4a_warned) ESP_LOGW(TAG, "FLAC frame of %u bytes: decode error %d", (unsigned)end, (int)r);
       p->m4a_warned = true;

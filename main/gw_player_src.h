@@ -88,7 +88,7 @@ void flac_stream_info(const uint8_t *fLaC, flac_stream_t *out);
 
 /* One FLAC frame header at b (sync 0xFFF8/0xFFF9, CRC-8 checked, the
  * channel count and depth as the stream's): its first sample. False when
- * it is not a frame header. */
+ * it is not a frame header or len does not hold all of it. */
 /* The CRC-16 at the end of a whole FLAC frame (len bytes at b) is right. */
 bool flac_frame_crc_ok(const uint8_t *b, size_t len);
 

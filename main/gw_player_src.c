@@ -686,7 +686,9 @@ static uint8_t crc8_07(const uint8_t *b, size_t n) {
 
 bool flac_frame_at(const uint8_t *b, size_t len, const flac_stream_t *st, int channels,
                    int bits, uint64_t *first) {
-  if (len < 16 || b[0] != 0xFF || (b[1] & 0xFE) != 0xF8) return false;
+  /* every byte read is checked against len: a header near the end of the
+   * file (a short last frame) has fewer than 16 bytes after it */
+  if (len < 6 || b[0] != 0xFF || (b[1] & 0xFE) != 0xF8) return false;
   const bool variable = b[1] & 1U;
   const uint8_t bs = b[2] >> 4, rate = b[2] & 0x0F, chan = b[3] >> 4, size = (b[3] >> 1) & 7;
   if (bs == 0 || rate == 15 || (b[3] & 1U) || chan > 10) return false;
@@ -707,7 +709,7 @@ bool flac_frame_at(const uint8_t *b, size_t len, const flac_stream_t *st, int ch
   else return false;
   at++;
   for (int k = 0; k < more; ++k, ++at) {
-    if ((b[at] & 0xC0) != 0x80) return false;
+    if (at >= len || (b[at] & 0xC0) != 0x80) return false;
     v = (v << 6) | (b[at] & 0x3F);
   }
   if (bs == 6) at += 1;
