@@ -121,6 +121,8 @@ try { tab = localStorage.getItem('playerTab') || 'usb'; } catch (e) {}
 
 /* ---- state ---- */
 let cur = null, dir = '/', entries = [], speakers = [], dragging = false, seeking = false, pollT = null;
+/* the queue as last sent, by its generation: the poll asks only for a change */
+let qCache = [], qGen = -1;
 let lastKib = {}, lastT = 0, kbps = {};
 try { dir = localStorage.getItem('playerDir') || '/'; } catch (e) {}
 const ROLE_IX = { mix: -1, L: 0, R: 1, C: 2, LFE: 3, Ls: 4, Rs: 5, Lrs: 6, Rrs: 7 };
@@ -290,6 +292,7 @@ function drawGets(d) {
   });
 }
 function render(d) {
+  if (Array.isArray(d.queue)) { qCache = d.queue; qGen = d.queue_gen ?? -1; } else d.queue = qCache;
   cur = d;
   const active = d.active || ['starting', 'playing', 'buffering', 'paused', 'finishing', 'stopping'].includes(d.state);
   pill.style.display = active ? 'none' : '';
@@ -344,12 +347,15 @@ function render(d) {
   laneRates(d); drawGets(d);
 }
 async function loadSpeakers() {
+  if (spkFed) return; /* the speakers page sends its own list (below) */
   try { const s = await fetchJ('/api/speakers'); speakers = (s && s.speakers) || []; } catch (e) {}
 }
+let spkFed = false;
+window.addEventListener('gw-speakers', e => { spkFed = true; speakers = e.detail || []; });
 async function poll(ms) {
   clearTimeout(pollT);
   pollT = setTimeout(async () => {
-    let d = null; try { d = await fetchJ('/api/player'); render(d); } catch (e) {}
+    let d = null; try { d = await fetchJ('/api/player' + (qGen >= 0 ? '?qgen=' + qGen : '')); render(d); } catch (e) {}
     poll(d && (d.active || ['starting', 'buffering', 'stopping'].includes(d.state)) ? 1000 : 3000);
   }, ms);
 }

@@ -521,7 +521,10 @@ static esp_err_t speaker_eq_handler(httpd_req_t *req) {
   const esp_http_client_config_t cfg = {
       .url = url,
       .method = get ? HTTP_METHOD_GET : HTTP_METHOD_POST,
-      .timeout_ms = 5000,
+      /* the web server has one task: a speaker that does not answer holds
+       * every other page and command meanwhile (a speaker answers in
+       * well under a second) */
+      .timeout_ms = 2000,
       .disable_auto_redirect = true,
   };
   esp_http_client_handle_t c = esp_http_client_init(&cfg);

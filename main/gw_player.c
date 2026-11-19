@@ -148,6 +148,9 @@ static char (*s_queue)[PL_URL_MAX];
 static int s_queue_n;
 static int s_queue_start;
 static SemaphoreHandle_t s_qlock;
+/* Moves on with every change of the queue: GET /api/player?qgen=<it> leaves
+ * the queue out while the page has it (the status comes every second). */
+static uint32_t s_queue_gen;
 #define PL_COVER_MAX (2U * 1024U * 1024U)
 static uint32_t s_cover_id;
 #define PL_GOTO_NONE (-100)
@@ -2853,6 +2856,7 @@ esp_err_t gw_player_play_queue(const char *const *urls, int n, int start, int vo
   xSemaphoreTake(s_qlock, portMAX_DELAY);
   for (int i = 0; i < n; ++i) strlcpy(s_queue[i], urls[i], PL_URL_MAX);
   s_queue_n = n;
+  s_queue_gen++;
   xSemaphoreGive(s_qlock);
   const char *url = urls[start];
   atomic_store(&s_goto, PL_GOTO_NONE);
@@ -3028,7 +3032,10 @@ esp_err_t gw_player_add(const char *url) {
   if (!init_once()) return ESP_ERR_NO_MEM;
   xSemaphoreTake(s_qlock, portMAX_DELAY);
   const bool room = s_queue_n < PL_QUEUE_MAX;
-  if (room) strlcpy(s_queue[s_queue_n++], url, PL_URL_MAX);
+  if (room) {
+    strlcpy(s_queue[s_queue_n++], url, PL_URL_MAX);
+    s_queue_gen++;
+  }
   xSemaphoreGive(s_qlock);
   return room ? ESP_OK : ESP_ERR_NO_MEM;
 }
@@ -3160,11 +3167,21 @@ static esp_err_t status_handler(httpd_req_t *req) {
     }
   }
 #endif
-  cJSON *q = cJSON_AddArrayToObject(root, "queue");
-  if (q && s_qlock && s_queue) {
-    xSemaphoreTake(s_qlock, portMAX_DELAY);
-    for (int i = 0; i < s_queue_n; ++i) cJSON_AddItemToArray(q, cJSON_CreateString(s_queue[i]));
-    xSemaphoreGive(s_qlock);
+  {
+    char qs[32], v[12];
+    long have = -1; /* the queue the page has, by its generation */
+    if (req->method == HTTP_GET && httpd_req_get_url_query_str(req, qs, sizeof(qs)) == ESP_OK &&
+        httpd_query_key_value(qs, "qgen", v, sizeof(v)) == ESP_OK)
+      have = strtol(v, NULL, 10);
+    if (s_qlock && s_queue) {
+      xSemaphoreTake(s_qlock, portMAX_DELAY);
+      cJSON_AddNumberToObject(root, "queue_gen", s_queue_gen);
+      cJSON *q = have == (long)s_queue_gen ? NULL : cJSON_AddArrayToObject(root, "queue");
+      for (int i = 0; q && i < s_queue_n; ++i) cJSON_AddItemToArray(q, cJSON_CreateString(s_queue[i]));
+      xSemaphoreGive(s_qlock);
+    } else {
+      cJSON_AddArrayToObject(root, "queue");
+    }
   }
   if (st.duration_estimated) cJSON_AddBoolToObject(root, "duration_estimated", true);
   if (st.pcm_crc10) {

@@ -416,6 +416,7 @@ function updateNow(list){
 }
 async function load(){
  let d;try{const r=await fetch('/api/speakers',{cache:'no-store'});d=await r.json();}catch(e){return;}
+ window.dispatchEvent(new CustomEvent('gw-speakers',{detail:d.speakers||[]})); /* player.js: no fetch of its own */
  fwAllCurrent=d.speakers.length>0&&d.speakers.every(s=>s.fw_update==='current');fwButton();
  const list=document.getElementById('list'),seen={},count={};
  d.speakers.forEach(s=>{if(s.channel!==undefined&&s.channel>=0)count[s.channel]=(count[s.channel]||0)+1;});
