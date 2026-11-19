@@ -2271,14 +2271,19 @@ static esp_err_t cover_handler(httpd_req_t *req) {
   if (!len) return httpd_resp_send_404(req);
   if (strncmp(url, "http://", 7) == 0) { /* one Range request for all of it */
     httpd_resp_set_type(req, mime);
-    httpd_resp_set_hdr(req, "Cache-Control", "max-age=86400");
+    httpd_resp_set_hdr(req, "Cache-Control", "max-age=86400, immutable");
     if (player_http_span(url, off, len, cover_sink, req) != ESP_OK) {
       httpd_resp_send_chunk(req, NULL, 0);
       return ESP_OK;
     }
     return httpd_resp_send_chunk(req, NULL, 0);
   }
-  uint8_t *buf = heap_caps_malloc(8192, MALLOC_CAP_SPIRAM);
+  /* USB: FatFs reads whole sectors straight into buf, one USB transfer per
+   * cluster; a picture that starts in the middle of a sector cost three or
+   * four small transfers per 8 KB read (~320 KB/s for a 166 KB cover).
+   * Read up to the next sector first, then 32 KB at a time from there. */
+  enum { COVER_CHUNK = 32768, COVER_SECTOR = 512 };
+  uint8_t *buf = heap_caps_malloc(COVER_CHUNK, MALLOC_CAP_SPIRAM);
   if (!buf) return httpd_resp_send_500(req);
   player_source_t src;
   esp_err_t err = ESP_FAIL;
@@ -2300,10 +2305,12 @@ static esp_err_t cover_handler(httpd_req_t *req) {
     return httpd_resp_send_404(req);
   }
   httpd_resp_set_type(req, mime);
-  httpd_resp_set_hdr(req, "Cache-Control", "max-age=86400");
+  httpd_resp_set_hdr(req, "Cache-Control", "max-age=86400, immutable");
   uint32_t done = 0;
   while (done < len) {
-    const size_t want = len - done < 8192U ? len - done : 8192U;
+    size_t want = len - done < (uint32_t)COVER_CHUNK ? len - done : (size_t)COVER_CHUNK;
+    const uint32_t mis = (uint32_t)((off + done) % COVER_SECTOR);
+    if (fd >= 0 && mis && want > COVER_SECTOR - mis) want = COVER_SECTOR - mis;
     int n;
     if (fd >= 0) n = (int)read(fd, buf, want);
     else n = src.read_at(&src, off + done, buf, want);
