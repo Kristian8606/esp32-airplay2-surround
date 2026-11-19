@@ -279,6 +279,7 @@ esp_err_t sound_engine_set_deferred_flush_range(uint32_t from_seq,
       .timestamps_valid = timestamps_valid ? 1U : 0U,
   };
   gw_speakers_send(SURROUND_MSG_DEFERRED_FLUSH, &m, sizeof(m));
+  gw_relay_deferred_flush(from_seq);
   return ESP_OK;
 }
 
@@ -338,6 +339,7 @@ void sound_engine_set_anchor_time(uint64_t clock_id, uint64_t network_time_ns,
                                .network_time_ns = network_time_ns,
                                .rtp_time = rtp_time};
   gw_speakers_send(SURROUND_MSG_SET_ANCHOR, &m, sizeof(m));
+  gw_relay_set_anchor(clock_id, network_time_ns, rtp_time);
 }
 
 bool sound_engine_set_realtime_anchor_local(

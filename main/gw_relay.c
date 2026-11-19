@@ -86,6 +86,22 @@ static const char *TAG = "gw_relay";
 #define GW_RELAY_PACE_BURST_S 2.0
 /* RTP jumps more than this (a seek, a new track): pacing starts over. */
 #define GW_RELAY_PACE_JUMP_S  1.0
+/* A frame that would reach the speakers more than this after its time to
+ * play (from the sender's anchor) is not sent: they drop late audio, and
+ * sending it at the paced speed only holds back the frames that still play.
+ * After a seek near a track's end with AutoMix, an iPhone sent nothing for
+ * ~55 s and then the next track ~57 s late: paced, the speakers stayed
+ * silent that long again (11-19). Only for a sender on the Apple clock,
+ * not in lane mode. */
+#define GW_RELAY_LATE_SKIP_NS (500LL * 1000000LL)
+/* Later than this is no lateness but an RTP time from another timeline:
+ * left to the speakers. */
+#define GW_RELAY_LATE_MAX_NS  (600LL * 1000000000LL)
+/* The anchor's local time is taken from the Apple clock again this often. */
+#define GW_RELAY_ANCHOR_REFRESH_US 1000000LL
+/* Deferred FLUSHes remembered: the speakers start one only on the frame
+ * with exactly its fromSeq, so that frame is always sent. */
+#define GW_RELAY_DEFER_KEEP   8U
 /* Buffered frames carry a 23-bit sequence number (sound_engine.c). */
 #define GW_RELAY_SEQ_MASK    0x007fffffU
 
@@ -113,6 +129,7 @@ typedef struct {
   int64_t win_start_us;
   uint32_t win_paced_ms;
   uint32_t win_dropped;
+  uint32_t win_late;
 } relay_stream_t;
 
 typedef enum {
@@ -167,6 +184,15 @@ static struct {
    * up once the first frame from flush_seq on has been read. Written by
    * gw_relay_flush() under flush_mux, copied by the relay task. */
   uint32_t flush_gen, flush_seq, release_flush_gen;
+  /* The sender's anchor as local time (relay task; take_anchor()): valid
+   * only while it plays on the Apple clock. Frames before late_ix were
+   * already late when released (GW_RELAY_LATE_SKIP_NS). */
+  uint32_t anchor_gen;
+  bool anchor_ok;
+  int64_t anchor_local_ns;
+  uint32_t anchor_rtp;
+  int64_t anchor_conv_us;
+  uint64_t late_ix;
   /* A speaker about to join: the buffer keeps from hold_ix on for it. */
   bool hold_active;
   uint64_t hold_ix;
@@ -187,6 +213,16 @@ static uint32_t s_flush_req_gen, s_flush_req_seq;
 #if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
 static bool s_lanes_next; /* gw_relay_set_lanes(): for the next connection */
 #endif
+/* The sender's anchor and its deferred FLUSHes, posted by gw_proxy.c. */
+static portMUX_TYPE s_anchor_mux = portMUX_INITIALIZER_UNLOCKED;
+static struct {
+  uint32_t gen;
+  bool valid;
+  uint64_t clock_id, network_ns;
+  uint32_t rtp;
+} s_anchor_req;
+static uint32_t s_defer_from[GW_RELAY_DEFER_KEEP];
+static uint32_t s_defer_count;
 
 static uint32_t read_be32(const uint8_t *p) {
   return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
@@ -265,6 +301,7 @@ static void stream_reset(void) {
   s.paced = false;
   s.hold_active = false;
   s.release_flush_gen = s.flush_gen;
+  s.late_ix = 0;
 }
 
 static void log_targets(void) {
@@ -298,13 +335,14 @@ static void log_window(bool force) {
              "RELAY rx %" PRIu32 " pkts %" PRIu32 " B (%.0f kbit/s) seq %" PRIu32
              "..%" PRIu32 " rtp %" PRIu32 "..%" PRIu32 " | total %" PRIu64
              " pkts %" PRIu64 " KiB | buffered %" PRIu32 " KiB, flushed %" PRIu32
-             " pkts, paced %" PRIu32 " ms | apple_clock ready=%d gm=%016" PRIx64
+             " pkts, late %" PRIu32 " pkts, paced %" PRIu32
+             " ms | apple_clock ready=%d gm=%016" PRIx64
              " offset=%" PRId64 " ns",
              st->win_packets, st->win_bytes, kbit_s, st->win_first_seq,
              st->win_last_seq, st->win_first_rtp, st->win_last_rtp,
              st->total_packets, st->total_bytes / 1024U,
              (uint32_t)((s.head - s.tail) / 1024U), st->win_dropped,
-             st->win_paced_ms, ps.ready, ps.grandmaster_clock_id,
+             st->win_late, st->win_paced_ms, ps.ready, ps.grandmaster_clock_id,
              ps.ready ? apple_clock_at(&ps, now_us * 1000LL) - now_us * 1000LL : 0LL);
     log_targets();
   }
@@ -312,6 +350,7 @@ static void log_window(bool force) {
   st->win_packets = 0;
   st->win_paced_ms = 0;
   st->win_dropped = 0;
+  st->win_late = 0;
   st->win_start_us = now_us;
 }
 
@@ -385,6 +424,113 @@ static void take_flush(void) {
   s.flush_seq = seq;
 }
 
+/* Take the anchor posted by gw_relay_set_anchor(): its local time from the
+ * Apple clock, again every GW_RELAY_ANCHOR_REFRESH_US (the line moves). No
+ * anchor while paused, in lane mode, or for a sender not on the Apple clock
+ * (the Gateway's own player and radio). */
+static void take_anchor(int64_t now_us) {
+  taskENTER_CRITICAL(&s_anchor_mux);
+  const uint32_t gen = s_anchor_req.gen;
+  const bool valid = s_anchor_req.valid;
+  const uint64_t clock_id = s_anchor_req.clock_id;
+  const uint64_t network_ns = s_anchor_req.network_ns;
+  const uint32_t rtp = s_anchor_req.rtp;
+  taskEXIT_CRITICAL(&s_anchor_mux);
+  bool usable = valid && __atomic_load_n(&s.playing, __ATOMIC_ACQUIRE);
+#if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
+  if (s.lanes) usable = false;
+#endif
+  if (!usable) {
+    s.anchor_ok = false;
+    s.anchor_gen = gen;
+    s.anchor_conv_us = INT64_MIN / 2; /* taken at once once usable */
+    return;
+  }
+  /* Also a clock_id not on the Apple clock is tried again only this often. */
+  if (gen == s.anchor_gen && now_us - s.anchor_conv_us < GW_RELAY_ANCHOR_REFRESH_US)
+    return;
+  const bool fresh = gen != s.anchor_gen || !s.anchor_ok;
+  apple_clock_line_t ps = {0};
+  apple_clock_get(&ps);
+  uint64_t local_ns = 0;
+  s.anchor_gen = gen;
+  s.anchor_ok = apple_clock_to_local(&ps, clock_id, network_ns, &local_ns);
+  s.anchor_local_ns = (int64_t)local_ns;
+  s.anchor_rtp = rtp;
+  s.anchor_conv_us = now_us;
+  if (fresh && s.anchor_ok) {
+    AP_LOGI(TAG, "anchor rtp %" PRIu32 " plays %+" PRId64
+            " ms from now: frames late by more than %lld ms are not sent",
+            rtp, (s.anchor_local_ns - now_us * 1000LL) / 1000000LL,
+            GW_RELAY_LATE_SKIP_NS / 1000000LL);
+  }
+}
+
+static bool deferred_from(uint32_t seq) {
+  bool hit = false;
+  taskENTER_CRITICAL(&s_anchor_mux);
+  const uint32_t n = s_defer_count < GW_RELAY_DEFER_KEEP ? s_defer_count
+                                                         : GW_RELAY_DEFER_KEEP;
+  for (uint32_t k = 0; k < n && !hit; ++k) hit = s_defer_from[k] == seq;
+  taskEXIT_CRITICAL(&s_anchor_mux);
+  return hit;
+}
+
+/* How late frame i would be if sent now (ns; negative: still to play), or
+ * false without an anchor or for an RTP time far off its timeline. */
+static bool frame_lateness(uint64_t i, int64_t now_ns, int64_t *late_ns) {
+  if (!s.anchor_ok) return false;
+  const int32_t d = (int32_t)(fx(i)->rtp - s.anchor_rtp);
+  const double rate = (double)sound_engine_get_sample_rate();
+  const int64_t play_ns = s.anchor_local_ns + (int64_t)((double)d * 1e9 / rate);
+  *late_ns = now_ns - play_ns;
+  return *late_ns <= GW_RELAY_LATE_MAX_NS;
+}
+
+static bool frame_late(uint64_t i, int64_t now_ns) {
+  int64_t late_ns;
+  return frame_lateness(i, now_ns, &late_ns) && late_ns > GW_RELAY_LATE_SKIP_NS;
+}
+
+/* Frames from release_ix on that are already late are released at once
+ * (late_ix) and not sent: the speakers' streams skip them (target_late). */
+static void skip_late(int64_t now_us) {
+  if (!s.anchor_ok) return;
+  const int64_t now_ns = now_us * 1000LL;
+  uint64_t j = s.release_ix;
+  while (j < s.ix_head && frame_late(j, now_ns)) j++;
+  if (j == s.release_ix) return;
+  const uint32_t n = (uint32_t)(j - s.release_ix);
+  if (s.late_ix < s.release_ix) {
+    int64_t late_ns = 0;
+    (void)frame_lateness(s.release_ix, now_ns, &late_ns);
+    AP_LOGI(TAG, "frames already late (first by %lld ms, seq %" PRIu32
+            "): not sent", (long long)(late_ns / 1000000LL),
+            fx(s.release_ix)->seq);
+  }
+  s.stream.win_late += n;
+  s.release_ix = j;
+  s.late_ix = j;
+  s.pace_valid = false; /* what still plays starts with a burst */
+}
+
+/* A speaker's stream at a frame boundary skips the late frames before
+ * late_ix, each checked again (it keeps the ones that still play), except
+ * the first frame of a deferred FLUSH. Only once it has taken the latest
+ * FLUSH. */
+static void target_late(relay_target_t *t) {
+  if (t->ix >= s.late_ix || t->flush_gen != s.flush_gen ||
+      t->pos != frame_start(t->ix))
+    return;
+  const int64_t now_ns = esp_timer_get_time() * 1000LL;
+  uint64_t j = t->ix;
+  while (j < s.late_ix && frame_late(j, now_ns) && !deferred_from(fx(j)->seq))
+    j++;
+  if (j == t->ix) return;
+  t->ix = j;
+  t->pos = frame_start(j);
+}
+
 /* Frames are released for sending as pacing allows. A FLUSH moves the
  * release on to the first frame from its sequence number at once, and
  * pacing starts over there (a new track). */
@@ -401,6 +547,7 @@ static void advance_release(int64_t now_us) {
   }
   const double rate = (double)sound_engine_get_sample_rate();
   s.paced = false;
+  if (s.release_flush_gen == s.flush_gen) skip_late(now_us);
   while (s.release_flush_gen == s.flush_gen && s.release_ix < s.ix_head) {
     const uint32_t rtp = fx(s.release_ix)->rtp;
     if (!s.pace_valid) {
@@ -683,6 +830,7 @@ static void send_pending(relay_target_t *t, int64_t now_us) {
   }
 #endif
   target_flush(t);
+  target_late(t);
   const uint64_t limit = target_limit(t);
   if (t->pos >= limit) {
     t->blocked_since_us = now_us; /* nothing to send: not stalled */
@@ -714,6 +862,7 @@ static void send_pending(relay_target_t *t, int64_t now_us) {
 static bool wants_write(relay_target_t *t) {
   if (t->state != TGT_LIVE) return false;
   target_flush(t);
+  target_late(t); /* nothing in lane mode: no anchor there */
 #if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
   if (s.lanes) lane_skip(t);
 #endif
@@ -875,6 +1024,7 @@ static void relay_task(void *arg) {
     int64_t now_us = esp_timer_get_time();
     refresh_targets();
     take_flush();
+    take_anchor(now_us);
     const bool connected = s.client_sock >= 0;
     if (connected) start_connects(now_us);
     const bool hold = connected && should_hold(now_us);
@@ -1049,6 +1199,34 @@ bool gw_relay_is_idle(void) { return !s.running && !s.task; }
 
 void gw_relay_set_playing(bool playing) {
   __atomic_store_n(&s.playing, playing, __ATOMIC_RELEASE);
+  if (!playing) gw_relay_clear_anchor();
+}
+
+void gw_relay_set_anchor(uint64_t clock_id, uint64_t network_time_ns,
+                         uint32_t rtp_time) {
+  taskENTER_CRITICAL(&s_anchor_mux);
+  s_anchor_req.gen++;
+  s_anchor_req.valid = true;
+  s_anchor_req.clock_id = clock_id;
+  s_anchor_req.network_ns = network_time_ns;
+  s_anchor_req.rtp = rtp_time;
+  taskEXIT_CRITICAL(&s_anchor_mux);
+}
+
+void gw_relay_clear_anchor(void) {
+  taskENTER_CRITICAL(&s_anchor_mux);
+  if (s_anchor_req.valid) {
+    s_anchor_req.gen++;
+    s_anchor_req.valid = false;
+  }
+  taskEXIT_CRITICAL(&s_anchor_mux);
+}
+
+void gw_relay_deferred_flush(uint32_t from_seq) {
+  taskENTER_CRITICAL(&s_anchor_mux);
+  s_defer_from[s_defer_count % GW_RELAY_DEFER_KEEP] = from_seq & GW_RELAY_SEQ_MASK;
+  s_defer_count++;
+  taskEXIT_CRITICAL(&s_anchor_mux);
 }
 
 #if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
@@ -1058,6 +1236,7 @@ void gw_relay_set_lanes(bool lanes) {
 #endif
 
 void gw_relay_flush(uint32_t until_seq) {
+  gw_relay_clear_anchor(); /* the next track comes with its own */
   taskENTER_CRITICAL(&s_flush_mux);
   s_flush_req_seq = until_seq & GW_RELAY_SEQ_MASK;
   s_flush_req_gen++;

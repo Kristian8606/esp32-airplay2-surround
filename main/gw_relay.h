@@ -53,8 +53,23 @@ bool gw_relay_is_idle(void);
 void gw_relay_set_playing(bool playing);
 
 /* An immediate FLUSH (FLUSHBUFFERED without a start): the frames before
- * until_seq are not sent to the speakers any more (they drop them as well). */
+ * until_seq are not sent to the speakers any more (they drop them as well).
+ * The anchor goes with it (gw_relay_clear_anchor). */
 void gw_relay_flush(uint32_t until_seq);
+
+/* The sender's anchor (SETRATEANCHORTIME, gw_proxy.c): with it the relay
+ * knows when each frame plays, and a frame that is already more than 0.5 s
+ * late is not sent (the speakers would drop it; paced, it only held back
+ * what still plays: after a seek near a track's end with AutoMix, an
+ * iPhone sent the next track ~1 min late). Only for a clock_id on the
+ * Apple clock, while playing, not in lane mode. Pausing (also
+ * gw_relay_set_playing(false)) and an immediate FLUSH clear it. */
+void gw_relay_set_anchor(uint64_t clock_id, uint64_t network_time_ns,
+                         uint32_t rtp_time);
+void gw_relay_clear_anchor(void);
+/* A deferred FLUSH: the speakers start it only on the frame with exactly
+ * from_seq, so that frame is sent even when late. */
+void gw_relay_deferred_flush(uint32_t from_seq);
 
 #if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
 /* USB player: the next sender connection is the Gateway's own player in
