@@ -96,6 +96,10 @@ typedef struct {
 #endif
 } gw_audio_target_t;
 
+/* The speaker of that audio id (gw_audio_target_t.id) plays and its last
+ * STATUS (at most 5 s old) says its FIFO holds less than kib. */
+bool gw_speakers_fifo_low(uint32_t audio_id, uint32_t kib);
+
 /* Changes whenever any entry of gw_speakers_audio_targets() changes. */
 uint32_t gw_speakers_audio_generation(void);
 void gw_speakers_audio_targets(gw_audio_target_t out[SURROUND_MAX_SPEAKERS]);

@@ -67,6 +67,13 @@ static const char *TAG = "gw_relay";
 #define GW_RELAY_STALL_ROOM_BYTES (512U * 1024U)
 /* ...and is connected again after this. */
 #define GW_RELAY_STALL_RETRY_MS 30000
+/* A speaker that takes a little now and then (which keeps the stall above
+ * from counting) but less than it plays: it holds the oldest frame of a
+ * buffer that is nearly full, the others are further on, and its own FIFO
+ * (its STATUS) is nearly empty, for this long: dropped the same way, so the
+ * sender is not held back to its speed and the others keep playing. */
+#define GW_RELAY_SLOW_DROP_MS   10000
+#define GW_RELAY_SLOW_FIFO_KIB  64U
 /* Send pacing. The sender sends a new track's audio as fast as the network
  * takes it (~300 KB/s per speaker seen), and the Gateway sends it again to
  * every speaker: with five speakers the Wi-Fi was busy enough that the
@@ -129,6 +136,7 @@ typedef struct {
   uint32_t flush_gen;  /* the last FLUSH this speaker's stream skipped */
   int64_t blocked_since_us;
   bool stall_logged;
+  int64_t slow_since_us; /* GW_RELAY_SLOW_DROP_MS; 0 = not slow */
   uint64_t total_bytes;
   uint32_t win_bytes;
 } relay_target_t;
@@ -479,6 +487,7 @@ static void close_target(relay_target_t *t, const char *why, bool retry) {
 static void open_target(relay_target_t *t, int64_t now_us) {
   t->total_bytes = 0;
   t->stall_logged = false;
+  t->slow_since_us = 0;
   const int fd = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
   if (fd < 0) {
     AP_LOGW(TAG, "speaker %s: no socket for audio (errno=%d)", t->want.name,
@@ -772,6 +781,24 @@ static void check_targets(int64_t now_us) {
               (unsigned)((s.head - s.tail) / 1024U),
               GW_RELAY_STALL_RETRY_MS / 1000);
       close_target(t, "stalled", true);
+      t->since_us = now_us + GW_RELAY_STALL_RETRY_MS * 1000LL;
+      continue;
+    }
+    /* The cheap tests first: the FIFO is asked only for the one that holds
+     * the buffer. */
+    const bool slow = playing && t->ix == s.ix_tail && other_ahead(i) && buffer_low() &&
+                      gw_speakers_fifo_low(t->want.id, GW_RELAY_SLOW_FIFO_KIB);
+    if (!slow) {
+      t->slow_since_us = 0;
+    } else if (!t->slow_since_us) {
+      t->slow_since_us = now_us;
+    } else if (now_us - t->slow_since_us > GW_RELAY_SLOW_DROP_MS * 1000LL) {
+      AP_LOGW(TAG, "speaker %s takes audio slower than it plays (its FIFO under %u KiB for "
+                   "%d s) and holds the buffer (%u KiB): dropped from the stream so the "
+                   "others keep playing, again in %d s",
+              t->want.name, (unsigned)GW_RELAY_SLOW_FIFO_KIB, GW_RELAY_SLOW_DROP_MS / 1000,
+              (unsigned)((s.head - s.tail) / 1024U), GW_RELAY_STALL_RETRY_MS / 1000);
+      close_target(t, "too slow", true);
       t->since_us = now_us + GW_RELAY_STALL_RETRY_MS * 1000LL;
     }
   }

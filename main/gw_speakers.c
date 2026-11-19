@@ -874,6 +874,23 @@ static void speakers_task(void *arg) {
   }
 }
 
+bool gw_speakers_fifo_low(uint32_t audio_id, uint32_t kib) {
+  if (!s_lock || !audio_id) return false;
+  const int64_t now_us = esp_timer_get_time();
+  bool low = false;
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  for (size_t i = 0; i < SURROUND_MAX_SPEAKERS; ++i) {
+    const gw_speaker_t *sp = &s_spk[i];
+    if (sp->fd < 0 || sp->audio_id != audio_id) continue;
+    const uint8_t want = SURROUND_STATUS_ACTIVE | SURROUND_STATUS_PLAYING;
+    low = sp->status_us && now_us - sp->status_us < 5000000LL &&
+          (sp->status.flags & want) == want && sp->status.fifo_used_kib < kib;
+    break;
+  }
+  xSemaphoreGive(s_lock);
+  return low;
+}
+
 size_t gw_speakers_list(gw_speaker_info_t out[SURROUND_MAX_SPEAKERS]) {
   size_t n = 0;
   if (!s_lock) return 0;
