@@ -410,7 +410,9 @@ typedef struct {
   TaskHandle_t w_task;
   SemaphoreHandle_t w_resume, w_exit;
   atomic_bool park_req, w_parked;
-  bool w_alive, w_quit;
+  atomic_bool w_gone;     /* the decoder task left its loop: it parks no more */
+  bool w_alive;
+  volatile bool w_quit;
   volatile bool in_done;  /* the input is read to its end (or closed): the worker waits */
   int park_depth;
   int pcm_bits;           /* the depth of what pcm[] holds: the lanes' */
@@ -702,7 +704,7 @@ static int fill_buf(player_t *p) {
     p->buf_len += (size_t)n;
     p->read_bytes += (uint64_t)n;
   }
-  else p->eof = true;
+  else if (n != PLAYER_SRC_INTERRUPTED) p->eof = true;
   return n;
 }
 
@@ -1466,7 +1468,7 @@ static bool m4a_need(player_t *p, uint32_t need) {
     const int n = p->src.read(&p->src, p->buf + p->buf_len, room);
     p->t_read_us += esp_timer_get_time() - t0;
     if (n <= 0) {
-      p->eof = true;
+      if (n != PLAYER_SRC_INTERRUPTED) p->eof = true;
       return false;
     }
     p->buf_len += (size_t)n;
@@ -1679,6 +1681,17 @@ static bool decode_any(player_t *p) {
  * at a safe point (between two decoder calls) before it touches the input
  * itself: a seek, another track, the next track at the end. */
 
+/* The input's reads give up (PLAYER_SRC_INTERRUPTED) when the player stops,
+ * and in the decoder task also when it is to quit or park: a stop or a seek
+ * never waits for the drive or the network. The player task's own reads
+ * while the decoder is parked (a seek, the next track) go on. */
+static bool src_interrupted(void *arg) {
+  const player_t *p = arg;
+  if (atomic_load(&s_stop)) return true;
+  if (!p->w_task || xTaskGetCurrentTaskHandle() != p->w_task) return false;
+  return p->w_quit || atomic_load(&p->park_req);
+}
+
 #define PL_WORKER_STACK    12288
 #define PL_WORKER_PRIORITY 3 /* core 0 has little else; the radio is off while the player plays */
 #define PL_WORKER_CORE     0 /* alone there: reading and decoding are the heaviest part */
@@ -1724,6 +1737,7 @@ static void worker_loop(player_t *p) {
 static void worker_task(void *arg) {
   player_t *p = arg;
   worker_loop(p);
+  atomic_store(&p->w_gone, true);
   xSemaphoreGive(p->w_exit);
   vTaskDeleteWithCaps(NULL);
 }
@@ -1737,6 +1751,7 @@ static bool worker_start(player_t *p) {
   if (!p->r_msg) p->r_msg = heap_caps_malloc(PL_PIPE_ITEM + sizeof(pcm_rec_t), MALLOC_CAP_SPIRAM);
   p->w_resume = xSemaphoreCreateBinary();
   p->w_exit = xSemaphoreCreateBinary();
+  atomic_store(&p->w_gone, false);
   if (!p->rb || !p->w_msg || !p->r_msg || !p->w_pack || !p->w_resume || !p->w_exit) return false;
   if (xTaskCreatePinnedToCoreWithCaps(worker_task, "gw_player_dec", PL_WORKER_STACK, p,
                                       PL_WORKER_PRIORITY, &p->w_task, PL_WORKER_CORE,
@@ -1750,11 +1765,15 @@ static void worker_stop(player_t *p) {
   if (p->w_alive) {
     p->w_quit = true;
     xSemaphoreGive(p->w_resume); /* in case it is parked */
-    bool gone = false;
-    for (int i = 0; i < 100 && !(gone = xSemaphoreTake(p->w_exit, pdMS_TO_TICKS(100)) == pdTRUE); ++i)
+    /* Its reads give up at once (src_interrupted): it is out in moments, a
+     * server being opened again in ~10 s at most. Its buffers go only once
+     * it is out, never under it. */
+    for (int ms = 100; xSemaphoreTake(p->w_exit, pdMS_TO_TICKS(100)) != pdTRUE; ms += 100) {
       (void)xMessageBufferReceive(p->rb, p->r_msg, PL_PIPE_ITEM + sizeof(pcm_rec_t), 0);
-    if (!gone) ESP_LOGE(TAG, "the decoder task did not stop in 10 s");
+      if (ms % 10000 == 0) ESP_LOGE(TAG, "the decoder task has not stopped in %d s", ms / 1000);
+    }
     p->w_alive = false;
+    p->w_task = NULL;
   }
   if (p->rb) vMessageBufferDeleteWithCaps(p->rb);
   free(p->w_msg);
@@ -1774,7 +1793,17 @@ static void pipe_park(player_t *p) {
   if (p->park_depth++ > 0 || !p->w_alive) return;
   atomic_store(&p->park_req, true);
   const size_t cap = PL_PIPE_ITEM + sizeof(pcm_rec_t);
-  while (!atomic_load(&p->w_parked)) (void)xMessageBufferReceive(p->rb, p->r_msg, cap, PL_TICKS(5));
+  /* A decoder task that left on a stop (s_stop) parks no more: the input is
+   * free then too. */
+  const int64_t t0 = esp_timer_get_time();
+  bool logged = false;
+  while (!atomic_load(&p->w_parked) && !atomic_load(&p->w_gone)) {
+    (void)xMessageBufferReceive(p->rb, p->r_msg, cap, PL_TICKS(5));
+    if (!logged && esp_timer_get_time() - t0 > 5000000) {
+      ESP_LOGW(TAG, "the decoder task takes more than 5 s to let go of the input");
+      logged = true;
+    }
+  }
   while (xMessageBufferReceive(p->rb, p->r_msg, cap, 0) > 0) {
   }
 }
@@ -2371,6 +2400,10 @@ static bool open_track(player_t *p, int *k) {
     } else
 #endif
     serr = player_source_http_open(&p->src, url);
+    if (serr == ESP_OK) {
+      p->src.interrupted = src_interrupted;
+      p->src.interrupted_arg = p;
+    }
     if (serr == ESP_OK && open_input(p)) {
       p->in_ix = *k;
       p->ti.ix = *k;
@@ -2379,6 +2412,11 @@ static bool open_track(player_t *p, int *k) {
       read_tags(p, url);
       ESP_LOGI(TAG, "track %d of %d: %s", *k + 1, queue_len(), url);
       return true;
+    }
+    if (atomic_load(&s_stop)) { /* stopped while it opened (its reads gave up): not the file's fault */
+      st_set(P_STOPPING, "Stopping");
+      track_close(p);
+      break;
     }
     if (s_st.state != P_FAILED) st_set(P_FAILED, "The file is not reachable");
     ESP_LOGW(TAG, "track %d (%s) does not play: %s", *k + 1, url, s_st.message);

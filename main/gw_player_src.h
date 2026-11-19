@@ -10,9 +10,14 @@
 
 /* ---- source: bytes of a file ---- */
 
+/* read: given up because interrupted() said so; nothing read, and not the
+ * end of the file. */
+#define PLAYER_SRC_INTERRUPTED (-2)
+
 typedef struct player_source player_source_t;
 struct player_source {
-  /* > 0 bytes read, 0 at the end, < 0 on an error */
+  /* > 0 bytes read, 0 at the end, < 0 on an error (PLAYER_SRC_INTERRUPTED:
+   * see interrupted) */
   int (*read)(player_source_t *s, uint8_t *buf, size_t len);
   void (*close)(player_source_t *s);
   /* Phase 3d, NULL when the source cannot: read goes on from byte off of
@@ -22,7 +27,17 @@ struct player_source {
   int (*read_at)(player_source_t *s, int64_t off, uint8_t *buf, size_t len);
   int64_t size; /* -1 when unknown */
   void *ctx;
+  /* Asked while read waits for data (the USB read-ahead, a slow server):
+   * true ends it with PLAYER_SRC_INTERRUPTED, so a stop or a seek never
+   * waits for the drive or the network. NULL: never. Set by the owner after
+   * the open. */
+  bool (*interrupted)(void *arg);
+  void *interrupted_arg;
 };
+
+static inline bool player_source_interrupted(const player_source_t *s) {
+  return s->interrupted && s->interrupted(s->interrupted_arg);
+}
 
 /* An http:// file. Seeking and read_at use Range requests; a connection that
  * breaks (a long pause) opens again where it was. */

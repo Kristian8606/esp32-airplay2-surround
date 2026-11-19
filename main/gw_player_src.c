@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <stdatomic.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -24,6 +25,14 @@
 static const char *TAG = "gw_player_src";
 
 /* ---- HTTP ---- */
+
+/* Connecting and the response's headers may take a while (a NAS that spins
+ * its disk up); after that every read waits at most HTTP_READ_TIMEOUT_MS
+ * at a time, so an interruption is seen within it. */
+#define HTTP_OPEN_TIMEOUT_MS 5000
+#define HTTP_READ_TIMEOUT_MS 1000
+#define HTTP_READ_TRIES      100 /* the stream: up to 100 s without data, as before */
+#define HTTP_SPAN_TRIES      10  /* read_at and the cover: up to 10 s */
 
 typedef struct {
   esp_http_client_handle_t c;
@@ -46,7 +55,7 @@ static esp_err_t http_get(const char *url, int64_t off, int64_t last,
                           esp_http_client_handle_t *out, int64_t *len) {
   const esp_http_client_config_t cfg = {
       .url = url,
-      .timeout_ms = 5000,
+      .timeout_ms = HTTP_OPEN_TIMEOUT_MS,
       .buffer_size = 4096,
   };
   esp_http_client_handle_t c = esp_http_client_init(&cfg);
@@ -73,20 +82,29 @@ static esp_err_t http_get(const char *url, int64_t off, int64_t last,
     esp_http_client_cleanup(c);
     return ranged && status == 200 ? ESP_ERR_NOT_SUPPORTED : ESP_ERR_NOT_FOUND;
   }
+  (void)esp_http_client_set_timeout_ms(c, HTTP_READ_TIMEOUT_MS);
   *out = c;
   return ESP_OK;
 }
 
-static int http_read_once(http_src_t *h, uint8_t *buf, size_t len) {
-  if (!h->c) return -1;
-  for (int tries = 0; tries < 20; ++tries) {
-    const int n = esp_http_client_read(h->c, (char *)buf, (int)len);
-    if (n != -ESP_ERR_HTTP_EAGAIN) {
-      if (n == 0 && !esp_http_client_is_complete_data_received(h->c)) return -1;
-      return n;
-    }
+/* One read that waits for data up to tries times HTTP_READ_TIMEOUT_MS:
+ * > 0 bytes, 0 at the end, -1 on an error or when nothing came,
+ * PLAYER_SRC_INTERRUPTED when s (may be NULL) says so first. */
+static int http_read_wait(esp_http_client_handle_t c, uint8_t *buf, size_t len, int tries,
+                          const player_source_t *s) {
+  for (int k = 0; k < tries; ++k) {
+    if (k && s && player_source_interrupted(s)) return PLAYER_SRC_INTERRUPTED;
+    const int n = esp_http_client_read(c, (char *)buf, (int)len);
+    if (n != -ESP_ERR_HTTP_EAGAIN) return n < 0 ? -1 : n;
   }
   return -1;
+}
+
+static int http_read_once(player_source_t *s, http_src_t *h, uint8_t *buf, size_t len) {
+  if (!h->c) return -1;
+  const int n = http_read_wait(h->c, buf, len, HTTP_READ_TRIES, s);
+  if (n == 0 && !esp_http_client_is_complete_data_received(h->c)) return -1;
+  return n;
 }
 
 static esp_err_t http_seek(player_source_t *s, int64_t off) {
@@ -103,14 +121,17 @@ static esp_err_t http_seek(player_source_t *s, int64_t off) {
 
 static int http_read(player_source_t *s, uint8_t *buf, size_t len) {
   http_src_t *h = s->ctx;
-  int n = http_read_once(h, buf, len);
+  int n = http_read_once(s, h, buf, len);
+  if (n == PLAYER_SRC_INTERRUPTED) return n;
   if (n < 0 && h->pos > 0 && (s->size < 0 || h->pos < s->size)) {
     /* the connection broke (the server gave up during a long pause, say):
      * once more from where it was */
     ESP_LOGW(TAG, "HTTP read failed at byte %lld: opening again there", (long long)h->pos);
     for (int k = 0; k < 16 && n < 0; ++k) { /* up to ~8 s: a server that restarts */
+      if (player_source_interrupted(s)) return PLAYER_SRC_INTERRUPTED;
       if (k) vTaskDelay(pdMS_TO_TICKS(500));
-      if (http_seek(s, h->pos) == ESP_OK) n = http_read_once(h, buf, len);
+      if (http_seek(s, h->pos) == ESP_OK) n = http_read_once(s, h, buf, len);
+      if (n == PLAYER_SRC_INTERRUPTED) return n;
     }
     if (n < 0) ESP_LOGW(TAG, "HTTP: the file is gone at byte %lld", (long long)h->pos);
   }
@@ -128,8 +149,7 @@ static int http_read_at(player_source_t *s, int64_t off, uint8_t *buf, size_t le
   const int64_t t1 = esp_timer_get_time();
   size_t got = 0;
   while (got < len) {
-    const int n = esp_http_client_read(c, (char *)buf + got, (int)(len - got));
-    if (n == -ESP_ERR_HTTP_EAGAIN) continue;
+    const int n = http_read_wait(c, buf + got, len - got, HTTP_SPAN_TRIES, s);
     if (n <= 0) break;
     got += (size_t)n;
   }
@@ -156,8 +176,7 @@ esp_err_t player_http_span(const char *url, int64_t off, uint32_t len,
   uint32_t done = 0;
   while (buf && done < len) {
     const int want = len - done < 8192U ? (int)(len - done) : 8192;
-    const int n = esp_http_client_read(c, (char *)buf, want);
-    if (n == -ESP_ERR_HTTP_EAGAIN) continue;
+    const int n = http_read_wait(c, buf, (size_t)want, HTTP_SPAN_TRIES, NULL);
     if (n <= 0) { r = ESP_FAIL; break; }
     if (!sink(ctx, buf, (size_t)n)) { r = ESP_FAIL; break; }
     done += (uint32_t)n;
@@ -223,6 +242,9 @@ static bool rate_ok(int r) {
 /* at least one tick: the Gateway runs FreeRTOS at 100 Hz, where
  * pdMS_TO_TICKS(5) is 0 and a wait becomes a busy loop */
 #define FILE_TICKS(ms) (pdMS_TO_TICKS(ms) ? pdMS_TO_TICKS(ms) : 1)
+/* How long a close waits for the reader task; a read() that hangs longer
+ * (a drive that stopped answering) leaves the buffers to the reader. */
+#define FILE_CLOSE_WAIT_US (5LL * 1000000LL)
 
 typedef struct {
   int fd, fd_at;
@@ -239,7 +261,20 @@ typedef struct {
   volatile uint32_t drained;   /* the old bytes are out of the buffer: read on */
   volatile int64_t target;
   volatile bool eof, err, quit;
+  /* the source and the reader task: whichever lets go last frees it all */
+  atomic_int refs;
 } file_src_t;
+
+static void file_free(file_src_t *f) {
+  if (f->sb) vStreamBufferDelete(f->sb); /* static: frees nothing */
+  free(f->sb_ctl);
+  free(f->sb_mem);
+  if (f->done) vSemaphoreDelete(f->done);
+  free(f->chunk);
+  if (f->fd >= 0) close(f->fd);
+  if (f->fd_at >= 0) close(f->fd_at);
+  free(f);
+}
 
 static void file_reader(void *arg) {
   file_src_t *f = arg;
@@ -272,6 +307,7 @@ static void file_reader(void *arg) {
       sent += xStreamBufferSend(f->sb, f->chunk + sent, (size_t)n - sent, pdMS_TO_TICKS(20));
   }
   xSemaphoreGive(f->done);
+  if (atomic_fetch_sub(&f->refs, 1) == 1) file_free(f); /* the close gave up waiting */
   vTaskDeleteWithCaps(NULL);
 }
 
@@ -282,6 +318,7 @@ static int file_read(player_source_t *s, uint8_t *buf, size_t len) {
     if (n) return (int)n;
     if (f->err) return -1;
     if (f->eof && xStreamBufferIsEmpty(f->sb)) return 0;
+    if (player_source_interrupted(s)) return PLAYER_SRC_INTERRUPTED;
   }
 }
 
@@ -320,23 +357,21 @@ static int file_read_at(player_source_t *s, int64_t off, uint8_t *buf, size_t le
 
 static void file_close(player_source_t *s) {
   file_src_t *f = s->ctx;
-  if (f) {
-    if (f->task) {
-      f->quit = true;
-      uint8_t tmp[256];
-      while (xSemaphoreTake(f->done, FILE_TICKS(5)) != pdTRUE)
-        (void)xStreamBufferReceive(f->sb, tmp, sizeof(tmp), 0);
-    }
-    if (f->sb) vStreamBufferDelete(f->sb); /* static: frees nothing */
-    free(f->sb_ctl);
-    free(f->sb_mem);
-    if (f->done) vSemaphoreDelete(f->done);
-    free(f->chunk);
-    if (f->fd >= 0) close(f->fd);
-    if (f->fd_at >= 0) close(f->fd_at);
-    free(f);
-  }
   s->ctx = NULL;
+  if (!f) return;
+  if (f->task) {
+    f->quit = true;
+    uint8_t tmp[256];
+    const int64_t until = esp_timer_get_time() + FILE_CLOSE_WAIT_US;
+    bool done = false;
+    while (!(done = xSemaphoreTake(f->done, FILE_TICKS(5)) == pdTRUE) &&
+           esp_timer_get_time() < until)
+      (void)xStreamBufferReceive(f->sb, tmp, sizeof(tmp), 0);
+    if (!done)
+      ESP_LOGE(TAG, "the USB reader is still in a read after %lld s: it frees the file when "
+                    "the read ends", FILE_CLOSE_WAIT_US / 1000000LL);
+  }
+  if (atomic_fetch_sub(&f->refs, 1) == 1) file_free(f);
 }
 
 esp_err_t player_source_file_open(player_source_t *s, const char *path) {
@@ -367,11 +402,13 @@ esp_err_t player_source_file_open(player_source_t *s, const char *path) {
   f->chunk = heap_caps_malloc(FILE_CHUNK, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
   if (!f->chunk) f->chunk = heap_caps_malloc(FILE_CHUNK, MALLOC_CAP_SPIRAM);
   f->done = xSemaphoreCreateBinary();
+  atomic_init(&f->refs, 2); /* the reader's part, before it can run */
   if (!f->sb || !f->chunk || !f->done ||
       xTaskCreatePinnedToCoreWithCaps(file_reader, "gw_player_rd", FILE_TASK_STACK, f,
                                       FILE_TASK_PRIO, &f->task, FILE_TASK_CORE,
                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
     f->task = NULL;
+    atomic_store(&f->refs, 1); /* no reader */
     file_close(s);
     return ESP_ERR_NO_MEM;
   }
