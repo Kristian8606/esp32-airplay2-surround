@@ -240,11 +240,14 @@ static chirp_hit_t find_chirp(const float *x, uint32_t n, const float *ref,
   return hit;
 }
 
+/* A microphone sample (gw_mic.h: 16 bits) at full scale 1.0. */
+#define MIC_K (1.0f / GW_MIC_FULL_SCALE)
+
 /* Mean square of x[from, from + len) after a 2nd-order Butterworth high-pass
  * at hp_hz (0: only the mean removed). The filter runs from x[0], so it has
- * settled by `from`. */
-static double band_mean_square(const float *x, uint32_t n, uint32_t from,
-                               uint32_t len, uint32_t rate, double hp_hz) {
+ * settled by `from`. x is floats (xf) or the microphone's samples (xi). */
+static double band_ms(const float *xf, const int16_t *xi, uint32_t n, uint32_t from,
+                      uint32_t len, uint32_t rate, double hp_hz) {
   if (from >= n) return 0.0;
   if (from + len > n) len = n - from;
   if (len == 0U) return 0.0;
@@ -259,12 +262,13 @@ static double band_mean_square(const float *x, uint32_t n, uint32_t from,
     a1 = -2.0 * c / a0;
     a2 = (1.0 - alpha) / a0;
   }
+#define BAND_X(i) (xf ? (double)xf[i] : (double)xi[i] * MIC_K)
   double mean = 0.0;
-  for (uint32_t i = 0; i < from + len; ++i) mean += x[i];
+  for (uint32_t i = 0; i < from + len; ++i) mean += BAND_X(i);
   mean /= (double)(from + len);
   double x1 = 0, x2 = 0, y1 = 0, y2 = 0, sq = 0;
   for (uint32_t i = 0; i < from + len; ++i) {
-    const double v = (double)x[i] - mean;
+    const double v = BAND_X(i) - mean;
     const double y = b0 * v + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
     x2 = x1;
     x1 = v;
@@ -272,7 +276,18 @@ static double band_mean_square(const float *x, uint32_t n, uint32_t from,
     y1 = y;
     if (i >= from) sq += y * y;
   }
+#undef BAND_X
   return sq / (double)len;
+}
+
+static double band_mean_square(const float *x, uint32_t n, uint32_t from, uint32_t len,
+                               uint32_t rate, double hp_hz) {
+  return band_ms(x, NULL, n, from, len, rate, hp_hz);
+}
+
+static double band_mean_square16(const int16_t *x, uint32_t n, uint32_t from, uint32_t len,
+                                 uint32_t rate, double hp_hz) {
+  return band_ms(NULL, x, n, from, len, rate, hp_hz);
 }
 
 /* The quiet room's noise as each kind of chirp's level sees it. */
@@ -292,30 +307,30 @@ static bool measure_noise(float *rms_dbfs, float *peak_dbfs, cal_noise_t *noise,
   vTaskDelay(pdMS_TO_TICKS(CAL_NOISE_MS));
   gw_mic_stop();
   uint32_t n = 0;
-  const float *x = gw_mic_samples(&n);
+  const int16_t *x = gw_mic_samples(&n);
   const uint32_t skip = GW_MIC_RATE_HZ / 10U; /* the microphone's start-up */
   if (!x || n <= skip + GW_MIC_RATE_HZ / 4U) {
     *why = "No data from the microphone";
     return false;
   }
   double mean = 0.0;
-  for (uint32_t i = skip; i < n; ++i) mean += x[i];
+  for (uint32_t i = skip; i < n; ++i) mean += x[i] * MIC_K;
   mean /= (double)(n - skip);
   double sq = 0.0, peak = 0.0;
   for (uint32_t i = skip; i < n; ++i) {
-    const double v = x[i] - mean;
+    const double v = x[i] * MIC_K - mean;
     sq += v * v;
     if (fabs(v) > peak) peak = fabs(v);
   }
   *rms_dbfs = to_db(sqrt(sq / (double)(n - skip)));
   *peak_dbfs = to_db(peak);
-  noise->wide_ms = band_mean_square(x, n, skip, n - skip, GW_MIC_RATE_HZ, CAL_LEVEL_HP_HZ);
+  noise->wide_ms = band_mean_square16(x, n, skip, n - skip, GW_MIC_RATE_HZ, CAL_LEVEL_HP_HZ);
   /* The subwoofer's: blocks averaged as its recording is (measure_once). */
   const uint32_t m = (n - skip) / CAL_LOW_DECIMATE;
   double lmean = 0.0, lsq = 0.0;
   for (uint32_t i = 0; i < m; ++i) {
     double acc = 0.0;
-    for (uint32_t d = 0; d < CAL_LOW_DECIMATE; ++d) acc += x[skip + i * CAL_LOW_DECIMATE + d];
+    for (uint32_t d = 0; d < CAL_LOW_DECIMATE; ++d) acc += x[skip + i * CAL_LOW_DECIMATE + d] * MIC_K;
     acc /= CAL_LOW_DECIMATE;
     lmean += acc;
     lsq += acc * acc;
@@ -425,7 +440,7 @@ static cal_run_t measure_once(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
   }
 
   uint32_t n = 0;
-  const float *x = gw_mic_samples(&n);
+  const int16_t *x = gw_mic_samples(&n);
   const uint32_t dec = low ? CAL_LOW_DECIMATE : 1U;
   const uint32_t rate = GW_MIC_RATE_HZ / dec;
   uint32_t len = 0;
@@ -452,12 +467,12 @@ static cal_run_t measure_once(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
     const uint32_t s0 = (uint32_t)start;
     if ((uint64_t)s0 + (uint64_t)win * dec >= n) continue;
     for (uint32_t i = 0; i < win * dec; ++i) {
-      if (fabsf(x[s0 + i]) > peak) peak = fabsf(x[s0 + i]);
+      if (fabsf(x[s0 + i] * MIC_K) > peak) peak = fabsf(x[s0 + i] * MIC_K);
     }
     /* The analysis segment, the subwoofer's averaged down to its rate. */
     for (uint32_t i = 0; i < win; ++i) {
       float acc = 0.0f;
-      for (uint32_t d = 0; d < dec; ++d) acc += x[s0 + i * dec + d];
+      for (uint32_t d = 0; d < dec; ++d) acc += x[s0 + i * dec + d] * MIC_K;
       seg[i] = acc / (float)dec;
     }
     const chirp_hit_t hit = find_chirp(seg, win, ref, len, energy);
@@ -759,7 +774,7 @@ static sweep_run_t sweep_once(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
   if (!played) return SWEEP_FAILED;
 
   uint32_t n = 0;
-  const float *x = gw_mic_samples(&n);
+  const int16_t *x = gw_mic_samples(&n);
   const uint32_t rate = GW_MIC_RATE_HZ;
   const uint32_t len = (uint32_t)ceil(cal_chirp_length_s(kind) * rate);
   const uint32_t period = (uint32_t)ceil(cal_chirp_period_s(kind) * rate);
@@ -785,8 +800,8 @@ static sweep_run_t sweep_once(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
     /* From just before the sweep: the high-pass settles in the silence
      * there (the S3 runs double precision in software). */
     const uint32_t from = (uint32_t)idx - pre;
-    const double ms = band_mean_square(x + from, n - from, pre, len, rate,
-                                       low ? 0.0 : CAL_LEVEL_HP_HZ) - noise_ms;
+    const double ms = band_mean_square16(x + from, n - from, pre, len, rate,
+                                         low ? 0.0 : CAL_LEVEL_HP_HZ) - noise_ms;
     sw->snr_db[k] = (float)(10.0 * log10((ms > 1e-24 ? ms : 1e-24) / (noise_ms + 1e-24)));
   }
   if (!x || s_result.n == 0U) return SWEEP_FAILED;
@@ -795,7 +810,7 @@ static sweep_run_t sweep_once(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
   sw->count = (to < n ? to : n) - sw->from;
   float peak = 0.0f;
   for (uint32_t i = sw->from; i < sw->from + sw->count; ++i) {
-    if (fabsf(x[i]) > peak) peak = fabsf(x[i]);
+    if (fabsf(x[i] * MIC_K) > peak) peak = fabsf(x[i] * MIC_K);
   }
   for (int k = 0; k < sw->n; ++k) sw->start[k] -= (double)sw->from;
   sw->peak_dbfs = to_db(peak);
@@ -1050,7 +1065,7 @@ esp_err_t gw_calib_sweep_start(const uint8_t mac[6], bool raw, bool per_way) {
   return start_mode(CAL_MODE_SWEEP);
 }
 
-bool gw_calib_sweep_samples(uint32_t id, const float **samples, gw_cal_sweep_t *info) {
+bool gw_calib_sweep_samples(uint32_t id, const int16_t **samples, gw_cal_sweep_t *info) {
   if (!init_once() || !samples || !info) return false;
   xSemaphoreTake(s_lock, portMAX_DELAY);
   const bool ok = !s_running && s_status.sweep_run && s_status.sweep.valid &&
@@ -1062,7 +1077,7 @@ bool gw_calib_sweep_samples(uint32_t id, const float **samples, gw_cal_sweep_t *
   xSemaphoreGive(s_lock);
   if (!ok) return false;
   uint32_t n = 0;
-  const float *x = gw_mic_samples(&n);
+  const int16_t *x = gw_mic_samples(&n);
   if (!x || info->from + info->count > n) { /* released for the player or the radio */
     gw_calib_sweep_done();
     return false;

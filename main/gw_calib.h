@@ -97,9 +97,10 @@ esp_err_t gw_calib_start(bool mic_test_only);
  * per driver of a bi-amp speaker. ESP_ERR_NOT_FOUND for no such speaker. */
 esp_err_t gw_calib_sweep_start(const uint8_t mac[6], bool raw, bool per_way);
 /* The sweep recording with that id while no run is under way: the
- * microphone's samples (full scale 1.0) from sweep.from on, sweep.count of
- * them. Only for the HTTP task, which also starts the runs. */
-bool gw_calib_sweep_samples(uint32_t id, const float **samples, gw_cal_sweep_t *info);
+ * microphone's samples (gw_mic.h: full scale GW_MIC_FULL_SCALE) from
+ * sweep.from on, sweep.count of them. Only for the HTTP task, which also
+ * starts the runs. */
+bool gw_calib_sweep_samples(uint32_t id, const int16_t **samples, gw_cal_sweep_t *info);
 /* After a gw_calib_sweep_samples() that gave true: the samples are sent. */
 void gw_calib_sweep_done(void);
 /* A sweep's recording (~2 MiB of PSRAM) stays for the Room EQ page until the

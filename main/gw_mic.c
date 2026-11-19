@@ -26,7 +26,7 @@ static const char *TAG = "gw_mic";
 static i2s_chan_handle_t s_rx;
 static TaskHandle_t s_task;
 static volatile bool s_running;
-static float *s_samples;  /* PSRAM */
+static int16_t *s_samples;  /* PSRAM, GW_MIC_FULL_SCALE */
 static uint32_t s_capacity;
 static volatile uint32_t s_count;
 /* Written by the receive interrupt: samples received so far and when. */
@@ -77,8 +77,9 @@ static void reader_task(void *arg) {
     if (err != ESP_OK && err != ESP_ERR_TIMEOUT) continue;
     const uint32_t n = (uint32_t)(got / sizeof(int32_t));
     for (uint32_t i = 0; i < n && s_count < s_capacity; ++i) {
-      /* INMP441: 24 bits, MSB first, in a 32-bit slot. */
-      s_samples[s_count++] = (float)(chunk[i] >> 8) / 8388608.0f;
+      /* INMP441: 24 bits, MSB first, in a 32-bit slot; kept as 16, rounded */
+      const int32_t v = ((chunk[i] >> 15) + 1) >> 1;
+      s_samples[s_count++] = (int16_t)(v > 32767 ? 32767 : v);
     }
   }
   s_task = NULL;
@@ -123,20 +124,22 @@ esp_err_t gw_mic_start(uint32_t min_seconds, uint32_t max_seconds) {
   if (capacity > s_capacity) {
     const uint32_t caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
     heap_caps_free(s_samples);
-    s_samples = heap_caps_malloc(capacity * sizeof(float), caps);
+    s_samples = heap_caps_malloc(capacity * sizeof(s_samples[0]), caps);
     s_capacity = s_samples ? capacity : 0U;
     if (!s_samples) {
       /* One block of PSRAM: the longest recording that fits, when it is
        * long enough; what comes after it is not recorded. */
       const size_t block = heap_caps_get_largest_free_block(caps);
-      const uint32_t fit = block > 16384U ? (uint32_t)((block - 16384U) / sizeof(float)) : 0U;
+      const uint32_t fit =
+          block > 16384U ? (uint32_t)((block - 16384U) / sizeof(s_samples[0])) : 0U;
       if (fit >= least) {
-        s_samples = heap_caps_malloc(fit * sizeof(float), caps);
+        s_samples = heap_caps_malloc(fit * sizeof(s_samples[0]), caps);
         s_capacity = s_samples ? fit : 0U;
       }
       if (!s_samples) {
-        ESP_LOGE(TAG, "no PSRAM for %u s of recording: largest block %u KiB",
-                 (unsigned)min_seconds, (unsigned)(block / 1024U));
+        ESP_LOGE(TAG, "no PSRAM for %u s of recording: largest block %u KiB of %u KiB free",
+                 (unsigned)min_seconds, (unsigned)(block / 1024U),
+                 (unsigned)(heap_caps_get_free_size(caps) / 1024U));
         return ESP_ERR_NO_MEM;
       }
       ESP_LOGW(TAG, "recording limited to %.1f s (largest PSRAM block %u KiB)",
@@ -232,7 +235,7 @@ void gw_mic_stop(void) {
   }
 }
 
-const float *gw_mic_samples(uint32_t *count) {
+const int16_t *gw_mic_samples(uint32_t *count) {
   if (count) *count = s_count;
   return s_samples;
 }
@@ -266,7 +269,7 @@ esp_err_t gw_mic_start(uint32_t min_seconds, uint32_t max_seconds) {
 }
 void gw_mic_stop(void) {}
 void gw_mic_release(void) {}
-const float *gw_mic_samples(uint32_t *count) {
+const int16_t *gw_mic_samples(uint32_t *count) {
   if (count) *count = 0;
   return NULL;
 }

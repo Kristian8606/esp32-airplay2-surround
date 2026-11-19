@@ -319,7 +319,7 @@ static esp_err_t calibration_sweep_handler(httpd_req_t *req) {
       httpd_query_key_value(q, "id", v, sizeof(v)) == ESP_OK) {
     id = (uint32_t)strtoul(v, NULL, 10);
   }
-  const float *x = NULL;
+  const int16_t *x = NULL;
   gw_cal_sweep_t sw;
   if (!gw_calib_sweep_samples(id, &x, &sw)) {
     httpd_resp_set_status(req, "409 Conflict");
@@ -332,7 +332,7 @@ static esp_err_t calibration_sweep_handler(httpd_req_t *req) {
   for (uint32_t i = 0; i < sw.count && err == ESP_OK;) {
     const uint32_t m = sw.count - i < 1024U ? sw.count - i : 1024U;
     for (uint32_t k = 0; k < m; ++k) {
-      float f = x[i + k] * sw.scale * 32767.0f;
+      float f = (float)x[i + k] * (sw.scale * 32767.0f / GW_MIC_FULL_SCALE);
       if (f > 32767.0f) f = 32767.0f;
       if (f < -32768.0f) f = -32768.0f;
       buf[k] = (int16_t)lrintf(f);
