@@ -953,13 +953,8 @@ static void relay_task(void *arg) {
   vTaskDelete(NULL);
 }
 
-esp_err_t gw_relay_start(uint16_t requested_port, uint16_t *bound_port) {
-  if (s.running) {
-    if (bound_port) *bound_port = s.port;
-    return ESP_OK;
-  }
-  if (s.task) return ESP_ERR_INVALID_STATE;
-  /* Kept for the next stream once allocated. */
+esp_err_t gw_relay_reserve(void) {
+  /* Kept for every later stream once allocated. */
   if (!s.ring) {
     s.ring = heap_caps_malloc(GW_RELAY_RING_BYTES,
                               MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -973,6 +968,17 @@ esp_err_t gw_relay_start(uint16_t requested_port, uint16_t *bound_port) {
              (unsigned)(GW_RELAY_RING_BYTES / 1024U));
     return ESP_ERR_NO_MEM;
   }
+  return ESP_OK;
+}
+
+esp_err_t gw_relay_start(uint16_t requested_port, uint16_t *bound_port) {
+  if (s.running) {
+    if (bound_port) *bound_port = s.port;
+    return ESP_OK;
+  }
+  if (s.task) return ESP_ERR_INVALID_STATE;
+  const esp_err_t mem = gw_relay_reserve();
+  if (mem != ESP_OK) return mem;
 
   uint16_t bound = requested_port;
   s.listen_sock = socket_utils_bind_tcp_listener(requested_port, 1, true, &bound);

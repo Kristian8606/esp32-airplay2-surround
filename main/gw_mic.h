@@ -15,9 +15,14 @@
 
 #define GW_MIC_RATE_HZ 48000U
 
-/* ESP_ERR_NOT_SUPPORTED when built without the microphone. */
-esp_err_t gw_mic_start(uint32_t max_seconds);
+/* Up to max_seconds, in one block of PSRAM; when that is not free, the
+ * longest that fits if it is at least min_seconds, else ESP_ERR_NO_MEM.
+ * ESP_ERR_NOT_SUPPORTED when built without the microphone. */
+esp_err_t gw_mic_start(uint32_t min_seconds, uint32_t max_seconds);
 void gw_mic_stop(void);
+/* Frees the recording (~2 MiB after a long one); the next start allocates
+ * again. Nothing while recording. */
+void gw_mic_release(void);
 
 /* The last recording, as floats (full scale 1.0). */
 const float *gw_mic_samples(uint32_t *count);

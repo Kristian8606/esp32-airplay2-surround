@@ -65,6 +65,7 @@ esp_err_t sound_engine_init(void) {
   taskENTER_CRITICAL(&s_mux);
   s.initialized = true;
   taskEXIT_CRITICAL(&s_mux);
+  (void)gw_relay_reserve(); /* logged; the first stream tries again */
   ESP_LOGI(TAG, "Gateway proxy ready: no decoder, no I2S; sound_engine "
                 "calls are logged as FWD");
   return ESP_OK;

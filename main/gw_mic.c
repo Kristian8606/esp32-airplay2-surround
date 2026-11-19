@@ -115,15 +115,33 @@ static void fit_line(void) {
   s_line_valid = b > 0.0;
 }
 
-esp_err_t gw_mic_start(uint32_t max_seconds) {
+esp_err_t gw_mic_start(uint32_t min_seconds, uint32_t max_seconds) {
   if (s_running || s_task) return ESP_ERR_INVALID_STATE;
+  if (min_seconds > max_seconds) min_seconds = max_seconds;
   const uint32_t capacity = max_seconds * GW_MIC_RATE_HZ;
+  const uint32_t least = min_seconds * GW_MIC_RATE_HZ;
   if (capacity > s_capacity) {
+    const uint32_t caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
     heap_caps_free(s_samples);
-    s_samples = heap_caps_malloc(capacity * sizeof(float),
-                                 MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    s_samples = heap_caps_malloc(capacity * sizeof(float), caps);
     s_capacity = s_samples ? capacity : 0U;
-    if (!s_samples) return ESP_ERR_NO_MEM;
+    if (!s_samples) {
+      /* One block of PSRAM: the longest recording that fits, when it is
+       * long enough; what comes after it is not recorded. */
+      const size_t block = heap_caps_get_largest_free_block(caps);
+      const uint32_t fit = block > 16384U ? (uint32_t)((block - 16384U) / sizeof(float)) : 0U;
+      if (fit >= least) {
+        s_samples = heap_caps_malloc(fit * sizeof(float), caps);
+        s_capacity = s_samples ? fit : 0U;
+      }
+      if (!s_samples) {
+        ESP_LOGE(TAG, "no PSRAM for %u s of recording: largest block %u KiB",
+                 (unsigned)min_seconds, (unsigned)(block / 1024U));
+        return ESP_ERR_NO_MEM;
+      }
+      ESP_LOGW(TAG, "recording limited to %.1f s (largest PSRAM block %u KiB)",
+               (double)fit / GW_MIC_RATE_HZ, (unsigned)(block / 1024U));
+    }
   }
   if (!s_stamp_count) {
     uint32_t *count = heap_caps_malloc(MIC_MAX_STAMPS * sizeof(uint32_t),
@@ -219,6 +237,14 @@ const float *gw_mic_samples(uint32_t *count) {
   return s_samples;
 }
 
+void gw_mic_release(void) {
+  if (s_running || s_task) return;
+  heap_caps_free(s_samples);
+  s_samples = NULL;
+  s_capacity = 0U;
+  s_count = 0U;
+}
+
 bool gw_mic_sample_time_ns(double index, int64_t *local_ns) {
   if (!s_line_valid) return false;
   *local_ns = (int64_t)((s_a_us + s_b_us * (index + 1.0)) * 1000.0);
@@ -233,11 +259,13 @@ bool gw_mic_sample_at(int64_t local_ns, double *index) {
 
 #else
 
-esp_err_t gw_mic_start(uint32_t max_seconds) {
+esp_err_t gw_mic_start(uint32_t min_seconds, uint32_t max_seconds) {
+  (void)min_seconds;
   (void)max_seconds;
   return ESP_ERR_NOT_SUPPORTED;
 }
 void gw_mic_stop(void) {}
+void gw_mic_release(void) {}
 const float *gw_mic_samples(uint32_t *count) {
   if (count) *count = 0;
   return NULL;

@@ -27,6 +27,10 @@ static const char *TAG = "gw_calib";
 #define CAL_TASK_PRIORITY   3
 #define CAL_NOISE_MS        1000
 #define CAL_RECORD_MAX_S    10U
+/* A chirp run needs less: the speaker's start-up (~1 s), four chirps (the
+ * subwoofer's 2.4 s) and their echoes. Shorter when PSRAM has no room for
+ * CAL_RECORD_MAX_S in one block (gw_mic_start). */
+#define CAL_CHIRP_RECORD_MIN_S 6U
 #define CAL_RESULT_WAIT_MS  15000
 #define CAL_SOUND_M_PER_MS  0.343f
 /* Ending the sender's session (RTSP stop) takes up to this long. */
@@ -134,6 +138,16 @@ void gw_calib_on_result(const uint8_t mac[6], const surround_cal_result_t *r) {
 }
 
 static float to_db(double v) { return v > 1e-12 ? (float)(20.0 * log10(v)) : -240.0f; }
+
+/* The note when the recording could not start. */
+static void mic_note(char *note, size_t size, esp_err_t err) {
+  if (err == ESP_ERR_NO_MEM) {
+    snprintf(note, size, "No memory for the recording (%u KiB free in one block)",
+             (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024U));
+  } else {
+    snprintf(note, size, "The microphone could not start: %s", esp_err_to_name(err));
+  }
+}
 
 /* The chirp at the analysis rate. */
 static float *make_reference(cal_chirp_kind_t kind, uint32_t rate, uint32_t *len,
@@ -270,7 +284,7 @@ typedef struct {
  * nothing usable. */
 static bool measure_noise(float *rms_dbfs, float *peak_dbfs, cal_noise_t *noise,
                           const char **why) {
-  if (gw_mic_start(2U) != ESP_OK) {
+  if (gw_mic_start(2U, 2U) != ESP_OK) {
     *why = "The microphone could not start";
     return false;
   }
@@ -394,8 +408,9 @@ static cal_run_t measure_once(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
   const bool low = kind == CAL_CHIRP_LOW;
   const double noise_ms = low ? noise->low_ms : noise->wide_ms;
   o->low = low;
-  if (gw_mic_start(CAL_RECORD_MAX_S) != ESP_OK) {
-    snprintf(o->note, sizeof(o->note), "The microphone could not start");
+  const esp_err_t mic_err = gw_mic_start(CAL_CHIRP_RECORD_MIN_S, CAL_RECORD_MAX_S);
+  if (mic_err != ESP_OK) {
+    mic_note(o->note, sizeof(o->note), mic_err);
     AP_LOGI(TAG, "%s at %d dBFS: %s", o->name, level_db, o->note);
     return RUN_FAILED;
   }
@@ -731,8 +746,9 @@ static sweep_run_t sweep_once(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
                               int8_t level_db, uint8_t flags, double noise_ms,
                               gw_cal_sweep_t *sw) {
   const bool low = cal_chirp_is_low(kind);
-  if (gw_mic_start(CAL_RECORD_MAX_S) != ESP_OK) {
-    snprintf(o->note, sizeof(o->note), "The microphone could not start");
+  const esp_err_t mic_err = gw_mic_start(CAL_RECORD_MAX_S, CAL_RECORD_MAX_S);
+  if (mic_err != ESP_OK) {
+    mic_note(o->note, sizeof(o->note), mic_err);
     return SWEEP_FAILED;
   }
   vTaskDelay(pdMS_TO_TICKS(50));
@@ -948,6 +964,10 @@ static void calib_task(void *arg) {
       }
     }
   }
+  /* The recording is no longer needed, except a sweep's: the Room EQ page
+   * fetches it (gw_calib_sweep_samples). Kept, ~2 MiB of PSRAM would be
+   * missing for the USB player and the radio. */
+  if (mode != CAL_MODE_SWEEP) gw_mic_release();
   if (!mic_test) {
     /* AirPlay again; also after a stop that timed out. */
     if (rtsp_server_is_idle()) {

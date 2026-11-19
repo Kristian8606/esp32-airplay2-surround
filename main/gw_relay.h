@@ -27,6 +27,14 @@
  * speaker is starting its listener or being connected, the buffer keeps
  * the audio from then on for up to ~1 s so it does not miss the start. */
 
+/* The audio buffer (5 MiB of PSRAM with its index), allocated once and kept.
+ * Called at start-up, before the Gateway's own senders and the room
+ * calibration take PSRAM: allocated by the first stream instead, it sits
+ * wherever their buffers left room and splits the PSRAM that is free once
+ * they are gone (the calibration's recording needs ~2 MiB in one block).
+ * gw_relay_start() calls it too, for a start-up that found no room. */
+esp_err_t gw_relay_reserve(void);
+
 /* Idempotent while running: returns the port already bound. */
 esp_err_t gw_relay_start(uint16_t requested_port, uint16_t *bound_port);
 /* Closes the listener and the sender connection; waits up to ~1 s for the
