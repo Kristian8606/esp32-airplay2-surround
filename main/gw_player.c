@@ -2837,6 +2837,7 @@ esp_err_t gw_player_play_queue(const char *const *urls, int n, int start, int vo
     if (!url_ok(urls[i])) return ESP_ERR_INVALID_ARG;
   if (!init_once()) return ESP_ERR_NO_MEM;
   if (gw_calib_running()) return ESP_ERR_INVALID_STATE;
+  gw_calib_release_recording(); /* a Room EQ sweep's ~2 MiB: the player needs it */
   volume_db = clamp_db(volume_db);
   xSemaphoreTake(s_ctl, portMAX_DELAY);
   stop_locked();

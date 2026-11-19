@@ -328,7 +328,8 @@ static esp_err_t calibration_sweep_handler(httpd_req_t *req) {
   httpd_resp_set_type(req, "application/octet-stream");
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");
   int16_t buf[1024];
-  for (uint32_t i = 0; i < sw.count;) {
+  esp_err_t err = ESP_OK;
+  for (uint32_t i = 0; i < sw.count && err == ESP_OK;) {
     const uint32_t m = sw.count - i < 1024U ? sw.count - i : 1024U;
     for (uint32_t k = 0; k < m; ++k) {
       float f = x[i + k] * sw.scale * 32767.0f;
@@ -336,11 +337,12 @@ static esp_err_t calibration_sweep_handler(httpd_req_t *req) {
       if (f < -32768.0f) f = -32768.0f;
       buf[k] = (int16_t)lrintf(f);
     }
-    if (httpd_resp_send_chunk(req, (const char *)buf, (ssize_t)(m * sizeof(int16_t))) != ESP_OK) {
-      return ESP_FAIL;
-    }
+    if (httpd_resp_send_chunk(req, (const char *)buf, (ssize_t)(m * sizeof(int16_t))) != ESP_OK)
+      err = ESP_FAIL;
     i += m;
   }
+  gw_calib_sweep_done(); /* the samples may go now */
+  if (err != ESP_OK) return err;
   return httpd_resp_send_chunk(req, NULL, 0);
 }
 

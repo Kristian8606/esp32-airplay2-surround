@@ -109,6 +109,7 @@ static struct {
   bool raw, per_way;
 } s_sweep_req;
 static uint32_t s_sweep_id;
+static int s_sweep_readers; /* downloads of the sweep under way (s_lock) */
 
 static void set_message(gw_cal_state_t state, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
@@ -965,8 +966,9 @@ static void calib_task(void *arg) {
     }
   }
   /* The recording is no longer needed, except a sweep's: the Room EQ page
-   * fetches it (gw_calib_sweep_samples). Kept, ~2 MiB of PSRAM would be
-   * missing for the USB player and the radio. */
+   * fetches it (gw_calib_sweep_samples), and it goes when the USB player or
+   * the radio starts (gw_calib_release_recording). Kept, ~2 MiB of PSRAM
+   * would be missing for them. */
   if (mode != CAL_MODE_SWEEP) gw_mic_release();
   if (!mic_test) {
     /* AirPlay again; also after a stop that timed out. */
@@ -1053,14 +1055,34 @@ bool gw_calib_sweep_samples(uint32_t id, const float **samples, gw_cal_sweep_t *
   xSemaphoreTake(s_lock, portMAX_DELAY);
   const bool ok = !s_running && s_status.sweep_run && s_status.sweep.valid &&
                   s_status.sweep.id == id;
-  if (ok) *info = s_status.sweep;
+  if (ok) {
+    *info = s_status.sweep;
+    s_sweep_readers++;
+  }
   xSemaphoreGive(s_lock);
   if (!ok) return false;
   uint32_t n = 0;
   const float *x = gw_mic_samples(&n);
-  if (!x || info->from + info->count > n) return false;
+  if (!x || info->from + info->count > n) { /* released for the player or the radio */
+    gw_calib_sweep_done();
+    return false;
+  }
   *samples = x + info->from;
   return true;
+}
+
+void gw_calib_sweep_done(void) {
+  if (!init_once()) return;
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  if (s_sweep_readers > 0) s_sweep_readers--;
+  xSemaphoreGive(s_lock);
+}
+
+void gw_calib_release_recording(void) {
+  if (!init_once()) return;
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  if (!s_running && s_sweep_readers == 0) gw_mic_release();
+  xSemaphoreGive(s_lock);
 }
 
 bool gw_calib_running(void) { return atomic_load_explicit(&s_running, memory_order_relaxed); }

@@ -1134,6 +1134,7 @@ esp_err_t gw_radio_start(const char *url, const char *name, const char *logo,
   if (strlen(url) >= sizeof(s_next_url)) return ESP_ERR_INVALID_SIZE;
   if (!init_once()) return ESP_ERR_NO_MEM;
   if (gw_calib_running()) return ESP_ERR_INVALID_STATE;
+  gw_calib_release_recording(); /* a Room EQ sweep's ~2 MiB: the radio needs it */
   volume_db = volume_db == GW_RADIO_SAVED_VOLUME ? saved_volume() : clamp_db(volume_db);
 #if CONFIG_GATEWAY_USB_PLAYER
   gw_player_stop(); /* one local sender at a time (gw_local_src.h) */

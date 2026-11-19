@@ -100,6 +100,12 @@ esp_err_t gw_calib_sweep_start(const uint8_t mac[6], bool raw, bool per_way);
  * microphone's samples (full scale 1.0) from sweep.from on, sweep.count of
  * them. Only for the HTTP task, which also starts the runs. */
 bool gw_calib_sweep_samples(uint32_t id, const float **samples, gw_cal_sweep_t *info);
+/* After a gw_calib_sweep_samples() that gave true: the samples are sent. */
+void gw_calib_sweep_done(void);
+/* A sweep's recording (~2 MiB of PSRAM) stays for the Room EQ page until the
+ * USB player or the radio starts, which need that memory: they call this.
+ * Nothing while a run or a download of it is under way. */
+void gw_calib_release_recording(void);
 void gw_calib_get(gw_cal_status_t *out);
 /* Send the suggestions to the speakers (they save them like a manual edit).
  * Returns how many speakers took them through *applied. */
