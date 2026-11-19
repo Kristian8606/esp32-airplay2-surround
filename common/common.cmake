@@ -58,6 +58,10 @@ function(airplay_embed_web_pages)
             "${AIRPLAY_COMMON_DIR}/../web/${page}.html" BINARY
             RENAME_TO "web_${page}_html")
     endforeach()
+    # The palettes every page links (/theme.css).
+    target_add_binary_data(${COMPONENT_LIB}
+        "${AIRPLAY_COMMON_DIR}/../web/theme.css" BINARY
+        RENAME_TO "web_theme_css")
 endfunction()
 
 # The web_server component calls the role pages (web_role_*), firmware_id(),

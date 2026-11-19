@@ -44,6 +44,8 @@ extern const uint8_t logs_html_end[] asm("_binary_web_logs_html_end");
 extern const uint8_t speedtest_html_start[] asm(
     "_binary_web_speedtest_html_start");
 extern const uint8_t speedtest_html_end[] asm("_binary_web_speedtest_html_end");
+extern const uint8_t theme_css_start[] asm("_binary_web_theme_css_start");
+extern const uint8_t theme_css_end[] asm("_binary_web_theme_css_end");
 
 #define WIFI_CONFIG_BODY_CAP 512
 #define DEVICE_NAME_BODY_CAP 256
@@ -74,6 +76,14 @@ static esp_err_t logs_get(httpd_req_t *req) {
 
 static esp_err_t speedtest_page_get(httpd_req_t *req) {
   return web_serve_page(req, speedtest_html_start, speedtest_html_end);
+}
+
+/* The colour palettes every page links (web/theme.css). */
+static esp_err_t theme_css_get(httpd_req_t *req) {
+  httpd_resp_set_type(req, "text/css; charset=utf-8");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+  return httpd_resp_send(req, (const char *)theme_css_start,
+                         (ssize_t)(theme_css_end - theme_css_start));
 }
 
 static esp_err_t favicon_get(httpd_req_t *req) {
@@ -376,6 +386,7 @@ static const httpd_uri_t SHARED_HANDLERS[] = {
     {.uri = "/", .method = HTTP_GET, .handler = index_get},
     {.uri = "/logs", .method = HTTP_GET, .handler = logs_get},
     {.uri = "/speedtest", .method = HTTP_GET, .handler = speedtest_page_get},
+    {.uri = "/theme.css", .method = HTTP_GET, .handler = theme_css_get},
     {.uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_get},
     {.uri = "/api/system/info", .method = HTTP_GET, .handler = system_info_get},
     {.uri = "/api/wifi/scan", .method = HTTP_GET, .handler = wifi_scan_get},

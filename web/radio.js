@@ -17,7 +17,7 @@ const css = `
 .r-bar::before{content:'';position:absolute;left:0;right:0;top:0;height:2px;background:var(--glow)}
 .r-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .r-logo{flex:none;width:52px;height:52px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);overflow:hidden;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;letter-spacing:.5px}
-.r-logo img{width:100%;height:100%;object-fit:cover;background:#fff}
+.r-logo img{width:100%;height:100%;object-fit:contain;padding:3px;background:#fff}
 .r-txt{flex:1;min-width:150px}
 .r-name{font-size:16px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .r-title{font-size:12px;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:15px}
@@ -45,12 +45,21 @@ const css = `
 .r-list{overflow-y:auto;margin-top:12px;-webkit-overflow-scrolling:touch;display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:10px;padding-bottom:4px}
 .r-t{position:relative;background:#0a0a0b;border:1px solid var(--line);border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:7px;cursor:pointer;text-align:left;color:var(--text);font-family:inherit;transition:border-color .2s}
 .r-t:hover{border-color:var(--line2)}
-.r-t.on{box-shadow:0 0 0 2px #8b5cff;border-color:transparent}
+.r-t.on{box-shadow:0 0 0 2px var(--accent,#8b5cff);border-color:transparent}
 .r-t .r-logo{width:42px;height:42px;font-size:12px;border-radius:10px}
 .r-t b{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .r-t small{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .r-star{position:absolute;top:6px;right:6px;background:none;border:none;font-size:16px;line-height:1;color:var(--muted);cursor:pointer;padding:4px}
 .r-star.on{color:#f7c46c}
+.np .r-bar{display:flex;flex-direction:column}
+.r-favs{margin-top:auto;padding-top:20px}
+.r-favs h3{font-size:11px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:var(--muted);border-top:1px solid var(--line);padding-top:16px;margin-bottom:12px}
+.r-favrow{display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x proximity;padding-bottom:8px;scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
+.r-fav{display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px 8px;border-radius:14px;background:var(--panel2);border:1px solid var(--line);color:var(--text);font-family:inherit;font-size:12px;cursor:pointer;flex:0 0 104px;scroll-snap-align:start}
+.r-fav:hover{border-color:var(--line2)}
+.r-fav.on{box-shadow:0 0 0 2px var(--accent,#8b5cff);border-color:transparent}
+.np .r-fav .r-logo{width:52px;height:52px;font-size:14px;border-radius:12px;box-shadow:none}
+.r-fav span{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .r-empty{grid-column:1/-1;text-align:center;color:var(--muted);font-size:13px;padding:26px 10px;line-height:1.6}
 @media(min-width:760px){.r-sheet{left:auto;top:0;width:460px;max-height:none;border-top:none;border-left:1px solid var(--line2);border-radius:20px 0 0 20px;padding:20px;transform:translateX(105%)}.r-grip{display:none}}
 `;
@@ -74,18 +83,21 @@ function logoInto(box, name, logo) {
 
 /* ---- the header button, the bar, the panel ---- */
 const pill = el('button', 'r-pill', 'Radio'); pill.type = 'button'; pill.style.display = 'none';
-const now = document.querySelector('.header .now'); if (now) now.appendChild(pill);
+const now = document.getElementById('np-src') || document.querySelector('.header .now'); if (now) now.appendChild(pill);
 
 const bar = el('div', 'panel r-bar'); bar.style.display = 'none';
-const bLogo = el('div', 'r-logo'), bName = el('div', 'r-name'), bTitle = el('div', 'r-title'), bChips = el('div', 'r-chips');
-const bTxt = el('div', 'r-txt'); bTxt.append(bName, bTitle);
-const row = el('div', 'r-row'); row.append(bLogo, bTxt, bChips);
+const npH = el('div', 'np-h'); npH.append(el('h2', '', 'Now playing'), el('span', '', 'Radio'));
+const bLogo = el('div', 'r-logo'), bKick = el('div', 'p-kick', 'Live radio'), bName = el('div', 'r-name'), bTitle = el('div', 'r-title'), bChips = el('div', 'r-chips');
+const bTxt = el('div', 'r-txt'); bTxt.append(bKick, bName, bTitle, bChips);
+const row = el('div', 'r-row'); row.append(bLogo, bTxt);
 const vol = el('input'); vol.type = 'range'; vol.min = -60; vol.max = 0; vol.step = 1; vol.setAttribute('aria-label', 'Radio volume');
 const volT = el('span'); const volBox = el('div', 'r-vol'); volBox.append(el('span', '', 'Volume'), vol, volT);
 const bSt = el('button', 'btn sec', 'Stations'), bStop = el('button', 'btn', 'Stop');
 const ctl = el('div', 'r-ctl'); ctl.append(volBox, el('span', '', ''), bSt, bStop); ctl.children[1].style.flex = '1';
-bar.append(row, ctl);
-const room = document.querySelector('.wrap > .panel'); if (room) room.parentNode.insertBefore(bar, room);
+const favWrap = el('div', 'r-favs'), favRow = el('div', 'r-favrow'); favWrap.append(el('h3', '', 'Favourites'), favRow); favWrap.style.display = 'none';
+bar.append(npH, row, ctl, favWrap);
+const slot = document.getElementById('np'), room = document.querySelector('.wrap > .panel');
+if (slot) slot.appendChild(bar); else if (room) room.parentNode.insertBefore(bar, room);
 
 const root = el('div'); document.body.appendChild(root);
 requestAnimationFrame(() => requestAnimationFrame(() => root.classList.add('r-ready'))); /* no slide at load */
@@ -220,13 +232,29 @@ async function search() {
 }
 q.oninput = () => { clearTimeout(searchT); searchT = setTimeout(search, 450); };
 
-async function loadFavs() { try { const f = await fetchJ('/api/radio/favs'); favs = Array.isArray(f) ? f : []; } catch (e) { favs = []; } }
+async function loadFavs() { try { const f = await fetchJ('/api/radio/favs'); favs = Array.isArray(f) ? f : []; } catch (e) { favs = []; } drawFavs(); }
+/* The favourites at the foot of the bar: one tap plays one. */
+let favKey = '';
+function drawFavs() {
+  const k = favs.map(f => f.url).join('\n') + '|' + (cur && cur.url || '');
+  if (k === favKey) return;
+  favKey = k; favRow.textContent = '';
+  favWrap.style.display = favs.length ? '' : 'none';
+  favs.slice(0, 12).forEach(f => {
+    const b = el('button', 'r-fav'); b.type = 'button'; b.title = f.name || f.url;
+    const lg = el('div', 'r-logo'); logoInto(lg, f.name || hostOf(f.url), f.logo);
+    b.append(lg, el('span', '', f.name || hostOf(f.url)));
+    if (cur && cur.url === f.url) b.classList.add('on');
+    b.onclick = () => { if (!(cur && cur.url === f.url)) play(f); };
+    favRow.appendChild(b);
+  });
+}
 async function toggleFav(s) {
   const was = isFav(s.url);
   const next = was ? favs.filter(f => f.url !== s.url) : favs.concat([{ name: s.name, url: s.url, logo: s.logo, cc: s.cc, codec: s.codec, br: s.br, uuid: s.uuid }]);
   try { const f = await fetchJ('/api/radio/favs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(next) }); favs = f; }
   catch (e) { setMsg('Could not save the favourites (' + (next.length > favs.length ? 'too many?' : 'error') + ')', true); return; }
-  show(tab);
+  drawFavs(); show(tab);
 }
 async function play(s) {
   setMsg((cur && cur.airplay ? 'Stopping AirPlay, starting ' : 'Starting ') + (s.name || s.url) + '…');
@@ -268,6 +296,7 @@ function render(d) {
   if (!active) return;
   const name = d.name || hostOf(d.url);
   if (d.url !== lastUrl || bLogo.dataset.logo !== (d.logo || '')) { logoInto(bLogo, name, d.logo); bLogo.dataset.logo = d.logo || ''; lastUrl = d.url; }
+  drawFavs();
   bName.textContent = name;
   bTitle.textContent = d.state === 'playing' ? (d.title || '') : (d.message || (d.state === 'starting' ? 'Starting…' : ''));
   bChips.textContent = '';

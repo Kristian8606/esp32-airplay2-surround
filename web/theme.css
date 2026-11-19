@@ -1,0 +1,12 @@
+/* The colours of the web pages, shared by the Gateway and the speakers.
+ * Warm is the default: every page's first script sets
+ * <html data-palette="warm"> unless the browser chose Violet with the
+ * palette switch (localStorage "palette"). Violet is what every page sets
+ * for itself (:root in its own <style>); this file adds the shared extras
+ * and the Warm palette over it. */
+:root{--np-glow:rgba(110,90,255,.24);--accent-2:#c4b2ff;--accent-soft:rgba(139,123,255,.14);--accent-glow:rgba(139,92,255,.55);--accent-ink:#fff;--halo:rgba(110,90,255,.16)}
+:root[data-palette=warm]{--bg:#0b0b0c;--panel:#1b1a19;--panel2:#262423;--line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.16);--text:#f5f2f0;--muted:#a59d99;--accent:#ffb38f;--accent-2:#ffcdb5;--accent-soft:rgba(255,179,143,.14);--accent-glow:rgba(255,160,120,.5);--accent-ink:#2a1712;--halo:rgba(255,140,100,.12);--room-glow:rgba(255,170,130,.10);--play-bg:#fbeee6;--np-glow:rgba(170,90,62,.5);--glow:linear-gradient(90deg,#ff8a5c,#ffb38f 55%,#ffd9b8)}
+.pal{display:inline-flex;gap:2px;padding:3px;border-radius:10px;background:var(--panel2,#17171a);border:1px solid var(--line,rgba(255,255,255,.08))}
+.pal button{border:0;border-radius:8px;padding:6px 12px;min-height:30px;font:inherit;font-size:13px;font-weight:600;color:var(--muted,#8d8d93);background:transparent;cursor:pointer}
+.pal button.on{background:var(--accent-soft);color:var(--text,#f4f4f5)}
+.pal button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}

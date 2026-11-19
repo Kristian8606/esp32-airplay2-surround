@@ -9,7 +9,7 @@
 const css = `
 .p-bar{position:relative;overflow:hidden;margin-bottom:14px}
 .p-bar::before{content:'';position:absolute;left:0;right:0;top:0;height:2px;background:var(--glow)}
-.p-art{flex:none;width:64px;height:64px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;letter-spacing:.5px;color:#c4b2ff;overflow:hidden}
+.p-art{flex:none;width:64px;height:64px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;letter-spacing:.5px;color:var(--accent-2,#c4b2ff);overflow:hidden}
 .p-art img{width:100%;height:100%;object-fit:cover;display:block}
 .p-seek{display:flex;align-items:center;gap:10px;margin-top:12px}
 .p-seek span{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;min-width:38px}
@@ -34,10 +34,10 @@ const css = `
 .p-list{overflow-y:auto;margin-top:10px;-webkit-overflow-scrolling:touch;display:flex;flex-direction:column;gap:6px;padding-bottom:4px}
 .p-row{display:flex;align-items:center;gap:12px;background:#0a0a0b;border:1px solid var(--line);border-radius:14px;padding:11px 12px;cursor:pointer;color:var(--text);text-align:left;font-family:inherit;font-size:14px;width:100%;min-height:62px}
 .p-row:hover{border-color:var(--line2)}
-.p-row.on{box-shadow:0 0 0 2px #8b5cff;border-color:transparent}
+.p-row.on{box-shadow:0 0 0 2px var(--accent,#8b5cff);border-color:transparent}
 .p-row.off{cursor:default;opacity:.38}
-.p-row .ic{flex:none;width:40px;height:40px;border-radius:10px;background:var(--panel2);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#c4b2ff;letter-spacing:.3px}
-.p-row .ic.dir{background:rgba(139,92,255,.16);color:#c4b2ff}
+.p-row .ic{flex:none;width:40px;height:40px;border-radius:10px;background:var(--panel2);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent-2,#c4b2ff);letter-spacing:.3px}
+.p-row .ic.dir{background:var(--accent-soft,rgba(139,92,255,.16));color:var(--accent-2,#c4b2ff)}
 .p-row .ic svg{width:24px;height:24px;fill:currentColor}
 .p-row .go{flex:none;color:var(--muted);font-size:20px;line-height:1;padding:0 4px}
 .p-row .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -45,6 +45,24 @@ const css = `
 .p-add{flex:none;background:none;border:1px solid var(--line2);border-radius:999px;color:var(--text);font-size:18px;width:38px;height:38px;cursor:pointer;padding:0;font-family:inherit}
 .p-add:hover{border-color:#fff}
 .p-tools{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
+.p-ib svg{width:20px;height:20px;fill:currentColor}
+.np .p-art{width:230px;height:230px;border-radius:18px;font-size:26px;box-shadow:0 20px 44px rgba(0,0,0,.55)}
+.np .p-bar{display:flex;flex-direction:column}
+.np .p-seek{margin-top:auto;padding-top:22px}
+.np .p-seek span{font-size:13px}
+.p-ctl{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:14px}
+.p-side{display:flex;gap:8px;flex:1}
+.p-side.r{justify-content:flex-end}
+.np .p-ib{width:46px;height:46px}
+.np .p-btns{gap:20px}
+.np .p-btns .p-ib{border:none;width:54px;height:54px}
+.np .p-btns .p-ib svg{width:30px;height:30px}
+.np .p-ib.main{width:78px;height:78px;background:var(--play-bg,#fff);border:none;color:#000;box-shadow:0 8px 26px rgba(0,0,0,.45)}
+.np .p-ib.main svg{width:30px;height:30px}
+.p-volrow{display:flex;justify-content:center;margin-top:14px}
+.p-volrow .r-vol{max-width:440px}
+.np .p-gets{border-top:1px solid var(--line);padding-top:14px;margin-top:16px;justify-content:center}
+@media(max-width:560px){.np .p-art{width:100%;height:auto;aspect-ratio:1/1}.p-ctl{flex-wrap:wrap;row-gap:12px}.np .p-btns{order:-1;width:100%;justify-content:center;gap:18px}}
 `;
 const el = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; if (txt !== undefined) e.textContent = txt; return e; };
 const st = document.createElement('style'); st.textContent = css; document.head.appendChild(st);
@@ -53,27 +71,41 @@ const post = b => fetchJ('/api/player', { method: 'POST', headers: { 'Content-Ty
 
 /* ---- the header button, the bar, the panel (the radio's look) ---- */
 const pill = el('button', 'r-pill', 'Music'); pill.type = 'button'; pill.style.display = 'none';
-const nowBox = document.querySelector('.header .now'); if (nowBox) nowBox.appendChild(pill);
+const nowBox = document.getElementById('np-src') || document.querySelector('.header .now'); if (nowBox) nowBox.appendChild(pill);
 
 const bar = el('div', 'panel p-bar'); bar.style.display = 'none';
-const art = el('div', 'p-art'), bName = el('div', 'r-name'), bSub = el('div', 'r-title'), bChips = el('div', 'r-chips');
-const bTxt = el('div', 'r-txt'); bTxt.append(bName, bSub);
-const row = el('div', 'r-row'); row.append(art, bTxt, bChips);
+const IC = {
+  prev: "<svg viewBox='0 0 24 24' aria-hidden='true'><rect x='4' y='5' width='2.6' height='14' rx='1'/><path d='M19 5.5v13L8.5 12z'/></svg>",
+  next: "<svg viewBox='0 0 24 24' aria-hidden='true'><rect x='17.4' y='5' width='2.6' height='14' rx='1'/><path d='M5 5.5v13L15.5 12z'/></svg>",
+  play: "<svg viewBox='0 0 24 24' aria-hidden='true'><path d='M7 5v14l12-7z'/></svg>",
+  pause: "<svg viewBox='0 0 24 24' aria-hidden='true'><rect x='6' y='5' width='4' height='14' rx='1.2'/><rect x='14' y='5' width='4' height='14' rx='1.2'/></svg>",
+  queue: "<svg viewBox='0 0 24 24' aria-hidden='true'><path d='M3 5h13v2H3zm0 6h13v2H3zm0 6h9v2H3zm15-2h2v3h3v2h-3v3h-2v-3h-3v-2h3z'/></svg>",
+  lib: "<svg viewBox='0 0 24 24' aria-hidden='true'><path d='M4 3h2v18H4zm4 0h2v18H8zm4.6.6 1.9-.7 5.5 16.9-1.9.6z'/></svg>"
+};
+const npH = el('div', 'np-h'), bSrc = el('span', '', 'USB'); npH.append(el('h2', '', 'Now playing'), bSrc);
+const art = el('div', 'p-art'), bKick = el('div', 'p-kick'), bName = el('div', 'r-name'), bSub = el('div', 'r-title'), bChips = el('div', 'r-chips');
+const bTxt = el('div', 'r-txt'); bTxt.append(bKick, bName, bSub, bChips);
+const row = el('div', 'r-row'); row.append(art, bTxt);
 const pos = el('input'); pos.type = 'range'; pos.min = 0; pos.max = 1; pos.step = 0.1; pos.value = 0; pos.setAttribute('aria-label', 'Position');
 const tPos = el('span', '', '0:00'), tDur = el('span', '', '0:00');
 const seekRow = el('div', 'p-seek'); seekRow.append(tPos, pos, tDur);
-const bPrev = el('button', 'p-ib', '⏮'), bPlay = el('button', 'p-ib main', '⏸'), bNext = el('button', 'p-ib', '⏭');
-[bPrev, bPlay, bNext].forEach(b => { b.type = 'button'; });
-bPrev.title = 'Previous (the start of this one after 3 s)'; bNext.title = 'Next'; bPlay.title = 'Pause';
+const bPrev = el('button', 'p-ib'), bPlay = el('button', 'p-ib main'), bNext = el('button', 'p-ib');
+const bUp = el('button', 'p-ib'), bLib = el('button', 'p-ib');
+[bPrev, bPlay, bNext, bUp, bLib].forEach(b => { b.type = 'button'; });
+bPrev.innerHTML = IC.prev; bNext.innerHTML = IC.next; bPlay.innerHTML = IC.pause; bUp.innerHTML = IC.queue; bLib.innerHTML = IC.lib;
+bPrev.title = 'Previous (the start of this one after 3 s)'; bNext.title = 'Next'; bPlay.title = 'Pause'; bUp.title = 'Up next'; bLib.title = 'Library';
+[bPrev, bPlay, bNext, bUp, bLib].forEach(b => b.setAttribute('aria-label', b.title));
 const btns = el('div', 'p-btns'); btns.append(bPrev, bPlay, bNext);
 const vol = el('input'); vol.type = 'range'; vol.min = -60; vol.max = 0; vol.step = 1; vol.setAttribute('aria-label', 'Player volume');
 const volT = el('span'); const volBox = el('div', 'r-vol'); volBox.append(el('span', '', 'Volume'), vol, volT);
-const bLib = el('button', 'btn sec', 'Library'), bStop = el('button', 'btn', 'Stop');
-const ctl = el('div', 'r-ctl'); const gap = el('span'); gap.style.flex = '1';
-ctl.append(btns, volBox, gap, bLib, bStop);
+const bStop = el('button', 'btn sec', 'Stop'); bStop.type = 'button';
+const left = el('div', 'p-side'), right = el('div', 'p-side r'); left.append(bUp, bLib); right.append(bStop);
+const ctl = el('div', 'p-ctl'); ctl.append(left, btns, right);
+const volRow = el('div', 'p-volrow'); volRow.append(volBox);
 const gets = el('div', 'p-gets');
-bar.append(row, seekRow, ctl, gets);
-const room = document.querySelector('.wrap > .panel'); if (room) room.parentNode.insertBefore(bar, room);
+bar.append(npH, row, seekRow, ctl, volRow, gets);
+const slot = document.getElementById('np'), room = document.querySelector('.wrap > .panel');
+if (slot) slot.appendChild(bar); else if (room) room.parentNode.insertBefore(bar, room);
 
 const root = el('div'); document.body.appendChild(root);
 requestAnimationFrame(() => requestAnimationFrame(() => root.classList.add('r-ready')));
@@ -95,7 +127,7 @@ const ROLE_IX = { mix: -1, L: 0, R: 1, C: 2, LFE: 3, Ls: 4, Rs: 5, Lrs: 6, Rrs: 
 const ROLE_NAME = { mix: 'Mono mix', L: 'Left', R: 'Right', C: 'Centre', LFE: 'Subwoofer', Ls: 'Side L', Rs: 'Side R', Lrs: 'Rear L', Rrs: 'Rear R' };
 const mmss = s => { s = Math.max(0, Math.floor(s || 0)); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, ss = String(s % 60).padStart(2, '0'); return h ? h + ':' + String(m).padStart(2, '0') + ':' + ss : m + ':' + ss; };
 const baseName = u => { const n = (u || '').split('/').pop() || u || ''; return n.replace(/\.[^.]+$/, ''); };
-const folderOf = u => { const p = (u || '').replace(/^usb:/, '').split('/'); p.pop(); return p.join('/') || '/'; };
+const folderOf = u => { const p = (u || '').replace(/^usb:/, '').split('/'); p.pop(); return p.join('/'); };
 const join = (d, n) => (d.endsWith('/') ? d : d + '/') + n;
 const FOLDER = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5A2.5 2.5 0 0 1 5.5 4h4.2l2 2.2h6.8A2.5 2.5 0 0 1 21 8.7v8.8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg>';
 function setMsg(t, err) { msg.textContent = t || ''; msg.className = 'r-msg' + (err ? ' err' : ''); }
@@ -216,7 +248,7 @@ function show(k) {
 }
 function open() { root.classList.add('r-open'); document.body.style.overflow = 'hidden'; show(tab); }
 function close() { root.classList.remove('r-open'); document.body.style.overflow = ''; }
-pill.onclick = open; bLib.onclick = open; x.onclick = close; shade.onclick = close;
+pill.onclick = open; bLib.onclick = () => { tab = 'usb'; open(); }; bUp.onclick = () => { tab = 'next'; open(); }; x.onclick = close; shade.onclick = close;
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && root.classList.contains('r-open')) close(); });
 
 /* ---- the controls ---- */
@@ -281,9 +313,11 @@ function render(d) {
   bName.textContent = d.title || baseName(d.url) || 'Starting…';
   bName.title = (d.url || '').split('/').pop();
   const q = d.queue || [];
-  const where = q.length > 1 ? (d.index + 1) + ' of ' + q.length + ' · ' : '';
-  const who = [d.artist, d.album].filter(Boolean).join(' — ') || folderOf(d.url);
-  bSub.textContent = d.state === 'failed' || (d.message && d.state !== 'playing') ? (d.message || '') : where + who + (d.warning ? ' · ' + d.warning : '');
+  const usb = /^usb:/.test(d.url || '');
+  bSrc.textContent = usb ? 'USB' : 'Network';
+  bKick.textContent = (usb ? 'USB library' : 'From the network') + (q.length > 1 ? ' · ' + (d.index + 1) + ' of ' + q.length : '');
+  const who = [d.artist, d.album].filter(Boolean).join(' · ') || folderOf(d.url);
+  bSub.textContent = d.state === 'failed' || (d.message && d.state !== 'playing') ? (d.message || '') : who + (d.warning ? ' · ' + d.warning : '');
   bChips.textContent = '';
   const m = /^(.*?) (\d+) Hz \/ (\d+) bit \/ (\S+?)(?:, \/(\d) to (\d+))?$/.exec(fmt);
   if (m) {
@@ -298,7 +332,9 @@ function render(d) {
   }
   if (d.warning) { const w = chip('Heavy for USB', 'c-warn'); w.title = d.warning; bChips.appendChild(w); }
   if (d.state !== 'playing') bChips.appendChild(chip(d.state === 'paused' ? 'Paused' : d.state === 'buffering' ? 'Buffering…' : d.state === 'finishing' ? 'Ending…' : d.state === 'stopping' ? 'Stopping…' : 'Starting…', 'c-warn'));
-  bPlay.textContent = d.state === 'paused' ? '▶' : '⏸'; bPlay.title = d.state === 'paused' ? 'Play' : 'Pause';
+  const paused = d.state === 'paused';
+  if (bPlay.dataset.p !== String(paused)) { bPlay.dataset.p = String(paused); bPlay.innerHTML = paused ? IC.play : IC.pause; }
+  bPlay.title = paused ? 'Play' : 'Pause'; bPlay.setAttribute('aria-label', bPlay.title);
   bNext.disabled = !(q.length > d.index + 1);
   const dur = d.duration_s || 0;
   pos.max = dur > 0 ? dur : 1; pos.disabled = !(dur > 0);

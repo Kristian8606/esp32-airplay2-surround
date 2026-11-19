@@ -118,13 +118,19 @@ Click an image to open it full size.
     </td>
   </tr>
   <tr>
-    <td align="center" width="50%">
-      <a href="images/speakers-page-room.png"><img src="images/speakers-page-room.png" alt="Gateway speakers page: room map" width="100%"></a>
-      <br><sub><b>Gateway speakers page:</b> the room map shows which positions play</sub>
+    <td align="center" colspan="2">
+      <a href="images/speakers-page.png"><img src="images/speakers-page.png" alt="Gateway speakers page in the Warm theme: an album from the USB stick playing with its cover, and the room map with the front pair lit" width="100%"></a>
+      <br><sub><b>Gateway speakers page:</b> what plays now, here an album from the USB stick bit for bit on the front pair, and the room map with the positions that play</sub>
     </td>
+  </tr>
+  <tr>
     <td align="center" width="50%">
       <a href="images/speakers-page-tiles.png"><img src="images/speakers-page-tiles.png" alt="Gateway speakers page: one tile per speaker" width="100%"></a>
       <br><sub>One tile per speaker: role, level, delay and live sync</sub>
+    </td>
+    <td align="center" width="50%">
+      <a href="images/player-library.png"><img src="images/player-library.png" alt="USB player Library: the stick's folders and FLAC files, Play folder and + to the queue" width="100%"></a>
+      <br><sub><b>USB player:</b> the stick's folders and files, <b>Play folder</b>, <b>+</b> to the queue (<a href="#usb-player-experimental">more</a>)</sub>
     </td>
   </tr>
   <tr>
@@ -137,16 +143,6 @@ Click an image to open it full size.
     <td align="center" colspan="2">
       <a href="images/roomeq-page.png"><img src="images/roomeq-page.png" alt="Room EQ page: measured response of a 2-way speaker, its target and the expected result, with the filters for the woofer and the tweeter" width="100%"></a>
       <br><sub><b>Room EQ:</b> a 2-way speaker measured with the Gateway's microphone, and the filters that correct its woofer and tweeter (<a href="#room-eq">more</a>)</sub>
-    </td>
-  </tr>
-  <tr>
-    <td align="center" width="50%">
-      <a href="images/player-bar.png"><img src="images/player-bar.png" alt="USB player bar on the speakers page: cover, title and album, a FLAC bit for bit on the front pair" width="100%"></a>
-      <br><sub><b>USB player:</b> an album from the USB stick with its cover, bit for bit on the front pair (<a href="#usb-player-experimental">more</a>)</sub>
-    </td>
-    <td align="center" width="50%">
-      <a href="images/player-library.png"><img src="images/player-library.png" alt="USB player Library: the stick's folders and FLAC files, Play folder and + to the queue" width="100%"></a>
-      <br><sub>The Library: the stick's folders and files, <b>Play folder</b>, <b>+</b> to the queue</sub>
     </td>
   </tr>
 </table>
@@ -593,7 +589,10 @@ The web interface is part of the firmware and is updated with it.
 
 ## Settings
 
-Everything is configured in the browser.
+Everything is configured in the browser. Every page comes in two colour
+themes, **Warm** (the default) and **Violet**: the switch on the main page
+and on the speakers page changes them, and the browser remembers the
+choice.
 
 ### Gateway: main page (`http://<gateway-ip>/`)
 
@@ -611,14 +610,19 @@ The Gateway has no audio output, so it has no EQ or latency cards.
 
 ### Gateway: speakers page (`/speakers`)
 
-<a href="images/speakers-page-room.png"><img src="images/speakers-page-room.png" alt="Speakers page with the room map and three speakers playing a stereo stream" width="100%"></a>
+<a href="images/speakers-page.png"><img src="images/speakers-page.png" alt="Speakers page: an album from the USB stick in the Now playing card and the room map with the front pair playing" width="100%"></a>
 
-At the top, a **room map** seen from above: the screen at the top, you in
-the middle and all eight positions around you. An empty position is dashed,
-a position with a speaker is outlined, and a speaker that is playing glows.
-Two speakers on the same position are marked orange. Click a position to
-jump to its speaker. Above the map: what is playing now
-(`AAC · 48 kHz · Stereo`) and how many positions are taken.
+At the top, **Now playing**: what the speakers play and where it comes
+from. An AirPlay stream shows its format, with play/pause, skip and volume
+buttons that go to the Apple device; the **Music** and **Radio** buttons
+start the [USB player](#usb-player-experimental) or the web radio, which
+then fill the card. Beside it, a **room map** seen from above: the screen at
+the top, you in the middle and all eight positions around you. An empty
+position is dashed, a position with a speaker is outlined, and a speaker
+that is playing glows. Two speakers on the same position are marked orange.
+Click a position to jump to its speaker. Above both: what is playing now
+(`AAC · 48 kHz · Stereo`), how many positions are taken and the colour
+switch.
 
 <a href="images/speakers-page-tiles.png"><img src="images/speakers-page-tiles.png" alt="Speaker tiles with role, level, delay and live status" width="100%"></a>
 
@@ -638,13 +642,14 @@ Every speaker keeps its settings in its own flash and applies a change at
 once, also while playing. A warning shows when two speakers have the same
 role.
 
-**Web radio.** The **Radio** button in the page's header opens the
+**Web radio.** The **Radio** button in the Now playing card opens the
 stations: **Favourites**, your **country** (the browser's own at first, any
 other to choose), **Search** and **URL** for any stream address. The station
 lists come from [Radio Browser](https://www.radio-browser.info), straight
 from your browser; the Gateway keeps only the favourites and the volume.
-While the radio plays, a player bar above the room shows the station, the
-song title, the format (`MP3 128 → ALAC 44.1/16`), the volume and **Stop**.
+While the radio plays, the Now playing card shows the station, the song
+title, the format (`MP3 128 → ALAC 44.1/16`), the volume, **Stop** and your
+favourite stations in a row, one tap to switch.
 The Gateway reads the station (MP3 or AAC, HTTP or HTTPS), encodes it to
 ALAC (48 kHz streams at 48 kHz / 24-bit, others at their own rate, 16-bit)
 and plays it to the speakers as a buffered sender of its own, so they play
@@ -827,7 +832,7 @@ user `admin` and that password.
 
 <table>
   <tr>
-    <td width="50%"><a href="images/player-bar.png"><img src="images/player-bar.png" alt="Player bar: cover, title, artist and album, format chips, seek, controls, volume and the channel each speaker gets" width="100%"></a></td>
+    <td width="50%"><a href="images/speakers-page.png"><img src="images/speakers-page.png" alt="Now playing: cover, title, artist and album, format chips, seek, controls, volume and the channel each speaker gets" width="100%"></a></td>
     <td width="50%"><a href="images/player-library.png"><img src="images/player-library.png" alt="Library: the USB stick's folders and files" width="100%"></a></td>
   </tr>
 </table>
@@ -1175,7 +1180,7 @@ are listed in
 | Helpers | `components/helpers` | session events, bound sockets, captive DNS (`dns_server` in the log), under Apache-2.0; both firmwares |
 | Wi-Fi | `components/wifi` | station on a saved network, setup access point, host name (`wifi` in the log), under Apache-2.0; both firmwares |
 | Live log, firmware update | `components/log_stream`, `components/ota` | the log on `/logs`; update from a `.bin` upload (`ota` in the log), under Apache-2.0; both firmwares |
-| Web pages | `main/web_gateway.c`, `speaker/main/web_speaker.c` | each firmware's own pages and APIs on top of the shared web server |
+| Web pages | `main/web_gateway.c`, `speaker/main/web_speaker.c`, `web/` | each firmware's own pages and APIs on top of the shared web server; `web/theme.css` holds the Warm and Violet colours of every page |
 | Gateway proxy | `main/gw_proxy.c` | implements the audio engine API on the Gateway and forwards each call (`FWD …` in the log) |
 | Speaker registry | `main/gw_speakers.c` | control link on port 7100 (`_apsurround._tcp`), late joins, settings, status, TIME messages, which speaker updates next |
 | Speaker firmware | `main/gw_fw.c`, `speaker/main/spk_update.c` | the image in the Gateway's `storage` partition (`gw_fw`); download, check and install on the speaker (`spk_update`) |
@@ -1188,8 +1193,8 @@ are listed in
 | Protocol | `common/surround/surround_proto.h` | message types and payloads, versioned |
 | Audio engine | `speaker/main/audio` | FIFO, FDK AAC / ALAC decode, PCM store, I2S playout and servo |
 | Room calibration and Room EQ | `main/gw_calib.c`, `main/gw_mic.c`, `common/surround/cal_chirp.c`, `web/roomeq.html` | microphone capture, chirp search and level / delay suggestions; the sweeps of Room EQ, whose response and filters the browser computes (`gw_calib` in the log); the speaker side plays the chirps and sweeps (`ROOM CAL …`) |
-| Web radio | `main/gw_radio.c`, `web/radio.js` | reads a station, decodes MP3 / AAC, encodes ALAC and sends it to the buffered relay like an Apple sender (`gw_radio` in the log); the stations panel and player bar |
-| USB player | `main/gw_player*.c`, `main/gw_usb.c`, `web/player.js` | reads a file (USB drive or HTTP), decodes it on core 0, encodes one ALAC lane per speaker on core 1 and sends them to the buffered relay in lane mode (`gw_player`, `gw_usb` in the log); the Library and the player bar. The speakers take the lanes with **Player streams** (`common/surround/surround_player_formats.h`) |
+| Web radio | `main/gw_radio.c`, `web/radio.js` | reads a station, decodes MP3 / AAC, encodes ALAC and sends it to the buffered relay like an Apple sender (`gw_radio` in the log); the stations panel and its Now playing card |
+| USB player | `main/gw_player*.c`, `main/gw_usb.c`, `web/player.js` | reads a file (USB drive or HTTP), decodes it on core 0, encodes one ALAC lane per speaker on core 1 and sends them to the buffered relay in lane mode (`gw_player`, `gw_usb` in the log); the Library and its Now playing card. The speakers take the lanes with **Player streams** (`common/surround/surround_player_formats.h`) |
 | Speaker EQ | `speaker/main/audio/audio_eq.c`, `web/eq.html` | 24 biquads per output, mono or bi-amp with a Linkwitz-Riley crossover, delay and polarity per output |
 
 ## Measuring sync

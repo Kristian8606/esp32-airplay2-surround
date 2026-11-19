@@ -1,10 +1,10 @@
-<!DOCTYPE html><html><head>
+<!DOCTYPE html><html><head><link rel='stylesheet' href='/theme.css'><script>(function(){var p=null;try{p=localStorage.getItem('palette')}catch(e){}if(p!=='violet')document.documentElement.dataset.palette='warm'})()</script>
 <meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
 <title>Surround Speakers</title>
 <style>
 :root{--bg:#000;--panel:#0f0f10;--panel2:#17171a;--line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.16);--text:#f4f4f5;--muted:#8d8d93;--accent:#8b7bff;--glow:linear-gradient(90deg,#3b5bff,#8b5cff 50%,#ff3d7f)}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,'SF Pro Display','Helvetica Neue',system-ui,sans-serif;-webkit-font-smoothing:antialiased;background:var(--bg) radial-gradient(1200px 500px at 50% -200px,rgba(110,90,255,.16),transparent 70%) no-repeat;min-height:100vh;padding:20px 16px 40px;color:var(--text)}
+body{font-family:-apple-system,'SF Pro Display','Helvetica Neue',system-ui,sans-serif;-webkit-font-smoothing:antialiased;background:var(--bg) radial-gradient(1200px 500px at 50% -200px,var(--halo,rgba(110,90,255,.16)),transparent 70%) no-repeat;min-height:100vh;padding:20px 16px 40px;color:var(--text)}
 a{color:var(--accent);text-decoration:none}
 .wrap{max-width:1180px;margin:0 auto}
 .header{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;padding:18px 0 22px}
@@ -19,15 +19,15 @@ a{color:var(--accent);text-decoration:none}
 .ptitle{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:1.6px;margin-bottom:12px}
 /* Room: a top view, screen at the top, the listener in the middle. */
 .room{position:relative;width:100%;max-width:560px;margin:0 auto;aspect-ratio:16/10}
-.room .floor{position:absolute;inset:6% 4% 2%;border:1px solid var(--line);border-radius:18px;background:radial-gradient(circle at 50% 58%,rgba(139,123,255,.10),transparent 55%)}
-.room .screen{position:absolute;left:32%;right:32%;top:1.5%;height:5px;border-radius:3px;background:var(--glow);box-shadow:0 0 18px rgba(139,92,255,.6)}
+.room .floor{position:absolute;inset:6% 4% 2%;border:1px solid var(--line);border-radius:18px;background:radial-gradient(circle at 50% 58%,var(--room-glow,rgba(139,123,255,.10)),transparent 55%)}
+.room .screen{position:absolute;left:32%;right:32%;top:1.5%;height:5px;border-radius:3px;background:var(--glow);box-shadow:0 0 18px var(--accent-glow,rgba(139,92,255,.6))}
 .room .seat{position:absolute;left:50%;top:60%;transform:translate(-50%,-50%);width:46px;height:30px;border-radius:10px 10px 6px 6px;border:1px solid var(--line2);color:var(--muted);font-size:9px;display:flex;align-items:center;justify-content:center;letter-spacing:1px}
 .node{position:absolute;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:5px;cursor:default;width:96px}
 .node .dot{width:44px;height:44px;border-radius:50%;border:1px dashed rgba(255,255,255,.22);color:#5d5d63;font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:center;background:#08080a;transition:all .25s;position:relative}
 .node .who{font-size:10px;color:var(--muted);max-width:96px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:12px}
 .node.on{cursor:pointer}
 .node.on .dot{border:1px solid rgba(255,255,255,.75);color:#fff}
-.node.live .dot{border:none;color:#fff;background:#141418;box-shadow:0 0 0 2px #8b5cff,0 0 22px rgba(139,92,255,.55)}
+.node.live .dot{border:none;color:#fff;background:#141418;box-shadow:0 0 0 2px var(--accent,#8b5cff),0 0 22px var(--accent-glow,rgba(139,92,255,.55))}
 .node.dup .dot{box-shadow:0 0 0 2px #f5a524}
 .node .n{position:absolute;top:-4px;right:-6px;background:#f5a524;color:#000;border-radius:8px;font-size:9px;padding:1px 5px}
 .mixlist{text-align:center;color:var(--muted);font-size:12px;margin-top:6px;min-height:15px}
@@ -124,14 +124,97 @@ select:disabled,input:disabled{opacity:.45}
 .acc-p{padding:0 18px 18px}
 .acc-p .cal-top p{margin-top:0}
 .eq-btn{display:inline-block;padding:3px 12px;border:1px solid var(--accent);border-radius:999px;color:var(--text);font-size:12px;font-weight:600;line-height:1.4;white-space:nowrap}
-.eq-btn:hover{background:rgba(139,123,255,.15)}
+.eq-btn:hover{background:var(--accent-soft,rgba(139,123,255,.15))}
 @media(max-width:560px){.header h1{font-size:24px}.node{width:70px}.node .dot{width:36px;height:36px;font-size:11px}.node .who{font-size:9px;max-width:70px}.room{aspect-ratio:1/1}.room .seat{top:58%}}
+
+/* ---- layout 2: Now playing beside the Room, tiles with the values listed ---- */
+.kick{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--muted);margin-bottom:8px}
+.kick svg{width:18px;height:18px;stroke:var(--accent);fill:none;stroke-width:2;stroke-linecap:round}
+.kick a{margin-left:6px}
+.header h1{font-size:44px;font-weight:300;letter-spacing:-.5px;line-height:1.05}
+.header h1 b{font-weight:800;letter-spacing:-1px}
+.header .now{align-items:flex-end}
+.top{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:16px;align-items:stretch}
+@media(max-width:900px){.top{grid-template-columns:1fr}}
+.np{display:flex;flex-direction:column;min-width:0}
+.np>.panel{flex:1;margin-bottom:0;border-radius:24px;padding:24px;background:radial-gradient(120% 90% at 0% 0%,var(--np-glow,rgba(110,90,255,.24)),transparent 62%),var(--panel)}
+.np:has(>.r-bar:not([style*="none"])) .np-idle,.np:has(>.p-bar:not([style*="none"])) .np-idle{display:none}
+.np-h{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:18px}
+.np-h h2{font-size:22px;font-weight:700}
+.np-h span{font-size:13px;color:var(--muted)}
+.np-idle{display:flex;flex-direction:column}
+.np-idle .np-fmt{font-size:32px;font-weight:800;letter-spacing:-.5px;line-height:1.15;margin-bottom:10px}
+.np-idle p{color:var(--muted);font-size:17px;line-height:1.6}
+.np-src{display:flex;gap:10px;margin-top:20px;flex-wrap:wrap}
+.np-idle .p-kick{font-size:13px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--accent-2,#c4b2ff);margin-bottom:8px}
+.np-air{margin-top:auto;padding-top:22px}
+.a-ctl{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.a-btns{display:flex;align-items:center;gap:20px}
+.a-ib{flex:none;width:46px;height:46px;border-radius:50%;border:1px solid var(--line2);background:none;color:var(--text);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.a-ib:hover{border-color:var(--text)}
+.a-ib svg{width:22px;height:22px;fill:currentColor}
+.a-btns .a-ib{border:none;width:54px;height:54px}
+.a-btns .a-ib svg{width:30px;height:30px}
+.a-ib.main{width:78px;height:78px;border:none;background:var(--play-bg,#fff);color:#000;box-shadow:0 8px 26px rgba(0,0,0,.45)}
+.a-msg{text-align:center;font-size:12px;color:var(--muted);min-height:16px;margin-top:10px}
+@media(max-width:560px){.a-ctl{flex-wrap:wrap;row-gap:12px}.a-btns{order:-1;width:100%;justify-content:center;gap:18px}}
+
+.np-src .r-pill{font-size:15px;padding:12px 24px;min-height:46px}
+.np .r-row{gap:24px;align-items:center;flex-wrap:nowrap}
+.np .r-logo{width:150px;height:150px;border-radius:16px;font-size:34px;box-shadow:0 18px 40px rgba(0,0,0,.5)}
+.np .p-kick{font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--accent-2,#c4b2ff);margin-bottom:8px}
+.np .r-name{font-size:30px;font-weight:800;letter-spacing:-.5px;line-height:1.12;white-space:normal}
+.np .r-title{font-size:16px;margin-top:8px;white-space:normal;min-height:0}
+.np .r-chips{margin-top:12px}
+.np .r-ctl{margin-top:20px}
+.np .r-vol span{font-size:13px}
+@media(max-width:560px){.np .r-row{flex-wrap:wrap}.np .r-logo{width:96px;height:96px;font-size:24px}.np .r-name{font-size:24px}}
+.roomp{border-radius:24px;display:flex;flex-direction:column}
+.roomp .room{max-width:none;aspect-ratio:1/1;margin:0}
+.room .floor{inset:2%;border-radius:28px}
+.room .ring{position:absolute;left:50%;top:56%;width:56%;aspect-ratio:1/1;transform:translate(-50%,-50%);border-radius:50%;border:1px solid var(--line);background:rgba(0,0,0,.18)}
+.room .seat{top:58%;width:auto;height:auto;border:none;background:none}
+.room .seat svg{width:28px;height:28px;stroke:var(--muted);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.node .dot{border-radius:14px;width:50px;height:46px}
+.legend{display:flex;justify-content:center;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin-top:14px}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.legend i{width:11px;height:11px;border-radius:50%;display:inline-block;box-sizing:border-box}
+.legend .l-play{background:var(--accent);box-shadow:0 0 8px var(--accent-glow)}
+.legend .l-conn{background:var(--text)}
+.legend .l-none{border:1.5px dashed var(--muted)}
+.grid{grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin-top:16px}
+.tile{border-radius:24px;padding:20px 22px;display:flex;flex-direction:column;gap:14px}
+.tile.live{border-color:var(--accent-soft)}
+.t-head{justify-content:space-between;margin-bottom:0}
+.rb{width:auto;min-width:48px;padding:0 10px;height:40px;font-size:16px}
+.tile.live .rb{background:var(--accent-soft);color:var(--accent-2,#c4b2ff);border-color:transparent}
+.badge{font-size:14px;border:none;padding:0;text-transform:none;letter-spacing:0;font-weight:600}
+.badge.on{color:var(--accent-2,#c4b2ff)}
+.t-name h2{font-size:26px;font-weight:800;letter-spacing:-.5px}
+.t-name .meta{font-size:14px;margin-top:4px}
+.play{display:block;margin:0;min-height:0}
+.pl-what{font-size:16px;font-weight:500}
+.pl-fmt{font-size:13px;color:var(--muted);margin-top:4px}
+.stats{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;border-top:1px solid var(--line);padding-top:14px;font-size:14px;margin:0}
+.stats dt{color:var(--muted)}
+.stats dd{text-align:right;font-variant-numeric:tabular-nums;margin:0}
+.stats .ok{color:#7ee2a0}.stats .wa{color:#f7c46c}.stats .bad{color:#ff8a80}
+.t-dev{border-top:1px solid var(--line);padding-top:14px}
+.t-dev-h{font-size:11px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:var(--accent-2,#c4b2ff);margin-bottom:12px}
+.t-dev .fw{font-size:11px;color:var(--muted);font-family:ui-monospace,Menlo,monospace;margin-top:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.t-dev .fw.odd{color:#f7c46c}
+.actions{margin-top:12px}
+.actions .msg{flex:1}
+.links{margin-left:0}
 </style></head><body><div class='wrap'>
 <div class='header'>
- <div><h1><b>Surround</b> Speakers</h1><div class='bar'></div><p>Role, level and delay of every speaker. <a href='/'>&larr; Back</a></p><p id='gw-fw' style='margin-top:4px;font-size:11px'></p></div>
- <div class='now'><div class='stat'><label>Now playing</label><span id='now-fmt'>&mdash;</span></div><div class='stat'><label>Speakers</label><span id='now-count'>&mdash;</span></div></div>
+ <div><div class='kick'><svg viewBox='0 0 24 24' aria-hidden='true'><path d='M3 10v4M7 6v12M11 3v18M15 7v10M19 10v4'/></svg>AirPlay Gateway <a href='/'>&larr; Back</a></div><h1><b>Surround</b> Speakers</h1><div class='bar'></div><p>Role, level and delay of every speaker.</p><p id='gw-fw' style='margin-top:4px;font-size:11px'></p></div>
+ <div class='now'><div class='stat'><label>Now playing</label><span id='now-fmt'>&mdash;</span></div><div class='stat'><label>Speakers</label><span id='now-count'>&mdash;</span></div><div class='pal' role='group' aria-label='Colours'><button type='button' data-p='violet'>Violet</button><button type='button' data-p='warm'>Warm</button></div><script>(function(){var r=document.documentElement,b=document.querySelectorAll('.pal button');function set(p){if(p!=='violet')r.dataset.palette='warm';else delete r.dataset.palette;b.forEach(function(x){var on=x.dataset.p===(p==='violet'?'violet':'warm');x.classList.toggle('on',on);x.setAttribute('aria-pressed',on)})}var p=null;try{p=localStorage.getItem('palette')}catch(e){}set(p);b.forEach(function(x){x.onclick=function(){try{localStorage.setItem('palette',x.dataset.p)}catch(e){}set(x.dataset.p)}})})()</script></div>
 </div>
-<div class='panel'><div class='ptitle'>Room</div><div class='room' id='room'><div class='floor'></div><div class='screen'></div><div class='seat'>YOU</div></div><div class='mixlist' id='mixlist'></div></div>
+<div class='top'>
+<div class='np' id='np'><div class='panel np-idle'><div class='np-h'><h2>Now playing</h2><span id='np-src-name'></span></div><div class='p-kick' id='np-kick' style='display:none'>AirPlay</div><div class='np-fmt' id='np-fmt'>Nothing plays</div><p id='np-text'>Play music from the USB stick or a web radio station, or pick the Gateway as the speaker on an Apple device.</p><div class='np-src' id='np-src'></div><div class='np-air' id='np-air' style='display:none'><div class='a-ctl'><button type='button' class='a-ib' data-c='volume_down' title='Volume down' aria-label='Volume down'><svg viewBox='0 0 24 24' aria-hidden='true'><path d='M3 9h4l5-4v14l-5-4H3z'/><rect x='15' y='11' width='7' height='2' rx='1'/></svg></button><div class='a-btns'><button type='button' class='a-ib' data-c='previous' title='Previous' aria-label='Previous'><svg viewBox='0 0 24 24' aria-hidden='true'><rect x='4' y='5' width='2.6' height='14' rx='1'/><path d='M19 5.5v13L8.5 12z'/></svg></button><button type='button' class='a-ib main' data-c='toggle' title='Play or pause' aria-label='Play or pause'></button><button type='button' class='a-ib' data-c='next' title='Next' aria-label='Next'><svg viewBox='0 0 24 24' aria-hidden='true'><rect x='17.4' y='5' width='2.6' height='14' rx='1'/><path d='M5 5.5v13L15.5 12z'/></svg></button></div><button type='button' class='a-ib' data-c='volume_up' title='Volume up' aria-label='Volume up'><svg viewBox='0 0 24 24' aria-hidden='true'><path d='M2 9h4l5-4v14l-5-4H2z'/><path d='M14 11h3V8h2v3h3v2h-3v3h-2v-3h-3z'/></svg></button></div><div class='a-msg' id='np-air-msg'></div></div></div></div>
+<div class='panel roomp'><div class='np-h'><h2>Room</h2><span>Top view</span></div><div class='room' id='room'><div class='floor'></div><div class='ring'></div><div class='screen'></div><div class='seat' title='You'><svg viewBox='0 0 24 24' role='img' aria-label='Your seat'><path d='M6 10V7a3 3 0 0 1 3-3h6a3 3 0 0 1 3 3v3'/><path d='M4 13a2 2 0 0 1 4 0v1h8v-1a2 2 0 0 1 4 0v4H4z'/><path d='M6 17v2M18 17v2'/></svg></div></div><div class='legend'><span><i class='l-play'></i>Playing</span><span><i class='l-conn'></i>Connected</span><span><i class='l-none'></i>Unassigned</span></div><div class='mixlist' id='mixlist'></div></div>
+</div>
 <div class='panel cal acc' id='cal' style='display:none'>
  <button class='acc-h' aria-expanded='false'><span class='chev'>&#9662;</span><span class='acc-t'>Room calibration</span><span class='chip c-dim' id='cal-chip'>Microphone not tested</span></button>
  <div class='acc-b'><div class='acc-in'><div class='acc-p'>
@@ -181,13 +264,15 @@ function buildRoom(){
 function focusCard(k){const c=cards[k];if(!c)return;c.el.scrollIntoView({behavior:'smooth',block:'center'});c.el.classList.add('flash');setTimeout(()=>c.el.classList.remove('flash'),1200);}
 function makeCard(s){
  const k=key(s.mac),d=document.createElement('div');d.className='tile';d.id='c'+k;
- d.innerHTML="<div class='t-head'><div class='rb'></div><div class='t-name'><h2></h2><div class='meta'></div><div class='fw'></div></div><span class='badge'></span></div><div class='play'></div>"+
-  "<div class='ctl'><div class='fg full'><label>Role</label><select>"+ROLES.map(r=>"<option value='"+r[0]+"'>"+r[1]+"</option>").join('')+"</select></div>"+
+ d.innerHTML="<div class='t-head'><div class='rb'></div><span class='badge'></span></div><div class='t-name'><h2></h2><div class='meta'></div></div>"+
+  "<div class='play'><div class='pl-what'></div><div class='pl-fmt'></div></div>"+
+  "<dl class='stats'><dt>Sync</dt><dd class='s-sync'></dd><dt>I&sup2;S</dt><dd class='s-i2s'></dd><dt>Buffer</dt><dd class='s-buf'></dd><dt>TSF</dt><dd class='s-tsf'></dd></dl>"+
+  "<div class='t-dev'><div class='t-dev-h'>Device details</div><div class='ctl'><div class='fg full'><label>Role</label><select>"+ROLES.map(r=>"<option value='"+r[0]+"'>"+r[1]+"</option>").join('')+"</select></div>"+
   "<div class='fg'><label>Level (dB)</label><input type='number' class='trim' min='-30' max='0' step='0.5'></div>"+
   "<div class='fg'><label>Delay (ms)</label><input type='number' class='delay' min='0' max='50' step='0.1'></div>"+
   "<div class='fg lpf' style='display:none'><label>Crossover (low-pass)</label><select class='lp'>"+LOWPASS.map(v=>"<option value='"+v+"'>"+lpName(v)+"</option>").join('')+"</select></div>"+
   "<div class='fg lpf' style='display:none'><label>LFE gain (5.1/7.1)</label><select class='lg'>"+LFEGAIN.map(v=>"<option value='"+v+"'>"+(v?'+'+v+' dB':'0 dB')+"</option>").join('')+"</select></div></div>"+
-  "<div class='actions'><button class='btn'>Save</button><span class='msg'></span><span class='links'></span></div><div class='note' style='display:none'></div>";
+  "<div class='fw'></div><div class='actions'><span class='links'></span><span class='msg'></span><button class='btn'>Save</button></div><div class='note' style='display:none'></div></div>";
  const c={el:d,dirty:false,mac:s.mac,sel:d.querySelector('select'),trim:d.querySelector('.trim'),delay:d.querySelector('.delay'),lp:d.querySelector('.lp'),lg:d.querySelector('.lg'),lpf:d.querySelectorAll('.lpf'),btn:d.querySelector('.btn'),msg:d.querySelector('.msg'),note:d.querySelector('.note')};
  [c.sel,c.trim,c.delay,c.lp,c.lg].forEach(x=>x.addEventListener('input',()=>{c.dirty=true;c.msg.textContent='';showLp(c);}));
  c.btn.onclick=()=>save(c);
@@ -208,7 +293,6 @@ function setLg(c,db){
  if(![...c.lg.options].some(o=>o.value===v))c.lg.add(new Option('+'+db+' dB',v));
  c.lg.value=v;
 }
-function chip(cls,t){return "<span class='chip "+cls+"'>"+esc(t)+"</span>";}
 function rate(hz){return hz%1000?(hz/1000).toFixed(1)+' kHz':(hz/1000)+' kHz';}
 function layout(n){return n==8?['7.1','c-71']:n==6?['5.1','c-51']:n==2?['Stereo','c-st']:n==1?['Mono','c-mono']:[n+' ch','c-mono'];}
 /* What a role plays from a stereo source (same table as spk_link.c):
@@ -224,39 +308,44 @@ function audible(p,role){
  if(p.label==='silent')return false;
  return !(p.label===undefined&&p.channels<=2&&stereoRoute(role)==='silent');
 }
-function playHtml(p,role){
- if(!p)return chip('c-dim','no status yet');
- if(!p.active)return chip('c-dim','idle')+(p.time?'':chip('c-dim','no sender time'));
- let h='';
- if(p.label==='silent')h+=chip('c-dim','silent: no '+(TITLE[role]||'such')+' channel in this stream');
- else if(p.label!==undefined)h+=chip('c-ch',p.output_channel<0?'plays: mono mix':'plays: '+p.label);
- else if(p.channels>2)h+=chip('c-ch','plays: mix');
- else{const r=stereoRoute(role);h+=chip(r==='silent'?'c-dim':'c-ch','plays: '+r);}
- const fmt=[p.codec||'?',p.sample_rate?rate(p.sample_rate):''];
- if(p.bits)fmt.push(p.bits+'-bit');
- h+=chip('c-fmt',fmt.filter(Boolean).join(' · '));
- const l=layout(p.channels);h+=chip(l[1],l[0]);
- h+=chip(p.stream==='realtime'?'c-rt':'c-buf',p.stream==='realtime'?'Realtime':'Buffered');
- if(!p.playing)h+=chip('c-dim','paused');
- if(p.sync_ms!==undefined){const a=Math.abs(p.sync_ms);h+=chip(a<0.5?'c-ok':a<2?'c-warn':'c-bad','sync '+(p.sync_ms>=0?'+':'')+p.sync_ms.toFixed(2)+' ms · I2S '+(p.i2s_ppm>=0?'+':'')+p.i2s_ppm+' ppm');}
- else if(p.playing)h+=chip('c-warn','waiting for timing');
- if(p.fifo_capacity_kib)h+=chip('c-dim','buffer '+(p.fifo_kib/1024).toFixed(1)+'/'+(p.fifo_capacity_kib/1024).toFixed(1)+' MiB');
- h+=p.time?chip(p.tsf_rms_us<20?'c-dim':'c-warn','TSF ±'+p.tsf_rms_us.toFixed(1)+' µs'):chip('c-bad','no sender time');
- return h;
+/* What the tile shows of a speaker's playback: two lines and four values. */
+function playInfo(p,role){
+ const r={what:'No status yet',fmt:'',sync:'—',syncC:'',i2s:'—',buf:'—',tsf:'—',tsfC:''};
+ if(!p)return r;
+ r.tsf=p.time?'±'+p.tsf_rms_us.toFixed(1)+' µs':'no sender time';r.tsfC=p.time?(p.tsf_rms_us<20?'':'wa'):'bad';
+ if(!p.active){r.what='Idle';return r;}
+ if(p.label==='silent')r.what='Silent: no '+(TITLE[role]||'such')+' channel in this stream';
+ else if(p.label!==undefined)r.what=p.output_channel<0?'Plays the mono mix':'Plays '+p.label;
+ else if(p.channels>2)r.what='Plays the mix';
+ else{const s=stereoRoute(role);r.what=s==='silent'?'Silent in stereo':'Plays '+s;}
+ const f=[p.codec||'?',p.sample_rate?rate(p.sample_rate):''];
+ if(p.bits)f.push(p.bits+'-bit');
+ f.push(layout(p.channels)[0],p.stream==='realtime'?'Realtime':'Buffered');
+ if(!p.playing)f.push('paused');
+ r.fmt=f.filter(Boolean).join(' · ');
+ if(p.sync_ms!==undefined){const a=Math.abs(p.sync_ms);r.sync=(p.sync_ms>=0?'+':'')+p.sync_ms.toFixed(2)+' ms';r.syncC=a<0.5?'ok':a<2?'wa':'bad';r.i2s=(p.i2s_ppm>=0?'+':'')+p.i2s_ppm+' ppm';}
+ else if(p.playing){r.sync='waiting for timing';r.syncC='wa';}
+ if(p.fifo_capacity_kib)r.buf=(p.fifo_kib/1024).toFixed(1)+' / '+(p.fifo_capacity_kib/1024).toFixed(1)+' MiB';
+ return r;
 }
 function update(c,s,dup,common){
  c.el.querySelector('h2').textContent=title(s.channel,s.name||s.ip);
  const b=c.el.querySelector('.badge'),wait=s.state.indexOf('waiting')===0;
- b.textContent=wait?'waits for skip':(s.audio?'streaming':'connected');b.className='badge '+(wait?'wait':(s.audio?'on':''));
+ const live=audible(s.playback,s.channel);
+ b.textContent=wait?'Waits for a skip':live?'Playing':s.audio?'Silent':'Connected';b.className='badge '+(wait?'wait':(live?'on':''));
  const odd=common&&s.firmware!==common;
  /* With a firmware on the Gateway, its build is the reference. */
  const fwState=s.fw_update,fwBad=fwState?fwState!=='current':odd;
- c.el.querySelector('.meta').innerHTML='<b>'+esc(s.name||s.ip)+'</b> · '+esc(s.ip);
- const fw=c.el.querySelector('.fw');fw.textContent='fw '+(s.firmware||'?')+(FWS[fwState]||'');fw.className='fw'+(fwBad?' odd':'');fw.title=fwBad?'Another build than '+(fwState?'the Gateway holds':'the other speakers'):'';
+ c.el.querySelector('.meta').textContent=(s.name||s.ip)+' · '+s.ip;
+ const fw=c.el.querySelector('.fw');fw.textContent='Firmware '+(s.firmware||'?')+(FWS[fwState]||'');fw.className='fw'+(fwBad?' odd':'');fw.title=fwBad?'Another build than '+(fwState?'the Gateway holds':'the other speakers'):'';
  c.el.querySelector('.links').innerHTML="<a href='http://"+esc(s.ip)+"/' target='_blank'>Page</a><a href='http://"+esc(s.ip)+"/eq' target='_blank'>EQ</a>";
  c.el.querySelector('.rb').textContent=short(s.channel);
- c.el.querySelector('.play').innerHTML=playHtml(s.playback,s.channel);
- c.el.classList.toggle('live',audible(s.playback,s.channel));
+ const pi=playInfo(s.playback,s.channel),q=x=>c.el.querySelector(x);
+ q('.pl-what').textContent=pi.what;q('.pl-fmt').textContent=pi.fmt;
+ q('.s-sync').textContent=pi.sync;q('.s-sync').className='s-sync '+pi.syncC;
+ q('.s-i2s').textContent=pi.i2s;q('.s-buf').textContent=pi.buf;
+ q('.s-tsf').textContent=pi.tsf;q('.s-tsf').className='s-tsf '+pi.tsfC;
+ c.el.classList.toggle('live',live);
  const have=s.channel!==undefined;
  [c.sel,c.trim,c.delay,c.lp,c.lg,c.btn].forEach(x=>x.disabled=!have);
  c.lpOk=s.lowpass_hz!==undefined&&s.lfe_gain_db!==undefined; /* an older speaker has neither */
@@ -291,11 +380,37 @@ function updateRoom(list){
  }
  document.getElementById('mixlist').textContent=mix.length?'Mono mix: '+mix.join(', '):'';
 }
+/* The Now playing card while neither the radio nor the USB player plays:
+ * AirPlay (what the speakers play, and the sender's remote) or nothing. */
+let npP=null,npT='—',airOn=false;
+const NP_PLAY="<svg viewBox='0 0 24 24' aria-hidden='true'><path d='M7 5v14l12-7z'/></svg>",NP_PAUSE="<svg viewBox='0 0 24 24' aria-hidden='true'><rect x='6' y='5' width='4' height='14' rx='1.2'/><rect x='14' y='5' width='4' height='14' rx='1.2'/></svg>";
+function drawNp(){
+ const nf=document.getElementById('np-fmt');if(!nf)return;
+ const air=airOn||!!npP,nt=document.getElementById('np-text');
+ document.getElementById('np-kick').style.display=air?'':'none';
+ document.getElementById('np-src-name').textContent=air?'AirPlay':'';
+ document.getElementById('np-air').style.display=airOn?'':'none';
+ nf.textContent=npP?npT:air?'Connected':'Nothing plays';
+ nt.textContent=npP?'An Apple device plays to the speakers. The buttons below go to it; Music or Radio takes the speakers over.':air?'An Apple device is connected and paused.':'Play music from the USB stick or a web radio station, or pick the Gateway as the speaker on an Apple device.';
+ const pp=document.querySelector('#np-air .a-ib.main'),on=!!(npP&&npP.playing);
+ if(pp&&pp.dataset.on!==String(on)){pp.dataset.on=String(on);pp.innerHTML=on?NP_PAUSE:NP_PLAY;}
+}
+async function airPoll(){
+ try{const r=await fetch('/api/audio/remote',{cache:'no-store'});if(r.ok)airOn=!!(await r.json()).connected;}catch(e){}
+ drawNp();setTimeout(airPoll,airOn?2500:5000);
+}
+document.querySelectorAll('#np-air [data-c]').forEach(b=>b.onclick=async()=>{
+ const m=document.getElementById('np-air-msg');m.textContent='';
+ try{const r=await fetch('/api/audio/remote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:b.dataset.c})});if(!r.ok)m.textContent=await r.text();}
+ catch(e){m.textContent='The command did not reach the Gateway';}
+});
+airPoll();
 function updateNow(list){
  const p=(list.find(s=>s.playback&&s.playback.active&&s.playback.playing)||list.find(s=>s.playback&&s.playback.active)||{}).playback;
  let t='—';
  if(p){const l=layout(p.channels)[0];t=[p.codec,p.sample_rate?rate(p.sample_rate):'',l].filter(Boolean).join(' · ')+(p.playing?'':' (paused)');}
  document.getElementById('now-fmt').textContent=t;
+ npP=p;npT=t;drawNp();
  const roles=new Set(list.filter(s=>s.channel>=0).map(s=>s.channel));
  document.getElementById('now-count').textContent=list.length+' · '+roles.size+' of 8 positions';
 }
