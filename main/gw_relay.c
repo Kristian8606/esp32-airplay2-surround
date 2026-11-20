@@ -83,7 +83,7 @@ static const char *TAG = "gw_relay";
  * the sender's audio meanwhile. Real time comes from the frames' RTP
  * timestamps. */
 #define GW_RELAY_PACE_FACTOR  2.0
-#define GW_RELAY_PACE_BURST_S 2.0
+#define GW_RELAY_PACE_BURST_S 0.5
 /* RTP jumps more than this (a seek, a new track): pacing starts over. */
 #define GW_RELAY_PACE_JUMP_S  1.0
 /* A frame that would reach the speakers more than this after its time to

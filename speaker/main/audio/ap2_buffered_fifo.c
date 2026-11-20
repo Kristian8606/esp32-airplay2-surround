@@ -22,13 +22,7 @@
 #include "socket_utils.h"
 #include "airplay_log.h"
 
-/* Match Shairport Sync 5.x buffered_read.c: recv at most 4096 bytes, and once
- * more than 16 KiB is queued, sleep 10 ms after each recv. This intentionally
- * lets AutoMix bursts accumulate in the large compressed FIFO without making
- * the TCP reader monopolise the CPU. */
 #define FIFO_RECV_CHUNK       4096U
-#define FIFO_PACE_THRESHOLD  16384U
-#define FIFO_PACE_SLEEP_MS      10U
 #define FIFO_MIN_WIRE_LEN       14U
 /* Diagnostics: the sender paces buffered audio in bursts several seconds
  * apart. A silence much longer than that, with room in the FIFO, means the
@@ -236,15 +230,8 @@ static void tcp_reader_task(void *arg) {
         fifo->occupancy += (size_t)n;
         fifo->total_written += (uint64_t)n;
       }
-      const bool have_time_to_sleep = fifo->occupancy > FIFO_PACE_THRESHOLD;
       xSemaphoreGive(fifo->fifo_mutex);
       xSemaphoreGive(fifo->control_wake);
-
-      if (have_time_to_sleep) {
-        TickType_t ticks = pdMS_TO_TICKS(FIFO_PACE_SLEEP_MS);
-        if (ticks == 0) ticks = 1;
-        vTaskDelay(ticks);
-      }
     }
 
     /* The reader owns close(); detach the shared descriptor before closing it
