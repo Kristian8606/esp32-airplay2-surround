@@ -12,7 +12,8 @@
 # ESP32 AirPlay 2 Surround Gateway
 
 **Wireless 5.1 / 7.1 surround sound from an Apple TV, built from low-cost
-ESP32-S3 boards: one Gateway, and one board per speaker.**
+ESP32 boards: one Gateway (an ESP32-S3, or an ESP32-P4 for the most
+features), and one ESP32-S3 per speaker.**
 
 The Apple TV sees **one AirPlay 2 speaker: the Gateway**. The Gateway takes
 the complete surround stream and passes it on, unchanged, to up to **eight
@@ -35,8 +36,8 @@ system.
 - ⏱️ **Microsecond clock alignment** between speakers through the access
   point's beacon timer (TSF). No extra hardware, no cables.
 - 🎤 **Room calibration** with an optional INMP441 microphone on the
-  Gateway: distance, delay and level of every speaker measured from your
-  seat, applied with one click.
+  Gateway (or the ESP32-P4 board's own microphone): distance, delay and
+  level of every speaker measured from your seat, applied with one click.
 - 📈 **Room EQ** with the same microphone: each speaker's frequency
   response measured from your seat and corrected with its own EQ, with
   settings like REW's.
@@ -59,6 +60,12 @@ system.
   receiver of its own and never shows up on an iPhone; it just follows the
   Gateway. (A board that is its own AirPlay receiver is the `standalone`
   branch.)
+- 🚀 **Two Gateway boards, one code**: an ESP32-S3, the same board as the
+  speakers, or a **DFRobot FireBeetle 2 ESP32-P4**, which does the most:
+  twice the relay buffer, a fast USB port for heavy 5.1 / 7.1 WAV files,
+  quick cover thumbnails and a microphone on the board
+  ([S3 or P4](#esp32-s3-or-esp32-p4)). The chip is picked with
+  `idf.py set-target`.
 
 > [!NOTE]
 > **The project is under active development.** A Gateway and five speakers
@@ -70,10 +77,11 @@ system.
 > [!IMPORTANT]
 > **16 MB flash modules (ESP32-S3 N16R8).** The 8 MB flash of the N8R8
 > boards is nearly full: the Gateway keeps a copy of the speaker firmware to
-> update the speakers, and that copy has only about 117 KB of room left. A
+> update the speakers, and that copy has only about 110 KB of room left. A
 > board with 16 MB can already use its full flash
 > ([16 MB flash](#16-mb-flash)); new features will need it. **If you buy
-> boards now, buy N16R8.** 8 MB boards build and update as before.
+> boards now, buy N16R8.** 8 MB boards build and update as before. The
+> ESP32-P4 Gateway has 16 MB anyway.
 >
 > **Planned:**
 > - 🔊 **USB sound card** support.
@@ -182,7 +190,8 @@ and shares it with the speakers:
    (format, key, start, flush, pause, volume, timing) is passed to the
    speakers over a small control protocol, and every encrypted audio packet
    is copied byte for byte to each speaker. The Gateway reads the stream into
-   a 4 MiB buffer and sends each speaker from it, so at a track change the
+   a 4 MiB buffer (8 MiB on the ESP32-P4) and sends each speaker from it, so
+   at a track change the
    old track is dropped from the buffer at once instead of being sent only
    to be thrown away.
 3. **Every speaker decodes only its own channel.** One ESP32-S3 cannot decode
@@ -198,6 +207,9 @@ and shares it with the speakers:
    shares its beacon timer (TSF). Eight times a second the Gateway tells the
    speakers "the Apple TV's time P is TSF T". Each speaker converts T to its
    own clock and plays every sample at the moment the Apple TV scheduled it.
+   (On the ESP32-P4 the Wi-Fi radio is the board's ESP32-C6: a firmware of
+   this project on the C6, installed by the Gateway itself, marks the TSF
+   with a pulse on a wire that the P4 timestamps in hardware.)
 
 You choose each speaker's role (Front Left, Centre, Subwoofer, …) on the
 Gateway's page, even while music is playing. Start with two or three
@@ -205,7 +217,7 @@ speakers and add the rest later.
 
 ```
                        ┌─────────────────────────────┐
-   Apple TV ──AirPlay──►  Gateway (ESP32-S3)          │
+   Apple TV ──AirPlay──►  Gateway (ESP32-S3 or -P4)   │
    (PTP clock)         │  pairing · RTSP · PTP        │
                        │  no decoder, no audio output │
                        └─────┬──────────────┬─────────┘
@@ -262,10 +274,33 @@ page as well, or the bass is cut twice.
 | Part | Notes |
 |---|---|
 | **One ESP32-S3 board**, the same type as the speakers (N8R8, or N16R8: see the note at the top), with a **UART port** besides its native USB port (DevKitC boards have both) | It has no audio output: no DAC, no amplifier, no wiring. A USB supply is all it needs. It is flashed and logs over its UART port; the native USB port takes the [USB player](#usb-player-experimental)'s drive. |
-| *Or:* **a DFRobot FireBeetle 2 ESP32-P4** (16 MB flash, 32 MB PSRAM, Wi-Fi through its ESP32-C6) | The most capable Gateway: faster CPU, more memory, an 8 MiB relay buffer, and an onboard microphone for room calibration. Built with `./board.sh p4-firebeetle` ([Boards](#boards), [bring-up](docs/p4-gateway-bringup.md)). The speakers stay ESP32-S3. |
+| *Or:* **a DFRobot FireBeetle 2 ESP32-P4** (16 MB flash, 32 MB PSRAM, Wi-Fi through its ESP32-C6) | The Gateway with the most features (see below). Built with `idf.py set-target esp32p4` ([Boards](#boards), [bring-up](docs/p4-gateway-bringup.md)). The speakers stay ESP32-S3. |
 | **A place with a good signal** | It receives the stream from the Apple TV and sends it again to every speaker, so it carries the most Wi-Fi traffic. Near the access point is best. |
-| *Optional:* **a USB stick** | Music for the [USB player](#usb-player-experimental): FAT32, on the native USB port, which needs 5 V from the board. |
-| *Optional:* **INMP441 I2S microphone** | For [room calibration](#room-calibration): VDD → 3V3, GND and L/R → GND, SCK → GPIO 5, WS → GPIO 6, SD → GPIO 4 (changeable in `menuconfig`). |
+| *Optional:* **a USB stick** | Music for the [USB player](#usb-player-experimental): FAT32. On the S3 it goes on the native USB port, which needs 5 V from the board; on the P4 on its high-speed USB port. |
+| *Optional:* **INMP441 I2S microphone** | For [room calibration](#room-calibration): VDD → 3V3, GND and L/R → GND, SCK → GPIO 5, WS → GPIO 6 (GPIO 52 on the P4), SD → GPIO 4 (changeable in `menuconfig`). The FireBeetle 2 ESP32-P4 has a PDM microphone on the board, used by default. |
+
+#### ESP32-S3 or ESP32-P4
+
+Both run the same firmware, built for their chip. The **ESP32-P4 supports
+the most features**; the S3 does everything the speakers need, with the
+limits below.
+
+| | ESP32-S3 (N8R8 / N16R8) | ESP32-P4 (FireBeetle 2) |
+|---|---|---|
+| CPU, memory | 2 cores at 240 MHz, 8 MB PSRAM | 2 cores at 360 MHz, 32 MB PSRAM |
+| Wi-Fi | its own, 2.4 GHz | the board's ESP32-C6, 2.4 GHz; the Gateway installs the C6's firmware itself |
+| Relay buffer (AirPlay music and films) | 4 MiB | 8 MiB |
+| USB port for the player | full speed, about **8.4 Mbit/s** measured: a **5.1 / 7.1 WAV** is too heavy and stops every few seconds to buffer; FLAC of the same file plays | **high speed** (USB 2.0), its own port: no bitrate warning |
+| 7.1 at 24-bit from the USB player | a dense film mix is at the limit of the CPU and stops now and then; 16-bit plays | more CPU to spare |
+| AirPlay artwork on the Now playing card | — (the picture would take up to 2 MB of the memory the relay needs; Apple Home still shows its own) | yes |
+| Covers of USB music | sent to the page as they are in the file | turned into small thumbnails by the P4's JPEG hardware and kept on the stick (folder `.airplay-covers-v1`), so the page shows them quickly |
+| Player start | 2 s | 1 s |
+| Calibration microphone | INMP441 | INMP441, or the PDM microphone on the board |
+| Console, flashing | its UART port (the native USB port is the player's) | UART0, 115200 baud |
+| Flash | 8 MB, or 16 MB ([16 MB flash](#16-mb-flash)) | 16 MB, with 6 MB firmware slots |
+
+The heavy-file limits of the S3 are measured; the P4's high-speed port has
+not yet been measured with a heavy 7.1 WAV.
 
 ### Per speaker (one set for every position)
 
@@ -296,7 +331,7 @@ of the dialogue**, so build it early.
 - An **Apple TV** for 5.1 / 7.1 (surround is sent only by the Apple TV; an
   iPhone, iPad or Mac sends stereo, which the speakers play as well).
 - A **2.4 GHz Wi-Fi** network with good coverage at every speaker (the
-  ESP32-S3 has no 5 GHz radio).
+  ESP32-S3 and the P4 board's ESP32-C6 have no 5 GHz radio).
 - **All boards on the same access point.** The shared clock is that access
   point's beacon timer: each access point, and each node of a mesh system,
   has its own. A speaker on another access point logs a warning and stays
@@ -421,7 +456,7 @@ cd esp32-airplay2-surround
 
 | Folder | Builds | Firmware file |
 |---|---|---|
-| the repository folder | the **Gateway** | `build/airplay-gateway_<version>.bin` |
+| the repository folder | the **Gateway** (ESP32-S3 or ESP32-P4) | `build/airplay-gateway_<version>.bin` |
 | `speaker/` | the **speakers** | `speaker/build/airplay-speaker_<version>.bin` |
 
 | Code | Where |
@@ -432,8 +467,11 @@ cd esp32-airplay2-surround
 | menuconfig options of both | `components/airplay_options/` |
 
 Both use the shared settings in `sdkconfig.defaults`; the Gateway adds
-`sdkconfig.defaults.gateway`. Each is an ordinary ESP-IDF project: go into
-its folder and run `idf.py` as usual.
+`sdkconfig.defaults.gateway`, and ESP-IDF adds `sdkconfig.defaults.esp32s3`
+or `sdkconfig.defaults.esp32p4` for the chip. Each is an ordinary ESP-IDF
+project: go into its folder and run `idf.py` as usual. The ESP32-C6
+firmware of the P4 board is in `coprocessor/c6/`; the Gateway carries a
+built copy and installs it on the C6 by itself.
 
 ### 4. Configure (optional)
 
@@ -443,7 +481,7 @@ the same menus; some options matter for one firmware only:
 
 | Menu | What you can set | For |
 |---|---|---|
-| **Surround Build Role** | the role (set by the folder: leave it); a fixed Gateway address for networks that filter mDNS; the sync test pulse | both |
+| **Surround Build Role** | the role (set by the folder: leave it); the Gateway board (it sets the default pins); a fixed Gateway address for networks that filter mDNS; the sync test pulse; the calibration microphone (INMP441 or PDM) and its pins | both |
 | **AirPlay Receiver** | setup Wi-Fi name and password; HomeKit, setup code, manufacturer, artwork; playback buttons (for AirPlay and the USB player) and AirPlay model (the icon senders show) | Wi-Fi both, the rest Gateway |
 | **Multichannel Experiment** | 5.1 / 7.1 on or off, default speaker position | both |
 | **I2S Playout** | BCLK / LRCK / DATA / MCLK GPIOs, output latency of your DAC, wired latency test; web admin password | speakers (password both) |
@@ -527,6 +565,9 @@ USB port is the [USB player](#usb-player-experimental)'s drive port):
 idf.py -p /dev/cu.usbserial-0001 build flash monitor
 ```
 
+For an **ESP32-P4** Gateway run `idf.py set-target esp32p4` once first
+([Boards](#boards)); it is flashed and logs over UART0 (115200 baud).
+
 On macOS list the ports with `ls /dev/cu.*` (a speaker's USB port is a
 `usbmodem`, a UART port a `usbserial` or `wchusbserial`); on Windows the port
 is `COMx`, on Linux `/dev/ttyACM0` (USB) or `/dev/ttyUSB0` (UART). A
@@ -543,7 +584,7 @@ Later versions are installed **over Wi-Fi**:
   **Speaker firmware** → **Choose .bin** →
   `speaker/build/airplay-speaker_<version>.bin` → **Upload**. The Gateway
   keeps it in its otherwise unused `storage` partition (1.9 MB, 3 MB with
-  [16 MB flash](#16-mb-flash)) and every
+  [16 MB flash](#16-mb-flash), 3.9 MB on the ESP32-P4) and every
   speaker with another build installs it by itself: one at a time and right
   away, also a speaker that was switched off and comes back later. A speaker
   that is playing stops its stream for the update (the others play on),
@@ -643,8 +684,10 @@ The Gateway has no audio output, so it has no EQ or latency cards.
 <a href="images/speakers-page.png"><img src="images/speakers-page.png" alt="Speakers page: an album from the USB stick in the Now playing card and the room map with the front pair playing" width="100%"></a>
 
 At the top, **Now playing**: what the speakers play and where it comes
-from. An AirPlay stream shows its format, with play/pause, skip and volume
-buttons that go to the Apple device; the **Music** and **Radio** buttons
+from. An AirPlay stream shows its format (and on an ESP32-P4 Gateway its
+artwork), with play/pause,
+skip and volume buttons that go to the Apple device; the **Music** and
+**Radio** buttons
 start the [USB player](#usb-player-experimental) or the web radio, which
 then fill the card. Beside it, a **room map** seen from above: the screen at
 the top, you in the middle and all eight positions around you. An empty
@@ -676,7 +719,8 @@ role.
 stations: **Favourites**, your **country** (the browser's own at first, any
 other to choose), **Search** and **URL** for any stream address. The station
 lists come from [Radio Browser](https://www.radio-browser.info), straight
-from your browser; the Gateway keeps only the favourites and the volume.
+from your browser; the Gateway keeps only the favourites and the volume
+(one volume for the radio and the USB player, kept over a restart).
 While the radio plays, the Now playing card shows the station, the song
 title, the format (`MP3 128 → ALAC 44.1/16`), the volume, **Stop** and your
 favourite stations in a row, one tap to switch.
@@ -710,7 +754,9 @@ sender that connects stops the radio. HLS streams are not supported yet.
 ### Room calibration
 
 An optional **INMP441 microphone** on the Gateway (wiring in
-[The Gateway](#the-gateway)) measures every speaker from your seat and
+[The Gateway](#the-gateway)), or on the ESP32-P4 board its own PDM
+microphone (**Surround Build Role → Calibration microphone type**),
+measures every speaker from your seat and
 suggests its **delay** and **level**, in about 2 s per speaker:
 
 1. Put the Gateway with its microphone at your listening seat, at ear
@@ -781,7 +827,7 @@ How it measures:
 *No signal from the microphone: check its wiring* means the Gateway clocks
 the microphone but reads a constant value: check VDD → 3V3, GND, L/R → GND
 (otherwise it sends on the other channel), SD → GPIO 4, SCK → GPIO 5,
-WS → GPIO 6. Without a microphone signal the speakers still play their
+WS → GPIO 6 (GPIO 52 on the P4). Without a microphone signal the speakers still play their
 chirps one after another (so you hear that each one works), and the panel
 says nothing was measured.
 
@@ -886,14 +932,16 @@ receiver.
   48 kHz / 24-bit, which the speakers play).
 - 🖼️ **Covers and tags:** the album art, title, artist and album, from the
   file itself or a `cover.jpg` / `folder.jpg` next to it. Names in
-  Cyrillic and any other script.
+  Cyrillic and any other script. The ESP32-P4 also makes small thumbnails
+  of large covers and keeps them on the stick, so they show at once.
 - 🔁 **Albums without gaps:** live albums and DJ mixes flow from track to
   track without a click or a pause.
 - 📂 **A library on the page:** browse the stick's folders, play a whole
   folder, start from any song, add songs to the queue, see what comes next,
   or play your **m3u playlists**.
-- ⏯️ **All the controls:** seek, pause, next, previous and its own volume,
-  from the page or the hardware buttons on the Gateway.
+- ⏯️ **All the controls:** seek, pause, next, previous and volume (shared
+  with the web radio and kept over a restart), from the page or the
+  hardware buttons on the Gateway.
 - 📊 **You see what plays where:** the format, a *bit for bit* badge, which
   speaker gets which channel, and the room map lighting up.
 - 🔌 **Plug and play:** put the stick in and pull it out while the Gateway
@@ -914,22 +962,27 @@ the player cannot play just shows a message, and the next song starts.
 
 **Which USB stick**
 
-- **Any small USB 2.0 stick** is enough. A USB 3 stick works too but is not
-  faster: the ESP32-S3's USB port runs at USB 1.1 speed (about 1 MB/s).
+- **Any small USB 2.0 stick** is enough. On an **ESP32-S3** Gateway a USB 3
+  stick works too but is not faster: the S3's USB port runs at USB 1.1
+  speed (about 1 MB/s). The **ESP32-P4** has a high-speed USB 2.0 port.
 - Format it **FAT32** with a **Master Boot Record** (on a Mac: Disk Utility →
   *MS-DOS (FAT)*, scheme *Master Boot Record*). exFAT, NTFS and APFS are
   not read.
 - It is powered by the Gateway board, so pick one that draws little power;
   a hard disk needs a powered USB hub.
-- **Prefer FLAC to WAV.** FLAC is the same sound, bit for bit, at half the
-  size. Stereo WAV plays fine, but a 5.1 / 7.1 WAV is too heavy for the
-  port and stops every few seconds to catch up. One command turns it into
+- **On an ESP32-S3, prefer FLAC to WAV.** FLAC is the same sound, bit for
+  bit, at half the size. Stereo WAV plays fine, but a 5.1 / 7.1 WAV is too
+  heavy for the S3's port and stops every few seconds to catch up (the
+  player warns when it starts such a file). One command turns it into
   FLAC: `ffmpeg -i film.wav -c:a flac film.flac`.
 - **7.1 at 24-bit is the S3's limit.** Eight channels of a dense film mix
   at 24-bit take more than the ESP32-S3 has to decode them and send every
   speaker its channel, so it stops now and then to catch up (5.1 at 24-bit
   plays fine). As a 16-bit FLAC the same 7.1 file plays without a stop:
   `ffmpeg -i film.wav -af aresample=osf=s16:dither_method=triangular -c:a flac film.flac`.
+  The ESP32-P4 has a faster CPU and port for such files.
+- On the ESP32-P4 the player writes cover thumbnails to the stick, in the
+  folder `.airplay-covers-v1` (up to 128 of them); delete it any time.
 
 The player can also play files from a web server on your network, through
 the Gateway's `/api/player` (play, pause, seek, next, previous, queue,
@@ -939,18 +992,20 @@ volume, stop).
 
 The player is **on by default** in both firmwares: a plain `idf.py build`
 gives a Gateway with the player and the USB drive, and speakers that take
-its streams. Because the drive takes the Gateway's **native USB port**
-(GPIO19/20), the Gateway's **console, logs and flashing are on its UART
-port** (UART0, GPIO43/44, 115200 baud; on a DevKitC the connector marked
-*UART* or *COM*), or OTA from its page. The speakers keep their USB port as
-before.
+its streams. On an **ESP32-S3** the drive takes the Gateway's **native USB
+port** (GPIO19/20), so the Gateway's **console, logs and flashing are on
+its UART port** (UART0, GPIO43/44, 115200 baud; on a DevKitC the connector
+marked *UART* or *COM*), or OTA from its page. The **ESP32-P4** has a
+separate high-speed USB port for the drive. The speakers keep their USB
+port as before.
 
 To build a Gateway without the player (and with the console back on the
 native USB port), turn off **USB Player (experimental) → Gateway player** in
 `idf.py menuconfig`, and set **Component config → ESP System Settings →
-Channel for console output** to **USB Serial/JTAG**. The player image is
-about 2.1 MB and fits the 8 MB table; the speaker image with player streams
-still fits the Gateway's copy of it.
+Channel for console output** to **USB Serial/JTAG** (S3). The S3 Gateway
+image with the player is about 2.1 MB and fits the 8 MB table (the P4's is
+about 3.4 MB in a 6 MB slot); the speaker image with player streams still
+fits the Gateway's copy of it.
 
 > [!NOTE]
 > An existing `sdkconfig` keeps the choices it already has: after an update
@@ -1170,7 +1225,7 @@ separate from Apple clock acquisition.
 
 | Stream | How the Gateway passes it on |
 |---|---|
-| **Buffered** (type 103: music, films) | one TCP connection per speaker, a copy of the sender's. The Gateway reads the sender whenever its 4 MiB PSRAM buffer has room and sends each speaker from it; when the buffer is full (a speaker keeps old audio longest), the sender waits. A speaker that takes no audio for a while (a Wi-Fi gap) is waited for and goes on without a gap; it is dropped from the stream only once its audio fills the buffer (less than 512 KiB free), and connected again 30 s later. Speakers keep up to ~90 s of compressed audio. Sending is paced at twice real time after a 2 s start: at full speed to every speaker at once it kept the Wi-Fi so busy that the sender's clock packets arrived late. At an immediate FLUSH (an iPhone's track change) each speaker's stream skips to the new track at its next frame boundary; read and sent at paced speed only to be dropped, the old track took 2-4 s per change. |
+| **Buffered** (type 103: music, films) | one TCP connection per speaker, a copy of the sender's. The Gateway reads the sender whenever its 4 MiB PSRAM buffer (8 MiB on the ESP32-P4, which also tells the sender it can take 8 MiB instead of 6) has room and sends each speaker from it; when the buffer is full (a speaker keeps old audio longest), the sender waits. A speaker that takes no audio for a while (a Wi-Fi gap) is waited for and goes on without a gap; it is dropped from the stream only once its audio fills the buffer (less than 512 KiB free), and connected again 30 s later. Speakers keep up to ~90 s of compressed audio. Sending is paced at twice real time after a 2 s start: at full speed to every speaker at once it kept the Wi-Fi so busy that the sender's clock packets arrived late. At an immediate FLUSH (an iPhone's track change) each speaker's stream skips to the new track at its next frame boundary; read and sent at paced speed only to be dropped, the old track took 2-4 s per change. |
 | **Realtime** (type 96: screen mirroring, system audio) | every UDP audio and sync packet is copied to each speaker's ports. A speaker that misses a packet asks the Gateway; several requests for the same packet reach the Apple TV once. |
 
 A speaker that connects in the middle of a session gets the session's
@@ -1183,11 +1238,11 @@ once.
 
 | | Gateway | Speaker (one channel of 7.1) |
 |---|---|---|
-| CPU | relays only, no decoding (not yet measured) | ~31–34 % of one core (measured on a rear speaker) |
-| Audio buffer | 4 MiB relay buffer in PSRAM | 6 MB compressed stream buffer in PSRAM |
+| CPU | relays AirPlay without decoding (not yet measured); decodes and encodes only for the web radio and the USB player | ~31–34 % of one core (measured on a rear speaker) |
+| Audio buffer | 4 MiB relay buffer in PSRAM (8 MiB on the ESP32-P4) | 6 MB compressed stream buffer in PSRAM |
 | Decode task stack | — | 20 KiB in PSRAM (deepest use ~11 KiB) |
 | Free PSRAM during 7.1 | — | ~400 KiB |
-| Firmware image | ~1.77 MB | ~1.76 MB (no AirPlay receiver code) |
+| Firmware image | ~2.1 MB on the ESP32-S3, ~3.4 MB on the ESP32-P4 (web radio and USB player included) | ~1.86 MB (no AirPlay receiver code) |
 
 | Board | Core 0 | Core 1 |
 |---|---|---|
@@ -1226,6 +1281,10 @@ are listed in
 | Web radio | `main/gw_radio.c`, `web/radio.js` | reads a station, decodes MP3 / AAC, encodes ALAC and sends it to the buffered relay like an Apple sender (`gw_radio` in the log); the stations panel and its Now playing card |
 | USB player | `main/gw_player*.c`, `main/gw_usb.c`, `web/player.js` | reads a file (USB drive or HTTP), decodes it on core 0, encodes one ALAC lane per speaker on core 1 and sends them to the buffered relay in lane mode (`gw_player`, `gw_usb` in the log); the Library and its Now playing card. The speakers take the lanes with **Player streams** (`common/surround/surround_player_formats.h`) |
 | Speaker EQ | `speaker/main/audio/audio_eq.c`, `web/eq.html` | 24 biquads per output, mono or bi-amp with a Linkwitz-Riley crossover, delay and polarity per output |
+| AirPlay artwork (ESP32-P4) | `main/gw_airplay_artwork.c`, `main/ap2_artwork.patch` | keeps the picture the sender sends and serves it to the Now playing card; the patch is applied at build time to a copy of `ap2_core`'s RTSP reader, like `main/ap2_formats.patch` |
+| Local volume | `main/gw_local_volume.c` | one saved volume for the web radio and the USB player; the hardware buttons change it while one of them plays |
+| USB covers (ESP32-P4) | `main/gw_cover_thumbnail.c`, `main/gw_cover_cache.c` | thumbnails with the P4's JPEG and PPA hardware, kept on the stick |
+| ESP32-C6 (ESP32-P4) | `coprocessor/c6/`, `main/gw_c6_fw.c`, `main/gw_c6_time.c`, `common/gw_c6/` | Wi-Fi through ESP-Hosted; the C6 firmware that sends the TSF and the PTP receive times, installed from the Gateway, and the P4 side that timestamps its pulse |
 
 ## Measuring sync
 
@@ -1273,11 +1332,15 @@ are listed in
   reconfigured.
 - **Rear and side channels are often nearly silent in music**; they come
   alive with films and Atmos mixes.
-- **USB player** (experimental): a file heavier than about 5 Mbit/s (WAV
-  5.1 / 7.1) stops to buffer every few seconds, and so does a dense 7.1
-  film mix at 24-bit (CPU; 16-bit plays); FAT32 only, one drive, hubs
+- **USB player** (experimental): on an ESP32-S3 Gateway a file heavier
+  than about 5 Mbit/s (WAV 5.1 / 7.1) stops to buffer every few seconds,
+  and so does a dense 7.1 film mix at 24-bit (CPU; 16-bit plays); the
+  ESP32-P4 is not yet measured with such files. FAT32 only, one drive, hubs
   not yet tested; no shuffle or repeat, and the queue is not kept over a
   restart.
+- **ESP32-P4 Gateway**: tested on the FireBeetle 2 with the same speakers;
+  another P4 board needs its pins and the C6 wiring set in `menuconfig`
+  ([bring-up](docs/p4-gateway-bringup.md)).
 - A sender can postpone audio after AirPlay setup. Distinguish that from
   clock acquisition using `apple_clock` readiness and the speaker's
   `PLAYOUT START` / timing-watchdog logs; a long wait is not automatically
@@ -1300,8 +1363,8 @@ are listed in
 | Dropouts | Wi-Fi signal at that speaker and at the Gateway (`/speedtest`, RSSI on the main page). |
 | One speaker early or late | Its **Delay** on `/speakers`; its **Output Latency** (DSP, external processors). |
 | The USB stick is not seen | The Library says *no drive*: the native USB port gets no 5 V (on many DevKitC boards a solder bridge, see [the USB stick](#usb-player-experimental)). *Not FAT32*: format it FAT32 with a Master Boot Record. |
-| A song from the stick stops every few seconds | `buffering: The file comes too slowly` in the Gateway log: a WAV 5.1 / 7.1 or a 7.1 at 24-bit is too heavy; convert it to FLAC (16-bit for 7.1). |
-| No log or no flashing over the Gateway's USB port | The Gateway's console is on its **UART** port; the native USB port is the USB player's. |
+| A song from the stick stops every few seconds | `buffering: The file comes too slowly` in the Gateway log: on an ESP32-S3 a WAV 5.1 / 7.1 or a 7.1 at 24-bit is too heavy; convert it to FLAC (16-bit for 7.1), or use an ESP32-P4 Gateway. |
+| No log or no flashing over the Gateway's USB port | An ESP32-S3 Gateway's console is on its **UART** port; the native USB port is the USB player's. The ESP32-P4's console is UART0 as well. |
 
 Every board streams its log to `http://<board-ip>/logs`. Useful lines:
 
@@ -1358,8 +1421,9 @@ afterwards).
   **grants no patent rights**: AAC patent licenses are available through Via
   Licensing or the patent owners.
 - Other components (ESP-IDF, `esp_audio_codec`, libsodium, mDNS, cJSON,
-  led_strip, and `usb` / `usb_host_msc` for the USB player's drive) come
-  through the ESP-IDF component manager under their own licenses.
+  led_strip, `usb` / `usb_host_msc` for the USB player's drive, and
+  `esp_hosted` for the ESP32-P4's Wi-Fi through its C6) come through the
+  ESP-IDF component manager under their own licenses.
 
 Related projects by the same author: the `standalone` branch of
 [esp32-airplay2-surround](https://github.com/Kristian8606/esp32-airplay2-surround),

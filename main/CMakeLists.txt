@@ -19,7 +19,7 @@ set(GATEWAY_SRCS
     "gw_radio.c"
     "gw_local_volume.c"
 )
-if(CONFIG_ENABLE_AIRPLAY_ARTWORK)
+if(CONFIG_GATEWAY_AIRPLAY_ARTWORK)
     list(APPEND GATEWAY_SRCS "gw_airplay_artwork.c")
 endif()
 if(CONFIG_GATEWAY_PLAYER_BENCH)

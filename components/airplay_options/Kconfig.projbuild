@@ -227,6 +227,14 @@ menu "AirPlay Receiver"
         default y if AIRPLAY_ROLE_GATEWAY
         default n
 
+    # The Gateway keeps the picture the sender sends (up to 2 MB) and shows
+    # it on the Now playing card. ESP32-P4 only: on the S3 that memory is
+    # needed next to the relay buffer, so the S3 drops the picture as before.
+    config GATEWAY_AIRPLAY_ARTWORK
+        bool
+        default y
+        depends on ENABLE_AIRPLAY_ARTWORK && AIRPLAY_ROLE_GATEWAY && IDF_TARGET_ESP32P4
+
     menu "Hardware playback buttons"
         config AIRPLAY_HARDWARE_BUTTONS
             bool "Enable GPIO playback buttons (PSRAM task)"

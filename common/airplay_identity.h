@@ -42,7 +42,7 @@ bool airplay_set_session_active(bool active);
  * bits 9, 11, 14, 18, 19, 20, 30, 38, 40, 41, 46, 47 and 48 (bit 22 off).
  * The high ones announce AirPlay 2 pairing: 38 and 46 for the encrypted,
  * paired control channel, 48 for transient (PIN-less) pairing. */
-#if CONFIG_AIRPLAY_ROLE_GATEWAY && CONFIG_ENABLE_AIRPLAY_ARTWORK
+#if CONFIG_GATEWAY_AIRPLAY_ARTWORK
 /* Bit 50 requests AirPlay 2's Now Playing plist; bit 15 is classic cover art. */
 #define AIRPLAY_FEATURES_HI (0x1C340 | (1U << 18))
 #define AIRPLAY_ARTWORK_LO (1U << 15)

@@ -15,7 +15,7 @@
 #include "esp_http_client.h"
 #include "esp_http_server.h"
 #include "cal_chirp.h"
-#if CONFIG_ENABLE_AIRPLAY_ARTWORK
+#if CONFIG_GATEWAY_AIRPLAY_ARTWORK
 #include "gw_airplay_artwork.h"
 #endif
 #include "gw_calib.h"
@@ -227,7 +227,7 @@ static esp_err_t remote_get_handler(httpd_req_t *req) {
   cJSON *root = cJSON_CreateObject();
   if (!root) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
   remote_to_json(root, &status);
-#if CONFIG_ENABLE_AIRPLAY_ARTWORK
+#if CONFIG_GATEWAY_AIRPLAY_ARTWORK
   const uint32_t cover = gw_airplay_artwork_id();
   if (cover) {
     char url[48];
@@ -240,7 +240,7 @@ static esp_err_t remote_get_handler(httpd_req_t *req) {
   return ESP_OK;
 }
 
-#if CONFIG_ENABLE_AIRPLAY_ARTWORK
+#if CONFIG_GATEWAY_AIRPLAY_ARTWORK
 static esp_err_t airplay_cover_get_handler(httpd_req_t *req) {
   char query[24], id[12], *end;
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -746,7 +746,7 @@ void web_role_register(httpd_handle_t server) {
 #endif
   REG("/api/audio/remote", HTTP_GET, remote_get_handler);
   REG("/api/audio/remote", HTTP_POST, remote_post_handler);
-#if CONFIG_ENABLE_AIRPLAY_ARTWORK
+#if CONFIG_GATEWAY_AIRPLAY_ARTWORK
   REG("/api/audio/airplay-cover", HTTP_GET, airplay_cover_get_handler);
 #endif
   REG("/api/calibration", HTTP_GET, calibration_get_handler);

@@ -317,14 +317,7 @@ static fw_try_t *fw_tries(const uint8_t mac[6], uint32_t generation) {
 
 /* A speaker may update now: at once, even during a stream (that speaker
  * stops playing for it), only not during a room calibration. */
-static bool fw_allowed(void) {
-#if CONFIG_IDF_TARGET_ESP32P4
-  /* Keep the installed speaker builds during the P4 AutoMix test. */
-  return false;
-#else
-  return !gw_calib_running();
-#endif
-}
+static bool fw_allowed(void) { return !gw_calib_running(); }
 
 /* The speaker can take the image and runs another build. */
 static bool fw_wanted(const surround_hello_t *h, const gw_fw_image_t *img) {
