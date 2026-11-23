@@ -539,13 +539,7 @@ idf.py -p /dev/cu.usbserial-0001 build flash monitor
 the C6, the board's pins, an 8 MiB relay buffer; see
 [bring-up](docs/p4-gateway-bringup.md)). It starts the settings again from
 the defaults: what you changed in menuconfig is kept only in `sdkconfig.old`.
-To keep a P4 and an S3 Gateway side by side, give one its own build folder
-and settings file:
-
-```bash
-idf.py -B build_p4 -D SDKCONFIG=sdkconfig.p4 set-target esp32p4
-idf.py -B build_p4 -D SDKCONFIG=sdkconfig.p4 -p PORT build flash monitor
-```
+Either chip builds into the same `build/` folder.
 
 ### 5. Build and flash
 
