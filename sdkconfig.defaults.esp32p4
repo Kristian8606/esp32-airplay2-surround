@@ -1,0 +1,58 @@
+# ESP32-P4 Gateway (FireBeetle 2 ESP32-P4, DFR1172): applied after
+# sdkconfig.defaults when the target is esp32p4 (ESP-IDF adds
+# <defaults file>.<target> by itself). The speakers stay S3 and never read
+# this file. Board values: docs/p4-gateway-bringup.md (0.1).
+
+# The board's P4 is revision v1.3. IDF v6.1 builds for v3.x by default; v1.x
+# needs this pair (CPU then at most 360 MHz, PSRAM at most 200 MHz).
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+CONFIG_ESP32P4_REV_MIN_100=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_360=y
+
+# 16 MB flash, 32 MB PSRAM.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_esp32p4.csv"
+# sdkconfig.defaults asks 80 MHz (the S3's octal PSRAM); the P4 runs its
+# PSRAM at 200 MHz.
+CONFIG_SPIRAM_SPEED_200M=y
+
+# Wi-Fi through the board's ESP32-C6 (ESP-Hosted host over SDIO; ESP-IDF v6.1
+# has esp_wifi_remote built in). The FireBeetle 2 wires the C6 like
+# Espressif's ESP32-P4-Function-EV-Board: SDIO slot 1, CLK 18, CMD 19,
+# D0-D3 14-17, C6 reset 54 (checked on the board in 0.3). That board choice
+# fixes those pins; a custom board picks "No specific PCB board" in the
+# ESP-Hosted menu and enters its own.
+CONFIG_ESP_HOSTED=y
+CONFIG_ESP_HOSTED_HOST=y
+CONFIG_ESP_HOSTED_P4_DEV_BOARD_FUNC_BOARD=y
+CONFIG_ESP_HOSTED_HOST_TRANSPORT_BUS_SDIO=y
+CONFIG_ESP_HOSTED_HOST_SDIO_BUS_WIDTH_4=y
+CONFIG_ESP_HOSTED_HOST_FEAT_RPC=y
+CONFIG_ESP_HOSTED_HOST_FEAT_RPC_EXT_V2=y
+CONFIG_ESP_HOSTED_HOST_FEAT_SYSTEM=y
+CONFIG_ESP_HOSTED_HOST_FEAT_WIFI=y
+# Host power save stays off: the WAKEUP line (C6 GPIO2 -> P4 GPIO6) carries
+# the time pulse instead (decisions 4 and 5).
+CONFIG_ESP_HOSTED_HOST_FEAT_POWER_SAVE=n
+
+# Wi-Fi buffers. On the P4 the CONFIG_ESP_WIFI_* lines of sdkconfig.defaults
+# do nothing (here they only mirror WIFI_RMT_*); WIFI_RMT_* go to the C6 with
+# esp_wifi_init() and size its driver. Espressif's P4 + C6 throughput values
+# (esp_hosted docs/design/performance.md), which sent fastest in 0.3. TX
+# buffers stay static: SPIRAM_TRY_ALLOCATE_WIFI_LWIP (sdkconfig.defaults)
+# rules out the dynamic type; 32 of them, as sdkconfig.defaults.gateway gives
+# the S3 Gateway, since the Gateway sends the stream to every speaker.
+CONFIG_WIFI_RMT_STATIC_RX_BUFFER_NUM=16
+CONFIG_WIFI_RMT_DYNAMIC_RX_BUFFER_NUM=64
+CONFIG_WIFI_RMT_STATIC_TX_BUFFER=y
+CONFIG_WIFI_RMT_STATIC_TX_BUFFER_NUM=32
+CONFIG_WIFI_RMT_AMPDU_TX_ENABLED=y
+CONFIG_WIFI_RMT_TX_BA_WIN=32
+CONFIG_WIFI_RMT_AMPDU_RX_ENABLED=y
+CONFIG_WIFI_RMT_RX_BA_WIN=32
+
+# Time from the C6 (main/gw_c6_time.c): its messages over peer data, and the
+# GPTimer calls of the edge interrupt (an IRAM interrupt) in IRAM.
+CONFIG_ESP_HOSTED_HOST_FEAT_PEER_DATA=y
+CONFIG_GPTIMER_CTRL_FUNC_IN_IRAM=y

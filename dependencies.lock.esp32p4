@@ -1,0 +1,187 @@
+dependencies:
+  ap2_core:
+    component_hash: a11cf65df4f4c24c0bf22fec95953c192584d2831420e0ade41bdf5cbc8077d1
+    dependencies:
+    - name: idf
+      version: '>=6.0.2'
+    - name: espressif/libsodium
+      version: ^1.0.21
+    - name: espressif/mdns
+      version: ^1.14.1
+    source:
+      git: https://github.com/Kristian8606/esp-airplay2-core.git
+      path: components/ap2_core
+      type: git
+    version: 32c22d924431bb7d5135be6976a7299d12014bb7
+  apple_clock:
+    component_hash: 7cddbc640232b46f35205ebd1076912d4cf024b6a5a28a8a6d9e420b6cbc2780
+    dependencies:
+    - name: idf
+      version: '>=6.0.2'
+    source:
+      git: https://github.com/Kristian8606/esp-airplay2-core.git
+      path: components/apple_clock
+      type: git
+    version: 32c22d924431bb7d5135be6976a7299d12014bb7
+  espressif/cjson:
+    component_hash: e788323270d90738662d66fffa910bfe1fba019bba087f01557e70c40485b469
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.7.19~2
+  espressif/esp_audio_codec:
+    component_hash: 16e2880dbdd5a72264051f750f33a6e5a38fd25621c83e3a32a85a152d2d2643
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 2.5.0
+  espressif/esp_hosted:
+    component_hash: 22b08509494d4465f0e2f91ee16973d76fe90d5a930fa3910b7a43615db001bf
+    dependencies:
+    - name: cherry-embedded/cherryusb
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: target in [esp32p4]
+      - if: $CONFIG{ESP_HOSTED_HOST_USB_CHERRYUSB_MANIFEST} == 1
+      version: '>=1.6.0'
+    - name: espressif/esp_tinyusb
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: target in [esp32s2, esp32s3, esp32s31]
+      - if: $CONFIG{ESP_HOSTED_CP_TINYUSB_MANIFEST} == 1
+      version: '*'
+    - name: espressif/iot_usbh_rndis
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: target in [esp32p4]
+      - if: $CONFIG{ESP_HOSTED_HOST_USB_RNDIS_MANIFEST} == 1
+      version: ^0.5.2
+    - name: espressif/usb_host_cdc_acm
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: target in [esp32p4]
+      - if: $CONFIG{ESP_HOSTED_HOST_USB_CDC_ACM_MANIFEST} == 1
+      version: '*'
+    - name: idf
+      require: private
+      version: '>=5.5'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    targets:
+    - esp32
+    - esp32s2
+    - esp32s3
+    - esp32s31
+    - esp32c2
+    - esp32c3
+    - esp32c5
+    - esp32c6
+    - esp32c61
+    - esp32h2
+    - esp32h4
+    - esp32h21
+    - esp32p4
+    version: 3.1.0
+  espressif/led_strip:
+    component_hash: 027f68f2b57b0dca1d68dff6cc1139d9093825aa808c2bc3ca42bb2ce530fce9
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.2'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 3.1.1
+  espressif/libsodium:
+    component_hash: d4066b373fc6d4c5196db42aeea7faef4ac7f3080af96c2b74e2476c08b78dc1
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.2'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.0.22~1
+  espressif/mdns:
+    component_hash: 2fa43caa78cc170842255bc7bf71f306bc815cae12e9496bfb12372423019ac7
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.15.1
+  espressif/usb:
+    component_hash: 5bcbf1bde509faef0750bbae5595b38e91cbbbd9aa0e3d308be64f9279b78aa0
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.5.3'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    targets:
+    - esp32s2
+    - esp32s3
+    - esp32s31
+    - esp32p4
+    - esp32h4
+    - linux
+    version: 1.6.1
+  espressif/usb_host_msc:
+    component_hash: d8765c212bb4915d42560886fac3cc5059d61a0bfa14152b32ea9a5258e7a0c9
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    - name: espressif/usb
+      registry_url: https://components.espressif.com
+      require: public
+      rules:
+      - if: idf_version >=6.0
+      - if: target not in ["linux"]
+      version: ^1.0.0
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    targets:
+    - esp32s2
+    - esp32s3
+    - esp32p4
+    - esp32h4
+    - esp32s31
+    - linux
+    version: 1.3.0
+  idf:
+    source:
+      type: idf
+    version: 6.1.0
+direct_dependencies:
+- ap2_core
+- apple_clock
+- espressif/cjson
+- espressif/esp_audio_codec
+- espressif/esp_hosted
+- espressif/led_strip
+- espressif/libsodium
+- espressif/mdns
+- espressif/usb
+- espressif/usb_host_msc
+- idf
+manifest_hash: b7f809c046e8006e01933117aa3dc92e10a3601eef3d817fb983b82557398caf
+target: esp32p4
+version: 3.0.0

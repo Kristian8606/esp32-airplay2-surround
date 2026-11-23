@@ -421,10 +421,10 @@ esp_err_t web_server_start(uint16_t port) {
   config.server_port = port;
   config.task_priority = 3;
   config.stack_size = 8192; /* internal RAM (default): handlers write flash */
-#if defined(CONFIG_GATEWAY_USB_PLAYER) && CONFIG_GATEWAY_USB_PLAYER
-  /* the Gateway's role registers first; the player's /api/player made the
-   * shared handlers and /ws/logs the 41st and later (2026-11-18) */
-  config.max_uri_handlers = 48;
+#if defined(CONFIG_AIRPLAY_ROLE_GATEWAY) && CONFIG_AIRPLAY_ROLE_GATEWAY
+  /* The P4 Gateway can register 50 routes with AirPlay formats, OTA, radio,
+   * USB playback, the C6 controls and the log WebSocket enabled. */
+  config.max_uri_handlers = 50;
 #else
   config.max_uri_handlers = 40;
 #endif

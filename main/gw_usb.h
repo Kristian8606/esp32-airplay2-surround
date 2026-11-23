@@ -27,4 +27,10 @@ esp_err_t gw_usb_start(void);
 /* A drive is mounted at GW_USB_MOUNT. */
 bool gw_usb_ready(void);
 
+/* Zero if no drive is mounted; a new value for each mount. A background
+ * reader can hold that mount until it has closed its own descriptor. */
+uint32_t gw_usb_media_id(void);
+bool gw_usb_acquire_media(uint32_t id);
+void gw_usb_release_media(void);
+
 void gw_usb_status(gw_usb_status_t *out);

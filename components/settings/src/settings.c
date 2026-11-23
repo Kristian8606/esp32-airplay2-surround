@@ -2,6 +2,7 @@
 
 #include "settings.h"
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -25,6 +26,7 @@
 #define KEY_WIFI_SSID "wifi_ssid"
 #define KEY_WIFI_PASS "wifi_pass"
 #define KEY_VOLUME "volume_mdb"
+#define KEY_AIRPLAY_71 "airplay_71"
 #define KEY_OUTPUT_LATENCY "out_lat_us"
 #define KEY_LOUDNESS_ON "loud_en"
 #define KEY_LOUDNESS_REF "loud_ref"
@@ -37,6 +39,7 @@
 #define DEVICE_NAME_MAX 64
 
 static const char *TAG = "settings";
+static atomic_bool s_allow_airplay_71 = true;
 
 /* Guards the volume in RAM, the read-modify-write of the network list and
  * the buffers below. Created by settings_init(), or by the first call if one
@@ -156,6 +159,9 @@ esp_err_t settings_init(void) {
     unlock();
     return err;
   }
+  int32_t allow_71 = 0;
+  atomic_store(&s_allow_airplay_71,
+               nvs_get_i32(handle, KEY_AIRPLAY_71, &allow_71) != ESP_OK || allow_71 != 0);
   if (!read_list(handle, &s_list) &&
       read_single_network(handle, &s_list.slot[0])) {
     s_list.count = 1;
@@ -276,7 +282,7 @@ esp_err_t settings_get_device_name(char *name, size_t len) {
     return ESP_OK;
   }
   uint8_t mac[6] = {0};
-  if (esp_read_mac(mac, ESP_MAC_WIFI_STA) != ESP_OK) {
+  if (esp_read_mac(mac, ESP_MAC_BASE) != ESP_OK) {
     memset(mac, 0, sizeof(mac)); /* spec answer 3 */
   }
   char fallback[SETTINGS_DEFAULT_NAME_SIZE];
@@ -367,8 +373,6 @@ esp_err_t settings_persist_volume(void) {
   return err;
 }
 
-/* ---- Speaker audio settings ---- */
-
 /* Nothing saved or NVS that cannot be read: the default. */
 static int32_t read_i32(nvs_handle_t handle, bool opened, const char *key,
                         int32_t fallback) {
@@ -391,6 +395,21 @@ static esp_err_t write_i32(const char *what, size_t n, const char *const *keys,
   }
   return finish_write(handle, err, what);
 }
+
+bool settings_airplay_71_enabled(void) {
+  /* RTSP control tasks run from PSRAM. Use the setting loaded at startup. */
+  return atomic_load(&s_allow_airplay_71);
+}
+
+esp_err_t settings_set_airplay_71_enabled(bool enabled) {
+  static const char *const keys[] = {KEY_AIRPLAY_71};
+  const int32_t value = enabled ? 1 : 0;
+  const esp_err_t err = write_i32("AirPlay channel limit", 1, keys, &value);
+  if (err == ESP_OK) atomic_store(&s_allow_airplay_71, enabled);
+  return err;
+}
+
+/* ---- Speaker audio settings ---- */
 
 esp_err_t settings_get_output_latency_us(int32_t *us) {
   if (us == NULL) {

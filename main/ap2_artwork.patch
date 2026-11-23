@@ -1,0 +1,155 @@
+--- a/rtsp_core.c
++++ b/rtsp_core.c
+@@ -16,6 +16,7 @@
+ #include "ap2_tlv8.h"
+ #include "apple_clock.h"
+ #include "sound_engine.h"
++#include "gw_airplay_artwork.h"
+ #include "rtsp_core_internal.h"
+ #include "rtsp_events.h"
+ #include "rtsp_frame.h"
+@@ -284,6 +285,7 @@
+   sound_engine_stop();
+   s.stream = false;
+   s.holder = NULL;
++  gw_airplay_artwork_clear();
+   apple_clock_release();
+   rtsp_remote_detach();
+   event_port_close(h);
+@@ -926,7 +928,7 @@
+   session_end();
+ }
+ 
+-static void do_set_parameter(rtsp_conn_t *c, const rtsp_msg_t *m,
++static void do_set_parameter(rtsp_conn_t *c, rtsp_msg_t *m,
+                              reply_t *r) {
+   const char *type = rtsp_msg_header(m, "Content-Type");
+   const char *cursor = (const char *)m->body;
+@@ -937,8 +939,13 @@
+   double volume = 0.0;
+ 
+   if (!rtsp_content_type_is(type, CT_TEXT_PARAMETERS)) {
+-    /* track metadata (DMAP), artwork (image/...) and the rest: accepted,
+-     * not used */
++    /* Only the active sender can replace the cover. Transfer the reader's
++     * PSRAM buffer so receiving artwork does not require a second copy. */
++    if (holds(c) && !c->remote_only && rtsp_content_type_is_image(type) &&
++        gw_airplay_artwork_receive(m->body, m->body, m->body_len)) {
++      m->body = NULL;
++      RTSP_LOGI("AirPlay artwork: %zu bytes via SET_PARAMETER", m->body_len);
++    }
+     return;
+   }
+   while (rtsp_next_line(&cursor, end, &line, &line_len)) {
+@@ -1009,7 +1016,23 @@
+   r->body_len = n;
+ }
+ 
+-static void do_command(const rtsp_msg_t *m) {
++static void do_command(rtsp_conn_t *c, rtsp_msg_t *m) {
++  if (holds(c) && !c->remote_only) {
++    const uint8_t *data;
++    size_t size;
++    bool replace;
++    if (gw_airplay_artwork_plist(m->body, m->body_len, &data, &size, &replace)) {
++      if (data && size <= RTSP_ARTWORK_MAX) {
++        if (gw_airplay_artwork_receive(m->body, data, size)) {
++          m->body = NULL;
++          RTSP_LOGI("AirPlay artwork: %zu bytes via POST /command", size);
++        }
++      } else if (replace) {
++        gw_airplay_artwork_clear();
++      }
++      return;
++    }
++  }
+   char type[64];
+   if (is_bplist(m) &&
+       ap2_bplist_string(m->body, m->body_len, "type", type, sizeof(type))) {
+@@ -1134,7 +1157,7 @@
+ #endif
+ }
+ 
+-static void handle(rtsp_conn_t *c, const rtsp_msg_t *m, reply_t *r) {
++static void handle(rtsp_conn_t *c, rtsp_msg_t *m, reply_t *r) {
+   const char *method = m->start[0];
+   const char *uri = m->start[1];
+ 
+@@ -1183,7 +1206,7 @@
+     } else if (path_is(uri, "/feedback")) {
+       do_feedback(c, r);
+     } else if (path_is(uri, "/command")) {
+-      do_command(m);
++      do_command(c, m);
+     } else if (path_is(uri, "/audioMode")) {
+       /* accepted */
+     } else {
+--- a/rtsp_msg.c
++++ b/rtsp_msg.c
+@@ -194,13 +194,17 @@
+       return RTSP_READ_MESSAGE;
+     }
+     const char *type = rtsp_msg_header(m, "Content-Type");
+-    const bool artwork = strcmp(m->start[0], "SET_PARAMETER") == 0 &&
+-                         type && strncasecmp(type, "image/", 6) == 0;
+-    if (artwork && m->body_len <= RTSP_ARTWORK_MAX) {
+-      /* Consume every byte to preserve framing, without retaining the image.
+-       * This also works across encrypted 1024-byte control frames. */
+-      reader->phase = PHASE_DISCARD;
+-    } else if (m->body_len > reader->body_max || artwork) {
++    const char *uri = m->start[1];
++    const bool image = type && strncasecmp(type, "image/", 6) == 0 &&
++                       strcmp(m->start[0], "SET_PARAMETER") == 0;
++    static const char plist_type[] = "application/x-apple-binary-plist";
++    const bool command = type && strncasecmp(type, plist_type, sizeof(plist_type) - 1) == 0 &&
++                         strcmp(m->start[0], "POST") == 0 &&
++                         strncmp(uri, "/command", 8) == 0 && (uri[8] == '\0' || uri[8] == '?');
++    /* A binary plist can hold the entire picture plus track metadata. */
++    const size_t limit = command ? RTSP_ARTWORK_MAX + 32768U :
++                         image ? RTSP_ARTWORK_MAX : reader->body_max;
++    if (m->body_len > limit) {
+       m->body_state = RTSP_BODY_TOO_LARGE;
+       reader->phase = PHASE_DISCARD;
+     } else {
+--- a/bplist_parser.c
++++ b/bplist_parser.c
+@@ -1,6 +1,7 @@
+ #include <string.h>
+ 
+ #include "ap2_plist.h"
++#include "gw_airplay_artwork.h"
+ 
+ /* Layout of a binary plist: "bplist00", the objects, a table with the offset
+  * of each object, and a 32-byte trailer. Containers refer to objects by their
+@@ -374,6 +375,31 @@
+   return search_dict(&search, &root, 0);
+ }
+ 
++bool gw_airplay_artwork_plist(const uint8_t *plist, size_t len,
++                             const uint8_t **data, size_t *size, bool *replace) {
++  bp_doc_t doc;
++  bp_obj_t root, update, info, value;
++  if (!open_root(&doc, &root, plist, len) ||
++      !bp_dict_find(&doc, &root, "type", &value) ||
++      !key_equals(&value, "updateMRNowPlayingInfo", sizeof("updateMRNowPlayingInfo") - 1) ||
++      !bp_dict_find(&doc, &root, "params", &update) || update.kind != BP_KIND_DICT ||
++      !bp_dict_find(&doc, &update, "type", &value) ||
++      !key_equals(&value, "npi-text", sizeof("npi-text") - 1) ||
++      !bp_dict_find(&doc, &update, "params", &info) || info.kind != BP_KIND_DICT) {
++    return false;
++  }
++  *data = NULL;
++  *size = 0;
++  *replace = bp_dict_find(&doc, &update, "mergePolicy", &value) &&
++             key_equals(&value, "replace", sizeof("replace") - 1);
++  if (bp_dict_find(&doc, &info, "kMRMediaRemoteNowPlayingInfoArtworkData", &value) &&
++      value.kind == BP_KIND_DATA) {
++    *data = value.body;
++    *size = (size_t)value.count;
++  }
++  return true;
++}
++
+ static bool get_streams(bp_doc_t *doc, bp_obj_t *streams, const uint8_t *plist,
+                         size_t plist_len) {
+   bp_obj_t root;

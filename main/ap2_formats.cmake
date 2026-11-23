@@ -1,0 +1,37 @@
+# Apply Gateway changes to build-tree copies of the pinned ap2_core sources.
+idf_component_get_property(ap2_formats_lib ap2_core COMPONENT_LIB)
+idf_component_get_property(ap2_formats_dir ap2_core COMPONENT_DIR)
+get_target_property(ap2_sources ${ap2_formats_lib} SOURCES)
+set(ap2_formats_build "${CMAKE_CURRENT_BINARY_DIR}/ap2_formats")
+set(ap2_gateway_sources src/rtsp/rtsp_core.c src/rtsp/rtsp_tables.c)
+set(ap2_gateway_patches ap2_formats.patch)
+if(CONFIG_ENABLE_AIRPLAY_ARTWORK)
+    include("${CMAKE_CURRENT_LIST_DIR}/ap2_artwork.cmake")
+endif()
+file(MAKE_DIRECTORY "${ap2_formats_build}")
+foreach(source IN LISTS ap2_gateway_sources)
+    set(original "${ap2_formats_dir}/${source}")
+    if(NOT original IN_LIST ap2_sources)
+        message(FATAL_ERROR "ap2_core no longer lists ${source}")
+    endif()
+    get_filename_component(name "${source}" NAME)
+    set(copy "${ap2_formats_build}/${name}")
+    configure_file("${original}" "${copy}" COPYONLY)
+    list(REMOVE_ITEM ap2_sources "${original}")
+    list(APPEND ap2_sources "${copy}")
+endforeach()
+find_program(AP2_FORMATS_PATCH patch REQUIRED)
+foreach(patch_name IN LISTS ap2_gateway_patches)
+    set(patch_file "${CMAKE_CURRENT_LIST_DIR}/${patch_name}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${patch_file}")
+    execute_process(
+        COMMAND "${AP2_FORMATS_PATCH}" -f -s -p1
+        WORKING_DIRECTORY "${ap2_formats_build}"
+        INPUT_FILE "${patch_file}"
+        RESULT_VARIABLE result
+    )
+    if(NOT result STREQUAL "0")
+        message(FATAL_ERROR "Failed to apply ${patch_name} to the pinned ap2_core")
+    endif()
+endforeach()
+set_property(TARGET ${ap2_formats_lib} PROPERTY SOURCES "${ap2_sources}")

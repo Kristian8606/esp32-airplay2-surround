@@ -1,6 +1,7 @@
 #pragma once
 
-/* Gateway: the room calibration microphone (INMP441 on I2S, menuconfig
+/* Gateway: the room calibration microphone (an INMP441 on I2S or a PDM
+ * microphone such as the FireBeetle 2 P4's onboard one; menuconfig
  * Surround Build Role -> Room calibration microphone).
  *
  * One recording at a time: gw_mic_start() records into PSRAM until

@@ -1,12 +1,12 @@
 #include "playback_buttons.h"
 #include "rtsp_remote.h"
+#include "gw_local_volume.h"
 #include "driver/gpio.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/idf_additions.h"
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -15,7 +15,7 @@
 #include "gw_player.h"
 #endif
 
-#define BUTTON_STACK_BYTES 3072
+#define BUTTON_STACK_BYTES 4096
 #define BUTTON_POLL_MS 10
 static const char *TAG = "playback_buttons";
 static TaskHandle_t button_task_handle;
@@ -71,6 +71,21 @@ static const char *gpio_conflict(int pin) {
   if (pin == CONFIG_ESP_CONSOLE_UART_TX_GPIO || pin == CONFIG_ESP_CONSOLE_UART_RX_GPIO)
     return "UART console";
 #endif
+#ifdef CONFIG_ESP_HOSTED_HOST
+  /* The Wi-Fi co-processor (ESP-Hosted over SDIO, the P4's C6): its bus and
+   * reset line, from the ESP-Hosted options. */
+  if (pin == CONFIG_ESP_HOSTED_HOST_SDIO_PIN_CLK || pin == CONFIG_ESP_HOSTED_HOST_SDIO_PIN_CMD ||
+      pin == CONFIG_ESP_HOSTED_HOST_SDIO_PIN_D0 || pin == CONFIG_ESP_HOSTED_HOST_RESET_GPIO)
+    return "Wi-Fi co-processor";
+#ifdef CONFIG_ESP_HOSTED_HOST_SDIO_PIN_D3
+  if (pin == CONFIG_ESP_HOSTED_HOST_SDIO_PIN_D1 || pin == CONFIG_ESP_HOSTED_HOST_SDIO_PIN_D2 ||
+      pin == CONFIG_ESP_HOSTED_HOST_SDIO_PIN_D3)
+    return "Wi-Fi co-processor";
+#endif
+#endif
+#ifdef CONFIG_AIRPLAY_GW_TIME_PULSE_GPIO
+  if (pin == CONFIG_AIRPLAY_GW_TIME_PULSE_GPIO) return "time pulse from the C6";
+#endif
   return NULL;
 }
 
@@ -109,6 +124,8 @@ static void button_worker(void *arg) {
       b->stable_pressed = true;
       if (!b->armed) continue;
       b->armed = false;
+      if (b->command >= RTSP_REMOTE_VOLUME_DOWN &&
+          gw_local_volume_step(b->command == RTSP_REMOTE_VOLUME_UP)) continue;
 #if CONFIG_GATEWAY_USB_PLAYER
       if (gw_player_button(b->command)) continue; /* the player has the speakers (phase 6d) */
 #endif
@@ -158,9 +175,10 @@ esp_err_t playback_buttons_init(void) {
     ESP_LOGE(TAG, "Button GPIO setup failed: %s", esp_err_to_name(err));
     return err;
   }
-  if (xTaskCreatePinnedToCoreWithCaps(button_worker, "playback_keys", BUTTON_STACK_BYTES,
-        NULL, 2, &button_task_handle, 0, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
-    ESP_LOGE(TAG, "Task start failed: playback_keys stack=%u PSRAM bytes internalFree=%u "
+  /* A volume button can persist the local player level in flash. */
+  if (xTaskCreatePinnedToCore(button_worker, "playback_keys", BUTTON_STACK_BYTES,
+        NULL, 2, &button_task_handle, 0) != pdPASS) {
+    ESP_LOGE(TAG, "Task start failed: playback_keys stack=%u internal bytes internalFree=%u "
                  "internalLargest=%u psramFree=%u psramLargest=%u",
              (unsigned)BUTTON_STACK_BYTES,
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),

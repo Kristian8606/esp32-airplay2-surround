@@ -5,6 +5,7 @@
 #include "audio_diag.h"
 #include "amp_control.h"
 #include "gw_fw.h"
+#include "gw_local_volume.h"
 #if CONFIG_GATEWAY_PLAYER_BENCH
 #include "gw_bench.h"
 #endif
@@ -24,6 +25,10 @@
 #include "sync_pulse.h"
 #include "web_server.h"
 #include "wifi.h"
+#ifdef CONFIG_ESP_HOSTED_HOST
+#include "gw_c6_fw.h"
+#include "gw_c6_time.h"
+#endif
 #include "esp_app_desc.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
@@ -63,7 +68,28 @@ static void print_firmware_banner(void) {
   ESP_LOGI(TAG, "============================================================");
 }
 
+/* The PTP sockets join 224.0.1.129, which needs an interface with an
+ * address: the station's, or the setup access point's (192.168.4.1). Where
+ * the radio is a co-processor (P4 + C6) the access point comes up later, over
+ * RPC, and may not be up yet here; so the start is tried again for up to 10 s
+ * (a failed try leaves nothing behind). */
+static esp_err_t apple_clock_start_when_ready(void) {
+  esp_err_t err = apple_clock_start();
+  for (int i = 0; err == ESP_FAIL && i < 40; i++) {
+    vTaskDelay(pdMS_TO_TICKS(250));
+    err = apple_clock_start();
+  }
+  return err;
+}
+
 void app_main(void) {
+#ifdef CONFIG_ESP_HOSTED_HOST
+  /* First: the C6 (reset as ESP-Hosted starts) must not send its first time
+   * pulse edge before the capture is set up. Without it the Gateway runs,
+   * the speakers just get no TIME. The Apple clock then takes each Sync's
+   * time from the C6's record of it, where there is one. */
+  if (gw_c6_time_start() == ESP_OK) apple_clock_set_rx_time_hook(gw_c6_time_ptp_rx);
+#endif
   print_firmware_banner();
   log_memory_state("boot");
   ESP_ERROR_CHECK(amp_control_init());
@@ -74,7 +100,13 @@ void app_main(void) {
     e = nvs_flash_init();
   }
   ESP_ERROR_CHECK(e);
+#ifdef CONFIG_ESP_HOSTED_HOST
+  /* Does the C6 run the firmware this build carries? If not, it is
+   * installed, and the Gateway restarts with the C6 (phase 5). */
+  (void)gw_c6_fw_start();
+#endif
   ESP_ERROR_CHECK(settings_init());
+  gw_local_volume_init();
   ESP_ERROR_CHECK(log_stream_init());
 
   const bool provisioning_only = !settings_has_wifi_credentials();
@@ -94,7 +126,7 @@ void app_main(void) {
    * startup events are captured by the low-priority worker. This is a no-op
    * when diagnostics are disabled or no category is selected. */
   (void)AUDIO_DIAG_INIT();
-  ESP_ERROR_CHECK(apple_clock_start());
+  ESP_ERROR_CHECK(apple_clock_start_when_ready());
   e = ap2_hap_identity_init();
   if (e != ESP_OK) {
     ESP_LOGE(TAG, "AirPlay identity/pairings unavailable (%s); web HomeKit reset remains available",

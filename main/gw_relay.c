@@ -45,9 +45,9 @@ static const char *TAG = "gw_relay";
  * The sender is read whenever there is room, so at a FLUSH the old track is
  * here, dropped at once, instead of queued in TCP: read and sent at paced
  * speed only to be thrown away, that took 2-4 s per track change from an
- * iPhone (board, 11-02). A power of two: 64 s of 256 kbit/s AAC. */
-#define GW_RELAY_RING_BYTES  (4U * 1024U * 1024U)
-#define GW_RELAY_RING_MASK   (GW_RELAY_RING_BYTES - 1U)
+ * iPhone (board, 11-02). The byte ring supports sizes that are not powers
+ * of two; the frame index below uses a power-of-two size. */
+#define GW_RELAY_RING_BYTES  ((uint32_t)CONFIG_AIRPLAY_GW_RELAY_RING_KIB * 1024U)
 /* Where each frame starts, with its sequence number and RTP time. */
 #define GW_RELAY_INDEX       65536U
 #define GW_RELAY_INDEX_MASK  (GW_RELAY_INDEX - 1U)
@@ -130,7 +130,17 @@ typedef struct {
   uint32_t win_paced_ms;
   uint32_t win_dropped;
   uint32_t win_late;
+  uint32_t win_buffer_peak;
+  uint32_t stream_buffer_peak;
+  uint64_t win_rx_ring_hold_us;
+  uint64_t win_rx_index_hold_us;
 } relay_stream_t;
+
+typedef enum {
+  RX_READY,
+  RX_RING_FULL,
+  RX_INDEX_FULL,
+} relay_rx_limit_t;
 
 typedef enum {
   TGT_IDLE = 0,   /* no connection; connects while the sender is connected */
@@ -256,7 +266,7 @@ static uint64_t frame_end(uint64_t i) {
 #define GW_RELAY_LANE_IOV 16
 
 static uint8_t frame_lane(uint64_t i) {
-  return s.ring[(fx(i)->off + 2U) & GW_RELAY_RING_MASK] & 0x0FU;
+  return s.ring[(fx(i)->off + 2U) % GW_RELAY_RING_BYTES] & 0x0FU;
 }
 
 static bool lane_frame_for(const relay_target_t *t, uint64_t i) {
@@ -326,7 +336,14 @@ static void log_window(bool force) {
   const int64_t now_us = esp_timer_get_time();
   const int64_t span_us = now_us - st->win_start_us;
   if (!force && span_us < (int64_t)GW_RELAY_STATS_MS * 1000LL) return;
-  if (st->win_packets > 0U || force) {
+  bool has_tx = false;
+  for (size_t i = 0; i < SURROUND_MAX_SPEAKERS; ++i) {
+    has_tx |= s.tgt[i].win_bytes > 0U;
+  }
+  const bool awaiting_flush_seq = s.release_flush_gen != s.flush_gen;
+  const uint32_t buffered = (uint32_t)(s.head - s.tail);
+  if (st->win_packets > 0U || has_tx || st->win_buffer_peak > 0U ||
+      awaiting_flush_seq || force) {
     apple_clock_line_t ps = {0};
     apple_clock_get(&ps);
     const double kbit_s =
@@ -334,23 +351,35 @@ static void log_window(bool force) {
     ESP_LOGI(TAG,
              "RELAY rx %" PRIu32 " pkts %" PRIu32 " B (%.0f kbit/s) seq %" PRIu32
              "..%" PRIu32 " rtp %" PRIu32 "..%" PRIu32 " | total %" PRIu64
-             " pkts %" PRIu64 " KiB | buffered %" PRIu32 " KiB, flushed %" PRIu32
-             " pkts, late %" PRIu32 " pkts, paced %" PRIu32
-             " ms | apple_clock ready=%d gm=%016" PRIx64
+             " pkts %" PRIu64 " KiB | flushed %" PRIu32
+             " pkts, late %" PRIu32 " pkts, paced %" PRIu32 " ms, flush_pending=%d"
+             " | apple_clock ready=%d gm=%016" PRIx64
              " offset=%" PRId64 " ns",
              st->win_packets, st->win_bytes, kbit_s, st->win_first_seq,
              st->win_last_seq, st->win_first_rtp, st->win_last_rtp,
              st->total_packets, st->total_bytes / 1024U,
-             (uint32_t)((s.head - s.tail) / 1024U), st->win_dropped,
-             st->win_late, st->win_paced_ms, ps.ready, ps.grandmaster_clock_id,
+             st->win_dropped, st->win_late, st->win_paced_ms, awaiting_flush_seq,
+             ps.ready, ps.grandmaster_clock_id,
              ps.ready ? apple_clock_at(&ps, now_us * 1000LL) - now_us * 1000LL : 0LL);
+    ESP_LOGW(TAG, "RELAY buffer %" PRIu32 "/%" PRIu32 " KiB (%" PRIu32 "%%)"
+             ", 5s peak %" PRIu32 " KiB, stream peak %" PRIu32 " KiB"
+             " | RX held: ring %" PRIu64 " ms, index %" PRIu64 " ms",
+             buffered / 1024U, GW_RELAY_RING_BYTES / 1024U,
+             (uint32_t)((uint64_t)buffered * 100U / GW_RELAY_RING_BYTES),
+             st->win_buffer_peak / 1024U, st->stream_buffer_peak / 1024U,
+             st->win_rx_ring_hold_us / 1000U, st->win_rx_index_hold_us / 1000U);
     log_targets();
   }
   st->win_bytes = 0;
   st->win_packets = 0;
+  st->win_first_seq = st->win_last_seq = 0;
+  st->win_first_rtp = st->win_last_rtp = 0;
   st->win_paced_ms = 0;
   st->win_dropped = 0;
   st->win_late = 0;
+  st->win_buffer_peak = buffered;
+  st->win_rx_ring_hold_us = 0;
+  st->win_rx_index_hold_us = 0;
   st->win_start_us = now_us;
 }
 
@@ -422,6 +451,16 @@ static void take_flush(void) {
   if (gen == s.flush_gen) return;
   s.flush_gen = gen;
   s.flush_seq = seq;
+  if (s.ix_tail < s.ix_head) {
+    const frame_ix_t *first = fx(s.ix_tail);
+    const frame_ix_t *last = fx(s.ix_head - 1U);
+    AP_LOGI(TAG, "FLUSH until seq %" PRIu32 ": buffered %" PRIu32
+            " KiB seq %" PRIu32 "..%" PRIu32 " rtp %" PRIu32 "..%" PRIu32,
+            seq, (uint32_t)((s.head - s.tail) / 1024U),
+            first->seq, last->seq, first->rtp, last->rtp);
+  } else {
+    AP_LOGI(TAG, "FLUSH until seq %" PRIu32 ": no complete frames buffered", seq);
+  }
 }
 
 /* Take the anchor posted by gw_relay_set_anchor(): its local time from the
@@ -543,6 +582,8 @@ static void advance_release(int64_t now_us) {
     if (j < s.ix_head) {
       s.release_flush_gen = s.flush_gen;
       s.pace_valid = false;
+      AP_LOGI(TAG, "FLUSH resume at seq %" PRIu32 " rtp %" PRIu32,
+              fx(j)->seq, fx(j)->rtp);
     }
   }
   const double rate = (double)sound_engine_get_sample_rate();
@@ -768,7 +809,7 @@ static void send_pending_lanes(relay_target_t *t, int64_t now_us) {
     }
     /* [from, end) of frame j, split where the ring wraps */
     while (from < end && nseg < GW_RELAY_LANE_IOV) {
-      const size_t at = (size_t)(from & GW_RELAY_RING_MASK);
+      const size_t at = (size_t)(from % GW_RELAY_RING_BYTES);
       size_t len = (size_t)(end - from);
       if (len > GW_RELAY_RING_BYTES - at) len = GW_RELAY_RING_BYTES - at;
       iov[nseg].iov_base = s.ring + at;
@@ -836,7 +877,7 @@ static void send_pending(relay_target_t *t, int64_t now_us) {
     t->blocked_since_us = now_us; /* nothing to send: not stalled */
     return;
   }
-  const size_t at = (size_t)(t->pos & GW_RELAY_RING_MASK);
+  const size_t at = (size_t)(t->pos % GW_RELAY_RING_BYTES);
   size_t len = (size_t)(limit - t->pos);
   if (len > GW_RELAY_RING_BYTES - at) len = GW_RELAY_RING_BYTES - at;
   const int n = send(t->fd, s.ring + at, len, MSG_DONTWAIT);
@@ -992,14 +1033,17 @@ static void accept_client(void) {
 
 /* Room in the buffer for another read: bytes, and frame entries for the
  * smallest frames it could hold. */
-static bool can_receive(void) {
-  return GW_RELAY_RING_BYTES - (s.head - s.tail) >= GW_RELAY_CHUNK &&
-         GW_RELAY_INDEX - (s.ix_head - s.ix_tail) >
-             GW_RELAY_CHUNK / GW_RELAY_MIN_WIRE_LEN + 1U;
+static relay_rx_limit_t receive_limit(void) {
+  if (GW_RELAY_RING_BYTES - (s.head - s.tail) < GW_RELAY_CHUNK)
+    return RX_RING_FULL;
+  if (GW_RELAY_INDEX - (s.ix_head - s.ix_tail) <=
+      GW_RELAY_CHUNK / GW_RELAY_MIN_WIRE_LEN + 1U)
+    return RX_INDEX_FULL;
+  return RX_READY;
 }
 
 static void receive(void) {
-  const size_t at = (size_t)(s.head & GW_RELAY_RING_MASK);
+  const size_t at = (size_t)(s.head % GW_RELAY_RING_BYTES);
   size_t room = GW_RELAY_RING_BYTES - (size_t)(s.head - s.tail);
   if (room > GW_RELAY_CHUNK) room = GW_RELAY_CHUNK;
   if (room > GW_RELAY_RING_BYTES - at) room = GW_RELAY_RING_BYTES - at;
@@ -1010,6 +1054,10 @@ static void receive(void) {
       return;
     }
     s.head += (uint64_t)r;
+    /* Sample before the relay frees sent bytes, including between log windows. */
+    const uint32_t buffered = (uint32_t)(s.head - s.tail);
+    if (buffered > s.stream.win_buffer_peak) s.stream.win_buffer_peak = buffered;
+    if (buffered > s.stream.stream_buffer_peak) s.stream.stream_buffer_peak = buffered;
   } else if (r == 0) {
     close_client("sender closed");
   } else if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
@@ -1041,7 +1089,8 @@ static void relay_task(void *arg) {
       for (size_t i = 0; i < SURROUND_MAX_SPEAKERS; ++i) lane_skip(&s.tgt[i]);
 #endif
     advance_tail();
-    const int sel_client = connected && can_receive() ? s.client_sock : -1;
+    const relay_rx_limit_t rx_limit = connected ? receive_limit() : RX_READY;
+    const int sel_client = connected && rx_limit == RX_READY ? s.client_sock : -1;
 
     fd_set rd, wr;
     FD_ZERO(&rd);
@@ -1062,7 +1111,13 @@ static void relay_task(void *arg) {
     const int poll_ms = hold || s.paced ? GW_RELAY_HOLD_POLL_MS : GW_RELAY_POLL_MS;
     if (s.paced) s.stream.win_paced_ms += (uint32_t)poll_ms;
     struct timeval tv = {.tv_sec = 0, .tv_usec = poll_ms * 1000};
+    const int64_t wait_start_us = rx_limit != RX_READY ? esp_timer_get_time() : 0;
     const int n = select(maxfd + 1, &rd, &wr, NULL, &tv);
+    now_us = esp_timer_get_time();
+    if (rx_limit == RX_RING_FULL)
+      s.stream.win_rx_ring_hold_us += (uint64_t)(now_us - wait_start_us);
+    else if (rx_limit == RX_INDEX_FULL)
+      s.stream.win_rx_index_hold_us += (uint64_t)(now_us - wait_start_us);
     if (!s.running) break;
     if (n < 0) {
       if (errno != EINTR) {
@@ -1071,7 +1126,6 @@ static void relay_task(void *arg) {
       }
       continue;
     }
-    now_us = esp_timer_get_time();
 
     /* The sender first, so what it sent can go out in this pass; then the
      * speakers; then a new sender. Closing happens only after every
@@ -1177,7 +1231,10 @@ esp_err_t gw_relay_start(uint16_t requested_port, uint16_t *bound_port) {
     s.listen_sock = -1;
     return ESP_FAIL;
   }
-  AP_LOGI(TAG, "buffered audio listener port=%u", (unsigned)bound);
+  AP_LOGI(TAG, "buffered audio listener port=%u; ring %" PRIu32
+          " KiB, advertised %" PRIu32 " KiB",
+          (unsigned)bound, GW_RELAY_RING_BYTES / 1024U,
+          AP2_BUFFERED_AUDIO_ADVERTISED_BYTES / 1024U);
   if (bound_port) *bound_port = bound;
   return ESP_OK;
 }

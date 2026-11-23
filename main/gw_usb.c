@@ -4,6 +4,7 @@
 
 #include <inttypes.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -11,6 +12,7 @@
 #include "esp_vfs_fat.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "gw_player.h"
 #include "usb/msc_host.h"
@@ -23,12 +25,14 @@ static const char *TAG = "gw_usb";
 #define USB_LIB_PRIORITY  5
 #define USB_MSC_PRIORITY  5
 #define USB_TASK_STACK    6144 /* mounting: FatFs with long names */
-#define USB_MAX_FILES     4 /* the player's stream and its seeks, a folder listing */
+#define USB_MAX_FILES     5 /* audio, seek, metadata or cover, and library */
 
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 static gw_usb_status_t s_st = {.state = "starting"};
 static QueueHandle_t s_q;
-static volatile bool s_ready;
+static SemaphoreHandle_t s_media_read;
+static atomic_uint s_media_id;
+static uint32_t s_next_media_id;
 
 static void set_state(const char *state, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 static void set_state(const char *state, const char *fmt, ...) {
@@ -103,16 +107,19 @@ static void drive_task(void *arg) {
         s_st.free_bytes = free_b;
         taskEXIT_CRITICAL(&s_mux);
       }
-      s_ready = true;
+      if (++s_next_media_id == 0) ++s_next_media_id;
+      atomic_store(&s_media_id, s_next_media_id);
       set_state("ready", NULL);
       ESP_LOGI(TAG, "drive mounted at %s: %.1f GB, %.1f GB free", GW_USB_MOUNT, total / 1e9,
                free_b / 1e9);
     } else if (e.event == MSC_DEVICE_DISCONNECTED) {
       ESP_LOGI(TAG, "drive pulled out");
-      s_ready = false;
+      atomic_store(&s_media_id, 0);
       /* a file from it may be playing: the player lets go first */
       if (gw_player_active() && gw_player_plays_usb()) gw_player_stop();
+      xSemaphoreTake(s_media_read, portMAX_DELAY);
       if (vfs) msc_host_vfs_unregister(vfs);
+      xSemaphoreGive(s_media_read);
       vfs = NULL;
       if (dev) msc_host_uninstall_device(dev);
       dev = NULL;
@@ -127,7 +134,8 @@ static void drive_task(void *arg) {
 
 esp_err_t gw_usb_start(void) {
   s_q = xQueueCreate(4, sizeof(msc_host_event_t));
-  if (!s_q) return ESP_ERR_NO_MEM;
+  s_media_read = xSemaphoreCreateMutex();
+  if (!s_q || !s_media_read) return ESP_ERR_NO_MEM;
   if (xTaskCreatePinnedToCore(lib_task, "usb_lib", USB_TASK_STACK, xTaskGetCurrentTaskHandle(),
                               USB_LIB_PRIORITY, NULL, USB_TASK_CORE) != pdPASS)
     return ESP_ERR_NO_MEM;
@@ -155,7 +163,19 @@ esp_err_t gw_usb_start(void) {
   return ESP_OK;
 }
 
-bool gw_usb_ready(void) { return s_ready; }
+bool gw_usb_ready(void) { return gw_usb_media_id() != 0; }
+
+uint32_t gw_usb_media_id(void) { return atomic_load(&s_media_id); }
+
+bool gw_usb_acquire_media(uint32_t id) {
+  if (!id || gw_usb_media_id() != id) return false;
+  xSemaphoreTake(s_media_read, portMAX_DELAY);
+  if (gw_usb_media_id() == id) return true;
+  xSemaphoreGive(s_media_read);
+  return false;
+}
+
+void gw_usb_release_media(void) { xSemaphoreGive(s_media_read); }
 
 void gw_usb_status(gw_usb_status_t *out) {
   taskENTER_CRITICAL(&s_mux);

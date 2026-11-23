@@ -3,16 +3,21 @@
 #include "web_server_internal.h"
 #include "homekit_reset.h"
 
+#include <inttypes.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "airplay_identity.h"
 #include "airplay_log.h"
 #include "cJSON.h"
 #include "esp_http_client.h"
 #include "esp_http_server.h"
 #include "cal_chirp.h"
+#if CONFIG_ENABLE_AIRPLAY_ARTWORK
+#include "gw_airplay_artwork.h"
+#endif
 #include "gw_calib.h"
 #include "gw_mic.h"
 #include "gw_fw.h"
@@ -21,6 +26,10 @@
 #include "gw_player.h"
 #endif
 #include "gw_speakers.h"
+#include "settings.h"
+#ifdef CONFIG_ESP_HOSTED_HOST
+#include "gw_c6_fw.h"
+#endif
 #include "sound_engine.h"
 #include "rtsp_remote.h"
 #include "rtsp_server.h"
@@ -218,10 +227,68 @@ static esp_err_t remote_get_handler(httpd_req_t *req) {
   cJSON *root = cJSON_CreateObject();
   if (!root) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
   remote_to_json(root, &status);
+#if CONFIG_ENABLE_AIRPLAY_ARTWORK
+  const uint32_t cover = gw_airplay_artwork_id();
+  if (cover) {
+    char url[48];
+    snprintf(url, sizeof(url), "/api/audio/airplay-cover?id=%" PRIu32, cover);
+    cJSON_AddStringToObject(root, "cover", url);
+  }
+#endif
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");
   web_send_json(req, root);
   return ESP_OK;
 }
+
+#if CONFIG_ENABLE_AIRPLAY_ARTWORK
+static esp_err_t airplay_cover_get_handler(httpd_req_t *req) {
+  char query[24], id[12], *end;
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+      httpd_query_key_value(query, "id", id, sizeof(id)) != ESP_OK ||
+      id[0] < '0' || id[0] > '9')
+    return httpd_resp_send_404(req);
+  const unsigned long long revision = strtoull(id, &end, 10);
+  if (*end || revision == 0 || revision > UINT32_MAX)
+    return httpd_resp_send_404(req);
+  gw_airplay_artwork_t *artwork = gw_airplay_artwork_retain((uint32_t)revision);
+  if (!artwork) return httpd_resp_send_404(req);
+  httpd_resp_set_type(req, artwork->mime);
+  httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
+  const esp_err_t result = httpd_resp_send(req, (const char *)artwork->data, artwork->size);
+  gw_airplay_artwork_release(artwork);
+  return result;
+}
+#endif
+
+#if CONFIG_AIRPLAY_MULTICHANNEL
+static esp_err_t airplay_formats_get_handler(httpd_req_t *req) {
+  cJSON *root = cJSON_CreateObject();
+  if (!root) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+  cJSON_AddBoolToObject(root, "allow_71", settings_airplay_71_enabled());
+  web_send_json(req, root);
+  return ESP_OK;
+}
+
+static esp_err_t airplay_formats_post_handler(httpd_req_t *req) {
+  char body[64];
+  if (web_recv_json(req, body, sizeof(body)) != ESP_OK)
+    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid AirPlay format setting");
+  cJSON *root = cJSON_ParseWithOpts(body, NULL, true);
+  const cJSON *value = cJSON_GetObjectItemCaseSensitive(root, "allow_71");
+  const bool valid = cJSON_IsBool(value);
+  const bool enabled = cJSON_IsTrue(value);
+  cJSON_Delete(root);
+  if (!valid)
+    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Expected an allow_71 boolean");
+  if (enabled != settings_airplay_71_enabled()) {
+    if (settings_set_airplay_71_enabled(enabled) != ESP_OK)
+      return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Could not save AirPlay format setting");
+    airplay_gateway_disconnect_sender();
+  }
+  return airplay_formats_get_handler(req);
+}
+#endif
 
 static esp_err_t remote_post_handler(httpd_req_t *req) {
   char body[96];
@@ -612,6 +679,57 @@ static esp_err_t speaker_fw_post_handler(httpd_req_t *req) {
 }
 static esp_err_t speaker_fw_bin_handler(httpd_req_t *req) { return gw_fw_serve(req); }
 
+#ifdef CONFIG_ESP_HOSTED_HOST
+/* ---- Gateway on a P4: the firmware of its C6 Wi-Fi chip (System card) ---- */
+static const char *c6_state_name(gw_c6_fw_state_t st) {
+  switch (st) {
+    case GW_C6_FW_CHECKING: return "checking";
+    case GW_C6_FW_CURRENT: return "current";
+    case GW_C6_FW_UPDATING: return "updating";
+    case GW_C6_FW_GAVE_UP: return "gave_up";
+    case GW_C6_FW_FAILED: return "failed";
+  }
+  return "unknown";
+}
+static esp_err_t c6_get_handler(httpd_req_t *req) {
+  gw_c6_fw_status_t st;
+  gw_c6_fw_get_status(&st);
+  cJSON *r = cJSON_CreateObject();
+  cJSON_AddBoolToObject(r, "success", true);
+  cJSON_AddStringToObject(r, "state", c6_state_name(st.state));
+  cJSON_AddStringToObject(r, "c6_version", st.c6_version);
+  cJSON_AddStringToObject(r, "image_version", st.image_version);
+  cJSON_AddNumberToObject(r, "percent", st.percent);
+  cJSON_AddStringToObject(r, "message", st.message);
+  web_send_json(req, r);
+  return ESP_OK;
+}
+/* {"action":"update"}: installs the Gateway's C6 image now; the Gateway
+ * restarts after it (about 15 s). */
+static esp_err_t c6_post_handler(httpd_req_t *req) {
+  if (!web_admin_ok(req)) return ESP_OK;
+  char b[64];
+  if (web_recv_json(req, b, sizeof(b)) != ESP_OK) {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid body");
+    return ESP_FAIL;
+  }
+  cJSON *j = cJSON_Parse(b);
+  cJSON *a = j ? cJSON_GetObjectItem(j, "action") : NULL;
+  const bool update = cJSON_IsString(a) && strcmp(a->valuestring, "update") == 0;
+  cJSON_Delete(j);
+  if (!update) {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Unknown action");
+    return ESP_FAIL;
+  }
+  const esp_err_t err = gw_c6_fw_update();
+  cJSON *r = cJSON_CreateObject();
+  cJSON_AddBoolToObject(r, "success", err == ESP_OK);
+  if (err != ESP_OK) cJSON_AddStringToObject(r, "error", err == ESP_ERR_INVALID_STATE ? "An update is already running" : esp_err_to_name(err));
+  web_send_json(req, r);
+  return ESP_OK;
+}
+#endif
+
 void web_role_register(httpd_handle_t server) {
   ESP_ERROR_CHECK(homekit_reset_register(server));
 #define REG(U, M, H)                                                     \
@@ -622,8 +740,15 @@ void web_role_register(httpd_handle_t server) {
   REG("/speakers", HTTP_GET, speakers_page_handler);
   REG("/api/speakers", HTTP_GET, speakers_get_handler);
   REG("/api/speakers", HTTP_POST, speakers_post_handler);
+#if CONFIG_AIRPLAY_MULTICHANNEL
+  REG("/api/airplay/formats", HTTP_GET, airplay_formats_get_handler);
+  REG("/api/airplay/formats", HTTP_POST, airplay_formats_post_handler);
+#endif
   REG("/api/audio/remote", HTTP_GET, remote_get_handler);
   REG("/api/audio/remote", HTTP_POST, remote_post_handler);
+#if CONFIG_ENABLE_AIRPLAY_ARTWORK
+  REG("/api/audio/airplay-cover", HTTP_GET, airplay_cover_get_handler);
+#endif
   REG("/api/calibration", HTTP_GET, calibration_get_handler);
   REG("/api/calibration", HTTP_POST, calibration_post_handler);
   REG("/api/calibration/sweep", HTTP_GET, calibration_sweep_handler);
@@ -632,6 +757,10 @@ void web_role_register(httpd_handle_t server) {
   REG("/api/speakers/firmware", HTTP_GET, speaker_fw_get_handler);
   REG("/api/speakers/firmware", HTTP_POST, speaker_fw_post_handler);
   REG(SURROUND_FW_PATH, HTTP_GET, speaker_fw_bin_handler);
+#ifdef CONFIG_ESP_HOSTED_HOST
+  REG("/api/c6", HTTP_GET, c6_get_handler);
+  REG("/api/c6", HTTP_POST, c6_post_handler);
+#endif
 #undef REG
   gw_radio_register_web(server);
 #if CONFIG_GATEWAY_USB_PLAYER

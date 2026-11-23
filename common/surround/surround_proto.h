@@ -20,6 +20,8 @@
 
 #include "sdkconfig.h"
 
+#define SURROUND_PROTO_VERSION_SWEEPS 12
+
 #if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
 /* 13: USB player lanes (surround_player_formats.h) and SET_ALAC_CONFIG. Only
  * with the experimental option, on both sides: a speaker that cannot play
@@ -27,8 +29,7 @@
  * Gateway's firmware through FW_UPDATE as for any version change. */
 #define SURROUND_PROTO_VERSION   13
 #else
-#define SURROUND_PROTO_VERSION   12 /* 10: crossover, 11: LFE gain in CONFIG,
-                                     * 12: room EQ sweeps in CAL_PLAY */
+#define SURROUND_PROTO_VERSION   SURROUND_PROTO_VERSION_SWEEPS
 #endif
 /* The first version whose speakers install firmware from the Gateway
  * (FW_UPDATE). A Gateway keeps updating a speaker of any version from this

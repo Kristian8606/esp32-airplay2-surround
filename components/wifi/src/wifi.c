@@ -22,6 +22,7 @@
 #include "wifi_ctl.h"
 #include "wifi_logic.h"
 #include "wifi_saved.h"
+#include "soc/soc_caps.h"
 
 static const char *TAG = "wifi";
 
@@ -643,10 +644,61 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id,
   }
 }
 
+/* ---- MAC ---------------------------------------------------------------- */
+
+#if !SOC_WIFI_SUPPORTED
+/* The radio is a co-processor (ESP-Hosted on the P4): it starts with its own
+ * MAC after every reset. This chip's eFuse MAC is the identity everywhere
+ * (deviceid, HomeKit, PTP clock identity, host name), so the radio gets it.
+ * The station takes it right after esp_wifi_init(), before the station starts:
+ * the network interface reads the radio's MAC when it starts. The access
+ * point cannot have the same one; this chip has a single universal address,
+ * so it gets the locally administered one derived from it. */
+static void radio_set_sta_mac(void) {
+  uint8_t mac[6];
+  uint8_t radio[6];
+  esp_err_t err = esp_read_mac(mac, ESP_MAC_BASE);
+  if (err == ESP_OK) {
+    err = esp_wifi_set_mac(WIFI_IF_STA, mac);
+  }
+  if (err == ESP_OK) {
+    err = esp_wifi_get_mac(WIFI_IF_STA, radio);
+  }
+  if (err != ESP_OK || memcmp(mac, radio, sizeof(mac)) != 0) {
+    ESP_LOGE(TAG, "station MAC of the radio is not this chip's: %s",
+             err != ESP_OK ? esp_err_to_name(err) : "different");
+    return;
+  }
+  ESP_LOGI(TAG, "station MAC %02x:%02x:%02x:%02x:%02x:%02x (this chip's)",
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
+
+/* Needs the access point in the mode. */
+static void radio_set_ap_mac(void) {
+  uint8_t base[6];
+  uint8_t mac[6];
+  uint8_t radio[6];
+  esp_err_t err = esp_read_mac(base, ESP_MAC_BASE);
+  if (err == ESP_OK) {
+    err = esp_derive_local_mac(mac, base);
+  }
+  if (err == ESP_OK) {
+    err = esp_wifi_set_mac(WIFI_IF_AP, mac);
+  }
+  if (err == ESP_OK) {
+    err = esp_wifi_get_mac(WIFI_IF_AP, radio);
+  }
+  if (err != ESP_OK || memcmp(mac, radio, sizeof(mac)) != 0) {
+    ESP_LOGE(TAG, "access point MAC of the radio not set: %s",
+             err != ESP_OK ? esp_err_to_name(err) : "different");
+  }
+}
+#endif
+
 /* ---- Host name -------------------------------------------------------- */
 
 static void read_sta_mac(uint8_t mac[6]) {
-  if (esp_read_mac(mac, ESP_MAC_WIFI_STA) != ESP_OK) {
+  if (esp_read_mac(mac, ESP_MAC_BASE) != ESP_OK) {
     memset(mac, 0, 6);
   }
 }
@@ -719,6 +771,9 @@ void wifi_init_apsta(const char *ap_ssid, const char *ap_password) {
   wifi_init_config_t init_cfg = WIFI_INIT_CONFIG_DEFAULT();
   INIT_CHECK(esp_wifi_init(&init_cfg));
   INIT_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+#if !SOC_WIFI_SUPPORTED
+  radio_set_sta_mac();
+#endif
 
   INIT_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                                  on_event, NULL, NULL));
@@ -767,6 +822,9 @@ void wifi_init_apsta(const char *ap_ssid, const char *ap_password) {
    * machine turns the access point on when the rules say so. */
   ap_config(&s.store->cfg);
   INIT_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+#if !SOC_WIFI_SUPPORTED
+  radio_set_ap_mac();
+#endif
   INIT_CHECK(esp_wifi_set_config(WIFI_IF_AP, &s.store->cfg));
   memset(&s.store->cfg, 0, sizeof(s.store->cfg));
   INIT_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
@@ -796,7 +854,7 @@ void wifi_get_mac_str(char *mac_str, size_t len) {
     return;
   }
   uint8_t mac[6];
-  if (esp_read_mac(mac, ESP_MAC_WIFI_STA) != ESP_OK) {
+  if (esp_read_mac(mac, ESP_MAC_BASE) != ESP_OK) {
     mac_str[0] = '\0';
     return;
   }

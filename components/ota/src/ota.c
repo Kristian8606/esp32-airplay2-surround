@@ -15,6 +15,7 @@
 #include "esp_image_format.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
+#include "sdkconfig.h"
 #include "esp_partition.h"
 #include "esp_timer.h"
 
@@ -26,7 +27,7 @@ static const char *TAG = "ota";
 #define OTA_IDLE_TIMEOUT_US  (10 * 1000 * 1000LL)
 
 /* Set while an update by this module runs. A 32-bit atomic: lock-free on
- * the ESP32-S3. */
+ * the ESP32-S3 and the ESP32-P4. */
 static atomic_int s_busy;
 
 /* The host-side checks in ota_image.c hard-code the image layout. */
@@ -38,7 +39,6 @@ _Static_assert(offsetof(esp_image_header_t, hash_appended) == OTA_IMAGE_HASH_APP
                "hash_appended offset");
 _Static_assert(sizeof(esp_chip_id_t) == 2, "chip_id size");
 _Static_assert(ESP_IMAGE_HEADER_MAGIC == OTA_IMAGE_MAGIC, "image magic");
-_Static_assert(ESP_CHIP_ID_ESP32S3 == OTA_IMAGE_CHIP_ID_ESP32S3, "ESP32-S3 chip id");
 _Static_assert(ESP_APP_DESC_MAGIC_WORD == OTA_IMAGE_APP_DESC_MAGIC, "app desc magic");
 _Static_assert(offsetof(esp_app_desc_t, version) == OTA_IMAGE_DESC_VERSION_OFFSET, "version offset");
 _Static_assert(offsetof(esp_app_desc_t, project_name) == OTA_IMAGE_DESC_PROJECT_OFFSET, "project offset");
@@ -141,8 +141,10 @@ static esp_err_t ota_run(httpd_req_t *req)
         goto fail;
     }
 
-    r = ota_image_check_head(buf, fill, running->project_name,
-                             sizeof(running->project_name), &info);
+    /* An image for the chip this firmware runs on (the Gateway's own OTA;
+     * the speaker images it hands out are checked in main/gw_fw.c). */
+    r = ota_image_check_head(buf, fill, (uint16_t)CONFIG_IDF_FIRMWARE_CHIP_ID,
+                             running->project_name, sizeof(running->project_name), &info);
     if (r != OTA_IMAGE_OK) {
         err = image_result_to_err(r);
         why = ota_image_result_str(r);

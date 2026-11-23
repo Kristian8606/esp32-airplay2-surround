@@ -2,8 +2,16 @@ dependencies:
   idf: ">=6.1"
   espressif/mdns: "^1.14.1"
   espressif/libsodium: "^1.0.21"
-  espressif/esp_audio_codec: "^2.5.0"
+  # FireBeetle 2 uses P4 revision 1.x. esp_audio_codec 2.6+ needs P4 v3.0.
+  espressif/esp_audio_codec:
+    version: ">=2.5.0,<2.6.0"
   espressif/cjson: "^1.7.19"
+  # Wi-Fi of the P4 Gateway through its C6 co-processor (SDIO). ESP-IDF
+  # v6.1 has esp_wifi_remote built in, so this is the only extra component.
+  espressif/esp_hosted:
+    version: "==3.1.0"
+    rules:
+      - if: "target in [esp32p4]"
   # The AirPlay 2 protocol core and the PTP clock towards Apple, shared with
   # airplay-esp32. Moved to a new tag only after a test.
   ap2_core:

@@ -3,7 +3,7 @@
 # partitions_16mb.csv uses it; it reaches a board only over USB
 # (idf.py flash), not by an update over Wi-Fi.
 if(CONFIG_ESPTOOLPY_FLASHSIZE_16MB AND
-   NOT CONFIG_PARTITION_TABLE_CUSTOM_FILENAME MATCHES "partitions_16mb\\.csv$")
+   CONFIG_PARTITION_TABLE_CUSTOM_FILENAME MATCHES "(^|/)partitions\\.csv$")
     message(WARNING
         "Flash size is 16 MB, but the partition table is "
         "'${CONFIG_PARTITION_TABLE_CUSTOM_FILENAME}' (the 8 MB layout). "

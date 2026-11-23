@@ -42,13 +42,20 @@ bool airplay_set_session_active(bool active);
  * bits 9, 11, 14, 18, 19, 20, 30, 38, 40, 41, 46, 47 and 48 (bit 22 off).
  * The high ones announce AirPlay 2 pairing: 38 and 46 for the encrypted,
  * paired control channel, 48 for transient (PIN-less) pairing. */
+#if CONFIG_AIRPLAY_ROLE_GATEWAY && CONFIG_ENABLE_AIRPLAY_ARTWORK
+/* Bit 50 requests AirPlay 2's Now Playing plist; bit 15 is classic cover art. */
+#define AIRPLAY_FEATURES_HI (0x1C340 | (1U << 18))
+#define AIRPLAY_ARTWORK_LO (1U << 15)
+#else
 #define AIRPLAY_FEATURES_HI 0x1C340
+#define AIRPLAY_ARTWORK_LO 0U
+#endif
 #ifdef CONFIG_AIRPLAY_HOMEKIT
 /* + bit 16 (progress metadata), as an AirPort Express. Its MFi bit 26 is not
  * advertised: senders then demand /auth-setup, which needs Apple's chip. */
-#define AIRPLAY_FEATURES_LO 0x401D4A00 /* bit 22 off */
+#define AIRPLAY_FEATURES_LO (0x401D4A00 | AIRPLAY_ARTWORK_LO) /* bit 22 off */
 #else
-#define AIRPLAY_FEATURES_LO 0x401C4A00 /* bit 22 off */
+#define AIRPLAY_FEATURES_LO (0x401C4A00 | AIRPLAY_ARTWORK_LO) /* bit 22 off */
 #endif
 
 /* GET /info "supportedFormats": bit N = AirPlay audio format N. The sender
@@ -64,9 +71,18 @@ bool airplay_set_session_active(bool active);
   (AIRPLAY_FMT_ALAC_44100_S16_2 | AIRPLAY_FMT_ALAC_48000_S24_2 |    \
    AIRPLAY_FMT_AAC_LC_44100_2 | AIRPLAY_FMT_AAC_LC_48000_2)
 #if defined(CONFIG_AIRPLAY_MULTICHANNEL) && CONFIG_AIRPLAY_MULTICHANNEL
-#define AIRPLAY_SUPPORTED_BUFFER_STREAM                          \
-  (AIRPLAY_SUPPORTED_STEREO_BUFFER_STREAM | AIRPLAY_FMT_AAC_LC_48000_5_1 | \
-   AIRPLAY_FMT_AAC_LC_48000_7_1)
+#define AIRPLAY_SUPPORTED_5_1_BUFFER_STREAM \
+  (AIRPLAY_SUPPORTED_STEREO_BUFFER_STREAM | AIRPLAY_FMT_AAC_LC_48000_5_1)
+#if defined(CONFIG_AIRPLAY_ROLE_GATEWAY) && CONFIG_AIRPLAY_ROLE_GATEWAY
+/* Read the Gateway's saved limit when a new session negotiates a format. */
+uint64_t airplay_gateway_buffer_formats(void);
+/* Close the current sender's control connection. The RTSP listener stays open. */
+void airplay_gateway_disconnect_sender(void);
+#define AIRPLAY_SUPPORTED_BUFFER_STREAM (airplay_gateway_buffer_formats())
+#else
+#define AIRPLAY_SUPPORTED_BUFFER_STREAM \
+  (AIRPLAY_SUPPORTED_5_1_BUFFER_STREAM | AIRPLAY_FMT_AAC_LC_48000_7_1)
+#endif
 #else
 #define AIRPLAY_SUPPORTED_BUFFER_STREAM AIRPLAY_SUPPORTED_STEREO_BUFFER_STREAM
 #endif

@@ -52,6 +52,11 @@ esp_err_t player_http_span(const char *url, int64_t off, uint32_t len,
  * stream and read_at have a file descriptor each. */
 esp_err_t player_source_file_open(player_source_t *s, const char *path);
 
+/* Range-only source for metadata. A USB filesystem path takes priority
+ * over the HTTP URL. The URL must live until the source is closed. */
+esp_err_t player_source_metadata_open(player_source_t *s, const char *url,
+                                      const char *path, int64_t size);
+
 /* ---- WAV ---- */
 
 typedef struct {

@@ -10,6 +10,7 @@ const css = `
 .p-bar{position:relative;overflow:hidden;margin-bottom:14px}
 .p-bar::before{content:'';position:absolute;left:0;right:0;top:0;height:2px;background:var(--glow)}
 .p-art{flex:none;width:64px;height:64px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;letter-spacing:.5px;color:var(--accent-2,#c4b2ff);overflow:hidden}
+.p-art a{display:block;width:100%;height:100%}
 .p-art img{width:100%;height:100%;object-fit:cover;display:block}
 .p-seek{display:flex;align-items:center;gap:10px;margin-top:12px}
 .p-seek span{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;min-width:38px}
@@ -86,7 +87,7 @@ const npH = el('div', 'np-h'), bSrc = el('span', '', 'USB'); npH.append(el('h2',
 const art = el('div', 'p-art'), bKick = el('div', 'p-kick'), bName = el('div', 'r-name'), bSub = el('div', 'r-title'), bChips = el('div', 'r-chips');
 const bTxt = el('div', 'r-txt'); bTxt.append(bKick, bName, bSub, bChips);
 const row = el('div', 'r-row'); row.append(art, bTxt);
-const pos = el('input'); pos.type = 'range'; pos.min = 0; pos.max = 1; pos.step = 0.1; pos.value = 0; pos.setAttribute('aria-label', 'Position');
+const pos = el('input', 'playback-range'); pos.type = 'range'; pos.min = 0; pos.max = 1; pos.step = 0.1; pos.value = 0; pos.setAttribute('aria-label', 'Position');
 const tPos = el('span', '', '0:00'), tDur = el('span', '', '0:00');
 const seekRow = el('div', 'p-seek'); seekRow.append(tPos, pos, tDur);
 const bPrev = el('button', 'p-ib'), bPlay = el('button', 'p-ib main'), bNext = el('button', 'p-ib');
@@ -96,7 +97,7 @@ bPrev.innerHTML = IC.prev; bNext.innerHTML = IC.next; bPlay.innerHTML = IC.pause
 bPrev.title = 'Previous (the start of this one after 3 s)'; bNext.title = 'Next'; bPlay.title = 'Pause'; bUp.title = 'Up next'; bLib.title = 'Library';
 [bPrev, bPlay, bNext, bUp, bLib].forEach(b => b.setAttribute('aria-label', b.title));
 const btns = el('div', 'p-btns'); btns.append(bPrev, bPlay, bNext);
-const vol = el('input'); vol.type = 'range'; vol.min = -60; vol.max = 0; vol.step = 1; vol.setAttribute('aria-label', 'Player volume');
+const vol = el('input', 'playback-range'); vol.type = 'range'; vol.min = 0; vol.max = 100; vol.step = 1; vol.setAttribute('aria-label', 'Player volume');
 const volT = el('span'); const volBox = el('div', 'r-vol'); volBox.append(el('span', '', 'Volume'), vol, volT);
 const bStop = el('button', 'btn sec', 'Stop'); bStop.type = 'button';
 const left = el('div', 'p-side'), right = el('div', 'p-side r'); left.append(bUp, bLib); right.append(bStop);
@@ -259,12 +260,18 @@ bStop.onclick = () => act({ cmd: 'stop' });
 bNext.onclick = () => act({ cmd: 'next' });
 bPrev.onclick = () => act({ cmd: 'prev' });
 bPlay.onclick = () => act({ cmd: cur && cur.state === 'paused' ? 'resume' : 'pause' });
-pos.oninput = () => { seeking = true; tPos.textContent = mmss(+pos.value); };
+pos.oninput = () => { seeking = true; updatePlaybackRange(pos); tPos.textContent = mmss(+pos.value); };
 pos.onchange = () => { act({ cmd: 'seek', pos: +pos.value }); setTimeout(() => { seeking = false; }, 1500); };
 let volT0 = 0, volTimer = null;
-const sendVol = () => post({ cmd: 'volume', vol: +vol.value }).catch(() => {});
-vol.oninput = () => { dragging = true; volT.textContent = vol.value + ' dB'; const n = Date.now(); clearTimeout(volTimer); if (n - volT0 > 250) { volT0 = n; sendVol(); } else volTimer = setTimeout(sendVol, 250); };
-vol.onchange = () => { clearTimeout(volTimer); sendVol(); setTimeout(() => { dragging = false; }, 600); };
+let volumeRequest = Promise.resolve();
+const sendVol = live => {
+  const volume_percent = +vol.value;
+  volumeRequest = volumeRequest.then(() => post({ cmd: 'volume', volume_percent, live })).catch(() => {
+    if (!live) volT.textContent = 'Not saved';
+  });
+};
+vol.oninput = () => { dragging = true; updatePlaybackRange(vol); volT.textContent = vol.value + '%'; const n = Date.now(); clearTimeout(volTimer); if (n - volT0 > 250) { volT0 = n; sendVol(true); } else volTimer = setTimeout(() => sendVol(true), 250); };
+vol.onchange = () => { clearTimeout(volTimer); sendVol(false); setTimeout(() => { dragging = false; }, 600); };
 
 /* ---- what the Gateway says ---- */
 function laneRates(d) {
@@ -309,7 +316,18 @@ function render(d) {
     art.textContent = (fmt.split(' ')[0] || '♪').slice(0, 4);
     if (d.cover) {
       const im = el('img'); im.alt = '';
-      im.onload = () => { art.textContent = ''; art.appendChild(im); };
+      im.onload = () => {
+        if (art.dataset.k !== artKey) return;
+        art.textContent = '';
+        if (d.cover_original) {
+          const full = el('a'); full.href = d.cover_original;
+          full.target = '_blank'; full.rel = 'noopener';
+          full.title = 'Open original cover'; full.setAttribute('aria-label', full.title);
+          full.appendChild(im); art.appendChild(full);
+        } else {
+          art.appendChild(im);
+        }
+      };
       im.src = d.cover;
     }
   }
@@ -342,8 +360,9 @@ function render(d) {
   const dur = d.duration_s || 0;
   pos.max = dur > 0 ? dur : 1; pos.disabled = !(dur > 0);
   if (!seeking) { pos.value = Math.min(d.position_s || 0, pos.max); tPos.textContent = mmss(d.position_s); }
+  updatePlaybackRange(pos);
   tDur.textContent = dur > 0 ? (d.duration_estimated ? '~' : '') + mmss(dur) : '–:––';
-  if (!dragging) { vol.value = d.volume_db; volT.textContent = d.volume_db + ' dB'; }
+  if (!dragging) { vol.value = d.volume_percent; updatePlaybackRange(vol); volT.textContent = vol.value + '%'; }
   laneRates(d); drawGets(d);
 }
 async function loadSpeakers() {
@@ -356,7 +375,8 @@ async function poll(ms) {
   clearTimeout(pollT);
   pollT = setTimeout(async () => {
     let d = null; try { d = await fetchJ('/api/player' + (qGen >= 0 ? '?qgen=' + qGen : '')); render(d); } catch (e) {}
-    poll(d && (d.active || ['starting', 'buffering', 'stopping'].includes(d.state)) ? 1000 : 3000);
+    const waiting = d && (d.state === 'starting' || d.metadata_pending);
+    poll(waiting ? 250 : d && (d.active || ['buffering', 'stopping'].includes(d.state)) ? 1000 : 3000);
   }, ms);
 }
 loadSpeakers(); setInterval(loadSpeakers, 10000); poll(0);

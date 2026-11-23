@@ -6,6 +6,7 @@
 #include "led.h"
 
 #include "sdkconfig.h"
+#include "soc/soc_caps.h"
 
 /* The options come from the firmware's Kconfig (airplay_options); without
  * the LED the others do not exist, so they are checked only with it. */
@@ -58,8 +59,8 @@
 #endif
 
 #if !defined(CONFIG_RGB_AUDIO_LED_GPIO) || CONFIG_RGB_AUDIO_LED_GPIO < 0 ||     \
-    CONFIG_RGB_AUDIO_LED_GPIO > 48
-#error "CONFIG_RGB_AUDIO_LED_GPIO must be 0-48"
+    CONFIG_RGB_AUDIO_LED_GPIO > SOC_GPIO_OUT_RANGE_MAX
+#error "CONFIG_RGB_AUDIO_LED_GPIO must be an output GPIO of this chip"
 #endif
 #if !defined(CONFIG_RGB_AUDIO_LED_BRIGHTNESS) ||                               \
     CONFIG_RGB_AUDIO_LED_BRIGHTNESS < 0 || CONFIG_RGB_AUDIO_LED_BRIGHTNESS > 255

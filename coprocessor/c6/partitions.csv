@@ -1,0 +1,9 @@
+# The layout of the factory image of the DFR1172 C6 (C6_v14_eco2_0022.bin).
+# An OTA from the P4 replaces only the app, never this table or the
+# bootloader, so the app must fit one 1536 KB slot.
+# Name,     Type, SubType, Offset,   Size
+nvs,        data, nvs,     0x9000,   0x4000
+otadata,    data, ota,     0xd000,   0x2000
+phy_init,   data, phy,     0xf000,   0x1000
+ota_0,      app,  ota_0,   0x10000,  0x180000
+ota_1,      app,  ota_1,   0x190000, 0x180000

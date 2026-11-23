@@ -26,7 +26,6 @@ extern "C" {
 
 #define OTA_IMAGE_MAGIC            0xE9u
 #define OTA_IMAGE_CHIP_ID_OFFSET   12      /* uint16_t, little endian */
-#define OTA_IMAGE_CHIP_ID_ESP32S3  0x0009u
 #define OTA_IMAGE_HASH_APPENDED_OFFSET 23  /* uint8_t, must be 1: SHA-256 appended */
 
 #define OTA_IMAGE_APP_DESC_OFFSET  (OTA_IMAGE_HEADER_LEN + OTA_IMAGE_SEGMENT_HDR_LEN)
@@ -39,7 +38,7 @@ extern "C" {
 typedef enum {
     OTA_IMAGE_OK = 0,
     OTA_IMAGE_BAD_SIZE,    /* too long for the partition, or too short */
-    OTA_IMAGE_INVALID,     /* not an ESP32-S3 application image, or hash_appended != 1 */
+    OTA_IMAGE_INVALID,     /* not an application image for this chip, or hash_appended != 1 */
     OTA_IMAGE_OTHER_KIND,  /* another kind of firmware than the running one, or no kind */
 } ota_image_result_t;
 
@@ -53,10 +52,13 @@ typedef struct {
 ota_image_result_t ota_image_check_size(size_t total_len, size_t partition_size);
 
 /* Checks the first head_len bytes of the image (at least OTA_IMAGE_HEAD_LEN
- * are needed). running_project is the project_name of the running firmware,
- * at most running_len bytes, not necessarily NUL-terminated. info may be
- * NULL; it is filled when the result is OTA_IMAGE_OK or OTA_IMAGE_OTHER_KIND. */
+ * are needed). chip_id is the chip the image must be built for: the running
+ * one (esp_chip_id_t, CONFIG_IDF_FIRMWARE_CHIP_ID). running_project is the
+ * project_name of the running firmware, at most running_len bytes, not
+ * necessarily NUL-terminated. info may be NULL; it is filled when the result
+ * is OTA_IMAGE_OK or OTA_IMAGE_OTHER_KIND. */
 ota_image_result_t ota_image_check_head(const uint8_t *head, size_t head_len,
+                                        uint16_t chip_id,
                                         const char *running_project, size_t running_len,
                                         ota_image_info_t *info);
 

@@ -317,7 +317,14 @@ static fw_try_t *fw_tries(const uint8_t mac[6], uint32_t generation) {
 
 /* A speaker may update now: at once, even during a stream (that speaker
  * stops playing for it), only not during a room calibration. */
-static bool fw_allowed(void) { return !gw_calib_running(); }
+static bool fw_allowed(void) {
+#if CONFIG_IDF_TARGET_ESP32P4
+  /* Keep the installed speaker builds during the P4 AutoMix test. */
+  return false;
+#else
+  return !gw_calib_running();
+#endif
+}
 
 /* The speaker can take the image and runs another build. */
 static bool fw_wanted(const surround_hello_t *h, const gw_fw_image_t *img) {
@@ -478,7 +485,12 @@ static void handle_hello(gw_speaker_t *sp, const uint8_t *p, size_t len) {
   memcpy(&h, p, sizeof(h));
   h.name[sizeof(h.name) - 1] = '\0';
   h.firmware[sizeof(h.firmware) - 1] = '\0';
-  if (h.magic != SURROUND_HELLO_MAGIC || h.version != SURROUND_PROTO_VERSION) {
+  bool version_supported = h.version == SURROUND_PROTO_VERSION;
+#if CONFIG_IDF_TARGET_ESP32P4
+  /* Versions 12 and 13 share the control messages used by this Gateway. */
+  version_supported |= h.version == SURROUND_PROTO_VERSION_SWEEPS;
+#endif
+  if (h.magic != SURROUND_HELLO_MAGIC || !version_supported) {
     AP_LOGW(TAG, "%s: protocol version %u, Gateway speaks %u", sp->ip,
             (unsigned)h.version, (unsigned)SURROUND_PROTO_VERSION);
     /* It cannot join, but it can take the firmware that lets it. */
@@ -515,9 +527,9 @@ static void handle_hello(gw_speaker_t *sp, const uint8_t *p, size_t len) {
   const bool join_now = session_active() && realtime_session();
   sp->state = session_active() && !join_now ? SPK_WAITING : SPK_ACTIVE;
   AP_LOGI(TAG,
-          "speaker %s %02x:%02x:%02x:%02x:%02x:%02x at %s, channel %d, fw %s: %s%s",
+          "speaker %s %02x:%02x:%02x:%02x:%02x:%02x at %s, channel %d, proto %u, fw %s: %s%s",
           h.name, h.mac[0], h.mac[1], h.mac[2], h.mac[3], h.mac[4], h.mac[5],
-          sp->ip, (int)h.channel, h.firmware, state_name(sp->state),
+          sp->ip, (int)h.channel, (unsigned)h.version, h.firmware, state_name(sp->state),
           join_now ? ", joins the realtime stream now" : "");
   if (join_now) {
     replay(sp);

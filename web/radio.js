@@ -90,7 +90,7 @@ const npH = el('div', 'np-h'); npH.append(el('h2', '', 'Now playing'), el('span'
 const bLogo = el('div', 'r-logo'), bKick = el('div', 'p-kick', 'Live radio'), bName = el('div', 'r-name'), bTitle = el('div', 'r-title'), bChips = el('div', 'r-chips');
 const bTxt = el('div', 'r-txt'); bTxt.append(bKick, bName, bTitle, bChips);
 const row = el('div', 'r-row'); row.append(bLogo, bTxt);
-const vol = el('input'); vol.type = 'range'; vol.min = -60; vol.max = 0; vol.step = 1; vol.setAttribute('aria-label', 'Radio volume');
+const vol = el('input', 'playback-range'); vol.type = 'range'; vol.min = 0; vol.max = 100; vol.step = 1; vol.setAttribute('aria-label', 'Radio volume');
 const volT = el('span'); const volBox = el('div', 'r-vol'); volBox.append(el('span', '', 'Volume'), vol, volT);
 const bSt = el('button', 'btn sec', 'Stations'), bStop = el('button', 'btn', 'Stop');
 const ctl = el('div', 'r-ctl'); ctl.append(volBox, el('span', '', ''), bSt, bStop); ctl.children[1].style.flex = '1';
@@ -278,8 +278,14 @@ bStop.onclick = async () => { bStop.disabled = true; try { render(await fetchJ('
 /* ---- volume: live while dragging, kept on the Gateway ---- */
 let volT0 = 0, volTimer = null;
 /* live: still dragging, the Gateway only plays it; the last value it also saves. */
-const sendVol = (live) => fetch('/api/radio/volume?db=' + vol.value + (live ? '&live=1' : ''), { method: 'POST', cache: 'no-store' }).catch(() => {});
-vol.oninput = () => { dragging = true; volT.textContent = vol.value + ' dB'; const n = Date.now(); clearTimeout(volTimer); if (n - volT0 > 250) { volT0 = n; sendVol(true); } else volTimer = setTimeout(() => sendVol(true), 250); };
+let volumeRequest = Promise.resolve();
+const sendVol = live => {
+  const url = '/api/radio/volume?pct=' + vol.value + (live ? '&live=1' : '');
+  volumeRequest = volumeRequest.then(() => fetchJ(url, { method: 'POST' })).catch(() => {
+    if (!live) volT.textContent = 'Not saved';
+  });
+};
+vol.oninput = () => { dragging = true; updatePlaybackRange(vol); volT.textContent = vol.value + '%'; const n = Date.now(); clearTimeout(volTimer); if (n - volT0 > 250) { volT0 = n; sendVol(true); } else volTimer = setTimeout(() => sendVol(true), 250); };
 vol.onchange = () => { clearTimeout(volTimer); sendVol(false); setTimeout(() => { dragging = false; }, 600); };
 
 /* ---- what the Gateway says ---- */
@@ -303,7 +309,7 @@ function render(d) {
   if (d.codec) bChips.appendChild(chip(d.codec + (d.bitrate_kbps ? ' ' + d.bitrate_kbps : '') + (d.alac_rate ? ' → ALAC ' + rate(d.alac_rate) + '/' + d.alac_bits : ''), 'c-fmt'));
   if (d.state === 'playing') bChips.appendChild(chip(d.source_channels === 1 ? 'Mono' : 'Stereo', 'c-st'));
   else bChips.appendChild(chip(d.state === 'buffering' ? 'Buffering…' : d.state === 'stopping' ? 'Stopping…' : 'Starting…', 'c-warn'));
-  if (!dragging) { vol.value = d.volume_db; volT.textContent = d.volume_db + ' dB'; }
+  if (!dragging) { vol.value = d.volume_percent; updatePlaybackRange(vol); volT.textContent = vol.value + '%'; }
 }
 async function poll(ms) {
   clearTimeout(pollT);

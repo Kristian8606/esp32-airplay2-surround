@@ -27,23 +27,26 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "ap2_port.h"
 #include "cJSON.h"
 #include "esp_audio_simple_dec_default.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
-#include "esp_mac.h"
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
 #include "freertos/message_buffer.h"
+#include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "gw_bench_alac_lite.h"
 #include "gw_calib.h"
+#include "gw_local_volume.h"
 #include "gw_player_decim.h"
 #include "gw_player_m4a.h"
 #include "gw_player_tags.h"
+#include "gw_cover_cache.h"
 #if CONFIG_GATEWAY_USB_PLAYER_USB
 #include "gw_usb.h"
 #endif
@@ -51,7 +54,6 @@
 #include "gw_radio.h"
 #include "gw_relay.h"
 #include "gw_speakers.h"
-#include "rtsp_remote.h"
 #include "lwip/sockets.h"
 #include "rtsp_server.h"
 #include "sodium.h"
@@ -68,7 +70,11 @@ static const char *TAG = "gw_player";
 #define PL_FRAME         352U   /* samples per ALAC frame, like AirPlay */
 #define PL_READ_CHUNK    8192U
 #define PL_HEADER_MAX    65536U /* the WAV data chunk / the M4A codec must come before this */
+#if CONFIG_IDF_TARGET_ESP32P4
+#define PL_START_DELAY_NS 1000000000LL
+#else
 #define PL_START_DELAY_NS 2000000000LL
+#endif
 #define PL_MAX_LEAD_NS    20000000000LL
 #define PL_MAX_LEAD_BUSY_NS 8000000000LL /* lanes over PL_BUSY_KBPS in all */
 #define PL_BUSY_KBPS      4000
@@ -106,6 +112,14 @@ static const char *state_name(player_state_t s) {
 }
 
 typedef struct {
+  char url[256], mime[24];
+  gw_cover_thumb_t thumb;
+  int64_t offset;
+  time_t modified;
+  uint32_t length, id, media_id;
+} cover_ref_t;
+
+typedef struct {
   player_state_t state;
   char message[96];
   char url[256];
@@ -113,11 +127,10 @@ typedef struct {
   char warning[96]; /* a file heavier than the USB port reads (phase 4.3) */
   /* tags and the cover (phase 6a) */
   char title[96], artist[96], album[96], track[12], year[12];
-  char cover_url[256], cover_mime[24];
-  int64_t cover_off;
-  uint32_t cover_len, cover_id;
+  cover_ref_t cover;
+  uint32_t track_id;
+  bool metadata_pending;
   int rate, bits, channels, layout;
-  int volume_db;
   int lead_ms;
   uint32_t lane_bytes[PL_LANES]; /* sent per lane, for the status kbit/s */
   uint8_t lane_bits[PL_LANES];   /* 0 = no lane */
@@ -153,13 +166,15 @@ static SemaphoreHandle_t s_qlock;
 static uint32_t s_queue_gen;
 #define PL_COVER_MAX (2U * 1024U * 1024U)
 static uint32_t s_cover_id;
+static uint32_t s_track_id;
+static cover_ref_t s_last_usb_cover;
+static QueueHandle_t s_metadata_jobs;
 #define PL_GOTO_NONE (-100)
 #define PL_GOTO_NEXT (-1)
 #define PL_GOTO_PREV (-2)
 static atomic_int s_goto = PL_GOTO_NONE; /* next, previous, or a queue index */
 static atomic_int s_pause_req;   /* 1 pause, 2 resume */
 static atomic_llong s_seek_ms = -1;
-static int s_next_volume_db = -30;
 
 static void st_set(player_state_t state, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 static void st_set(player_state_t state, const char *fmt, ...) {
@@ -179,17 +194,11 @@ static void st_set(player_state_t state, const char *fmt, ...) {
 
 static int64_t now_ns(void) { return esp_timer_get_time() * 1000LL; }
 
-static int32_t db_to_q15(int db) {
-  return (int32_t)lroundf(32768.0f * powf(10.0f, (float)db / 20.0f));
-}
-
-static int clamp_db(int db) { return db > 0 ? 0 : db < -60 ? -60 : db; }
-
 /* ---- the player's clock line (as the radio's, "PL" instead of "RD") ---- */
 
 static uint64_t player_clock_id(void) {
-  uint8_t mac[6] = {0};
-  (void)esp_read_mac(mac, ESP_MAC_WIFI_STA);
+  uint8_t mac[6];
+  if (ap2_port_device_mac(mac) != ESP_OK) return 0;
   return ((uint64_t)mac[0] << 56) | ((uint64_t)mac[1] << 48) |
          ((uint64_t)mac[2] << 40) | (0x50ULL << 32) | (0x4CULL << 24) |
          ((uint64_t)mac[3] << 16) | ((uint64_t)mac[4] << 8) | mac[5];
@@ -212,12 +221,12 @@ void gw_player_yield(void) {
   gw_player_stop();
 }
 
-static void take_speakers(void) {
+static void take_speakers(uint64_t clock_id) {
   const apple_clock_line_t l = {
       .ready = true,
       .realtime = false,
-      .source_clock_id = player_clock_id(),
-      .grandmaster_clock_id = player_clock_id(),
+      .source_clock_id = clock_id,
+      .grandmaster_clock_id = clock_id,
       .epoch = s_epoch++,
       .base_local_ns = 0,
       .base_apple_ns = 0,
@@ -304,13 +313,17 @@ typedef struct {
   char url[PL_URL_MAX];
   char format[64];
   char warning[96];
-  char title[96], artist[96], album[96], track[12], year[12];
-  char cover_url[PL_URL_MAX], cover_mime[24];
-  int64_t cover_off;
-  uint32_t cover_len, cover_id;
+  player_tags_t container_tags;
+  int64_t id3_bytes, flac_start, source_size;
+  uint32_t media_id;
   int rate, bits, channels, layout;
   double duration_s;
 } track_info_t;
+
+typedef struct {
+  track_info_t track;
+  uint32_t id;
+} metadata_job_t;
 
 /* Gapless: where the next track starts in the stream (RTP time). */
 typedef struct {
@@ -387,6 +400,7 @@ typedef struct {
   int64_t log_us;
   /* where the time goes, per status window */
   int64_t t_read_us, t_enc_us, t_send_us, t_dec_us, t_hr_us;
+  int64_t t_start_us, t_input_us, t_session_us;
   int64_t t_put_wait_us, t_get_wait_us; /* the queue full (decoder task) / empty (player) */
   /* MP3 / AAC length, estimated from what the decoder took so far */
   uint64_t dec_bytes, dec_frames;
@@ -446,8 +460,17 @@ static int64_t lead_ns(const player_t *p) {
 }
 
 static void anchor_now(player_t *p) {
-  p->anchor_ns = now_ns() + PL_START_DELAY_NS;
+  const int64_t now = esp_timer_get_time();
+  p->anchor_ns = now * 1000LL + PL_START_DELAY_NS;
   p->anchor_rtp = p->rtp;
+  if (p->t_start_us) {
+    ESP_LOGI(TAG, "PLAYER start: input ready +%lld ms, session ready +%lld ms, first frame +%lld ms, scheduled play +%lld ms",
+             (long long)((p->t_input_us - p->t_start_us) / 1000),
+             (long long)((p->t_session_us - p->t_start_us) / 1000),
+             (long long)((now - p->t_start_us) / 1000),
+             (long long)((p->anchor_ns / 1000 - p->t_start_us) / 1000));
+    p->t_start_us = 0;
+  }
   sound_engine_set_anchor_time(p->clock_id, (uint64_t)p->anchor_ns, p->anchor_rtp);
   sound_engine_set_playing(true);
   p->playing = true;
@@ -626,7 +649,7 @@ static bool send_frame(player_t *p) {
 /* Sets the speakers up as the radio does; the announced format is the
  * radio's stereo one for the rate (the lanes' SSRCs tell the speakers the
  * rest, per block). */
-static bool session_open(player_t *p, int volume_db) {
+static bool session_open(player_t *p) {
   p->rate = p->hr.factor > 1 ? p->hr.out_rate : p->wav.rate;
   const int ann_bits = p->rate == 48000 ? 24 : 16;
   esp_fill_random(p->key, sizeof(p->key));
@@ -634,7 +657,7 @@ static bool session_open(player_t *p, int volume_db) {
   p->rtp = esp_random();
   p->rtp0 = p->rtp;
   p->burst_rtp = p->rtp;
-  p->clock_id = player_clock_id();
+  p->clock_id = s_line.grandmaster_clock_id;
   while (esp_timer_get_time() - s_owns_since_us < 1000000LL && !atomic_load(&s_stop))
     vTaskDelay(pdMS_TO_TICKS(50));
 
@@ -670,12 +693,12 @@ static bool session_open(player_t *p, int volume_db) {
   setsockopt(p->sock, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
   const struct timeval tv = {.tv_sec = 1, .tv_usec = 0};
   setsockopt(p->sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-  sound_engine_set_volume_q15(db_to_q15(volume_db));
+  const int volume_percent = gw_local_volume_percent(gw_local_volume_apply());
   p->need_anchor = true;
   p->speakers_gen = gw_speakers_audio_generation() - 1U;
   lanes_refresh(p);
-  ESP_LOGI(TAG, "stream to the speakers: %d Hz lanes, relay port %u, volume %d dB", p->rate,
-           (unsigned)port, volume_db);
+  ESP_LOGI(TAG, "stream to the speakers: %d Hz lanes, relay port %u, volume %d%%", p->rate,
+           (unsigned)port, volume_percent);
   return true;
 }
 
@@ -983,6 +1006,7 @@ static bool open_input(player_t *p) {
   /* phase 4.3: the S3's full-speed USB port reads about 8 Mbit/s (measured
    * 8.4); a heavier file has to stop and buffer now and then */
   ti->warning[0] = '\0';
+#if !CONFIG_IDF_TARGET_ESP32P4
   if (p->src_usb && dur > 1.0 && p->src.size > 0) {
     const double mbps = (double)p->src.size * 8.0 / dur / 1e6;
     if (mbps > 8.0)
@@ -993,6 +1017,7 @@ static bool open_input(player_t *p) {
                "%.1f Mbit/s: close to what the USB port reads (about 8)", mbps);
     if (ti->warning[0]) ESP_LOGW(TAG, "%s", ti->warning);
   }
+#endif
   ESP_LOGI(TAG, "file: %s %d Hz, %d bit, %d channels (%s), %.1f s%s", kind, p->wav.rate,
            p->wav.bits, p->wav.channels, layout_name(p->wav.layout), dur,
            p->hr.factor > 1 ? " (hi-res: down to the stream's rate, 24-bit lanes)" : "");
@@ -2188,140 +2213,242 @@ static bool queue_url(int k, char *out, size_t len) {
 static void publish_track(const track_info_t *ti);
 /* ---- tags and the cover (phase 6a) ---- */
 
-/* The input's tags; without a picture in the file, a cover.jpg or the like
- * next to it on the drive. */
-static void read_tags(player_t *p, const char *url) {
-  player_tags_t t;
-  memset(&t, 0, sizeof(t));
-  if (p->id3_bytes) tags_read_id3(&p->src, (int64_t)p->id3_bytes, &t);
-  if (p->kind == KIND_FLAC && p->flac_audio_start)
-    tags_read_flac(&p->src, (int64_t)p->id3_bytes, p->flac_audio_start, &t);
-  if (p->kind == KIND_M4A) {
-    const player_tags_t *m = &p->m4a.tags;
-    if (!t.title[0]) strlcpy(t.title, m->title, sizeof(t.title));
-    if (!t.artist[0]) strlcpy(t.artist, m->artist, sizeof(t.artist));
-    if (!t.album[0]) strlcpy(t.album, m->album, sizeof(t.album));
-    if (!t.track[0]) strlcpy(t.track, m->track, sizeof(t.track));
-    if (!t.year[0]) strlcpy(t.year, m->year, sizeof(t.year));
-    if (!t.cover_len && m->cover_len) {
-      t.cover_off = m->cover_off;
-      t.cover_len = m->cover_len;
-      strlcpy(t.cover_mime, m->cover_mime, sizeof(t.cover_mime));
-    }
-  }
-  track_info_t *ti = &p->ti;
-  strlcpy(ti->title, t.title, sizeof(ti->title));
-  strlcpy(ti->artist, t.artist, sizeof(ti->artist));
-  strlcpy(ti->album, t.album, sizeof(ti->album));
-  strlcpy(ti->track, t.track, sizeof(ti->track));
-  strlcpy(ti->year, t.year, sizeof(ti->year));
-  ti->cover_len = 0;
-  if (t.cover_len && t.cover_len <= PL_COVER_MAX) {
-    strlcpy(ti->cover_url, url, sizeof(ti->cover_url));
-    ti->cover_off = t.cover_off;
-    ti->cover_len = t.cover_len;
-    strlcpy(ti->cover_mime, t.cover_mime, sizeof(ti->cover_mime));
-  }
+/* Metadata can finish after the user switches tracks or pulls the drive. */
+static bool metadata_interrupted(void *arg) {
+  const metadata_job_t *job = arg;
+  taskENTER_CRITICAL(&s_mux);
+  const bool current = s_st.track_id == job->id;
+  taskEXIT_CRITICAL(&s_mux);
 #if CONFIG_GATEWAY_USB_PLAYER_USB
-  if (!ti->cover_len && strncmp(url, "usb:", 4) == 0) {
-    static const char *const names[] = {"cover.jpg", "folder.jpg", "Cover.jpg", "Folder.jpg",
-                                        "front.jpg", "Front.jpg", "cover.png", "folder.png"};
-    char dir[PL_URL_MAX];
-    strlcpy(dir, url + 4, sizeof(dir));
-    char *slash = strrchr(dir, '/');
-    if (slash) slash[1] = '\0';
-    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]) && !ti->cover_len; ++i) {
-      char path[PL_URL_MAX + 32];
-      snprintf(path, sizeof(path), "%s%s%s", GW_USB_MOUNT, dir, names[i]);
-      struct stat st;
-      if (stat(path, &st) == 0 && st.st_size > 0 && st.st_size <= (off_t)PL_COVER_MAX) {
-        if (snprintf(ti->cover_url, sizeof(ti->cover_url), "usb:%.*s%s", (int)(sizeof(ti->cover_url) - 16U),
-                     dir, names[i]) >= (int)sizeof(ti->cover_url))
-          continue;
-        ti->cover_off = 0;
-        ti->cover_len = (uint32_t)st.st_size;
-        strlcpy(ti->cover_mime, strstr(names[i], ".png") ? "image/png" : "image/jpeg",
-                sizeof(ti->cover_mime));
-      }
-    }
+  if (job->track.media_id && gw_usb_media_id() != job->track.media_id) return true;
+#endif
+  return !current || atomic_load(&s_stop);
+}
+
+static void set_status_tags(const player_tags_t *t) {
+  strlcpy(s_st.title, t->title, sizeof(s_st.title));
+  strlcpy(s_st.artist, t->artist, sizeof(s_st.artist));
+  strlcpy(s_st.album, t->album, sizeof(s_st.album));
+  strlcpy(s_st.track, t->track, sizeof(s_st.track));
+  strlcpy(s_st.year, t->year, sizeof(s_st.year));
+}
+
+#if CONFIG_GATEWAY_USB_PLAYER_USB
+static void folder_cover(const char *path, cover_ref_t *cover) {
+  static const char *const names[] = {"cover.jpg", "folder.jpg", "Cover.jpg", "Folder.jpg",
+                                      "front.jpg", "Front.jpg", "cover.png", "folder.png"};
+  const char *slash = strrchr(path, '/');
+  if (!slash) return;
+  const int dir_len = (int)(slash - path + 1);
+  char candidate[PL_URL_MAX + 8];
+  for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+    if (snprintf(candidate, sizeof(candidate), "%.*s%s", dir_len, path, names[i]) >=
+        (int)sizeof(candidate)) continue;
+    struct stat st;
+    if (stat(candidate, &st) != 0 || !S_ISREG(st.st_mode) ||
+        st.st_size <= 0 || st.st_size > (off_t)PL_COVER_MAX) continue;
+    /* "usb:" and GW_USB_MOUNT occupy the same four characters. */
+    if (snprintf(cover->url, sizeof(cover->url), "usb:%s", candidate + strlen(GW_USB_MOUNT)) >=
+        (int)sizeof(cover->url)) return;
+    cover->offset = 0;
+    cover->length = (uint32_t)st.st_size;
+    cover->modified = st.st_mtime;
+    strlcpy(cover->mime, strstr(names[i], ".png") ? "image/png" : "image/jpeg",
+            sizeof(cover->mime));
+    return;
+  }
+}
+#endif
+
+static void resolve_metadata(metadata_job_t *job, player_tags_t *tags, cover_ref_t *cover) {
+  const track_info_t *track = &job->track;
+  const char *path = NULL;
+#if CONFIG_GATEWAY_USB_PLAYER_USB
+  char filename[PL_URL_MAX + 8];
+  if (track->media_id) {
+    if (!gw_usb_acquire_media(track->media_id)) return;
+    snprintf(filename, sizeof(filename), "%s%s", GW_USB_MOUNT, track->url + 4);
+    path = filename;
   }
 #endif
-  if (ti->cover_len) ti->cover_id = ++s_cover_id;
-  if (ti->title[0] || ti->cover_len)
-    ESP_LOGI(TAG, "tags: \"%s\" by \"%s\" (%s), cover %u B", ti->title, ti->artist, ti->album,
-             (unsigned)ti->cover_len);
+
+  if (track->id3_bytes || track->flac_start) {
+    player_source_t src;
+    if (player_source_metadata_open(&src, track->url, path, track->source_size) == ESP_OK) {
+      src.interrupted = metadata_interrupted;
+      src.interrupted_arg = job;
+      if (track->id3_bytes) tags_read_id3(&src, track->id3_bytes, tags);
+      if (track->flac_start) tags_read_flac(&src, track->id3_bytes, track->flac_start, tags);
+      src.close(&src);
+    }
+  }
+  const player_tags_t *m = &track->container_tags;
+  if (!tags->title[0]) strlcpy(tags->title, m->title, sizeof(tags->title));
+  if (!tags->artist[0]) strlcpy(tags->artist, m->artist, sizeof(tags->artist));
+  if (!tags->album[0]) strlcpy(tags->album, m->album, sizeof(tags->album));
+  if (!tags->track[0]) strlcpy(tags->track, m->track, sizeof(tags->track));
+  if (!tags->year[0]) strlcpy(tags->year, m->year, sizeof(tags->year));
+#if CONFIG_GATEWAY_USB_PLAYER_USB
+  if (path && !metadata_interrupted(job)) folder_cover(path, cover);
+#endif
+  const player_tags_t *image = tags->cover_len ? tags : m;
+  if (!cover->length && image->cover_len && image->cover_len <= PL_COVER_MAX) {
+    strlcpy(cover->url, track->url, sizeof(cover->url));
+    strlcpy(cover->mime, image->cover_mime, sizeof(cover->mime));
+    cover->offset = image->cover_off;
+    cover->length = image->cover_len;
+#if CONFIG_GATEWAY_USB_PLAYER_USB
+    struct stat st;
+    if (path && !metadata_interrupted(job) && stat(path, &st) == 0)
+      cover->modified = st.st_mtime;
+#endif
+  }
+#if CONFIG_GATEWAY_USB_PLAYER_USB
+  if (path) {
+    cover->media_id = track->media_id;
+#if CONFIG_IDF_TARGET_ESP32P4
+    if (cover->length && (!strcasecmp(cover->mime, "image/jpeg") ||
+                          !strcasecmp(cover->mime, "image/jpg")) && !metadata_interrupted(job)) {
+      snprintf(filename, sizeof(filename), "%s%.*s", GW_USB_MOUNT, PL_URL_MAX - 5, cover->url + 4);
+      gw_cover_thumb_prepare(filename, cover->offset, cover->length,
+                             metadata_interrupted, job, &cover->thumb);
+    }
+#endif
+    gw_usb_release_media();
+  }
+#endif
+}
+
+/* Adjacent tracks from a mounted album often point to the same file. */
+static uint32_t cover_id(const cover_ref_t *cover) {
+  if (!cover->length) return 0;
+  if (cover->media_id && s_last_usb_cover.id && cover->media_id == s_last_usb_cover.media_id &&
+      cover->offset == s_last_usb_cover.offset && cover->length == s_last_usb_cover.length &&
+      cover->modified == s_last_usb_cover.modified &&
+      cover->thumb.length == s_last_usb_cover.thumb.length &&
+      (!cover->thumb.length || !memcmp(cover->thumb.key, s_last_usb_cover.thumb.key, sizeof(cover->thumb.key))) &&
+      !strcmp(cover->url, s_last_usb_cover.url))
+    return s_last_usb_cover.id;
+  if (++s_cover_id == 0) ++s_cover_id;
+  if (cover->media_id) {
+    s_last_usb_cover = *cover;
+    s_last_usb_cover.id = s_cover_id;
+  }
+  return s_cover_id;
+}
+
+static void metadata_task(void *arg) {
+  (void)arg;
+  for (;;) {
+    metadata_job_t job;
+    if (xQueueReceive(s_metadata_jobs, &job, portMAX_DELAY) != pdTRUE) continue;
+    if (metadata_interrupted(&job)) continue;
+    const int64_t start = esp_timer_get_time();
+    player_tags_t tags = {0};
+    cover_ref_t cover = {0};
+    resolve_metadata(&job, &tags, &cover);
+    if (metadata_interrupted(&job)) continue;
+
+    taskENTER_CRITICAL(&s_mux);
+    if (s_st.track_id == job.id && !atomic_load(&s_stop)) {
+      cover.id = cover_id(&cover);
+      set_status_tags(&tags);
+      s_st.cover = cover;
+      s_st.metadata_pending = false;
+    }
+    taskEXIT_CRITICAL(&s_mux);
+    ESP_LOGI(TAG, "PLAYER metadata track %d: %lld ms, cover %u B",
+             job.track.ix + 1, (long long)((esp_timer_get_time() - start) / 1000), (unsigned)cover.length);
+  }
 }
 
 static bool cover_sink(void *ctx, const uint8_t *b, size_t n) {
   return httpd_resp_send_chunk((httpd_req_t *)ctx, (const char *)b, (ssize_t)n) == ESP_OK;
 }
 
-/* GET /api/player/cover: the picture of what the speakers play, from the
- * file itself (USB or HTTP), a piece at a time. */
 static esp_err_t cover_handler(httpd_req_t *req) {
-  char url[PL_URL_MAX], mime[24];
-  int64_t off;
-  uint32_t len;
+  char query[48], requested[16], current[16];
   taskENTER_CRITICAL(&s_mux);
-  strlcpy(url, s_st.cover_url, sizeof(url));
-  strlcpy(mime, s_st.cover_mime, sizeof(mime));
-  off = s_st.cover_off;
-  len = s_st.cover_len;
+  const cover_ref_t cover = s_st.cover;
   taskEXIT_CRITICAL(&s_mux);
-  if (!len) return httpd_resp_send_404(req);
-  if (strncmp(url, "http://", 7) == 0) { /* one Range request for all of it */
-    httpd_resp_set_type(req, mime);
-    httpd_resp_set_hdr(req, "Cache-Control", "max-age=86400, immutable");
-    if (player_http_span(url, off, len, cover_sink, req) != ESP_OK) {
-      httpd_resp_send_chunk(req, NULL, 0);
-      return ESP_OK;
-    }
-    return httpd_resp_send_chunk(req, NULL, 0);
-  }
-  /* USB: FatFs reads whole sectors straight into buf, one USB transfer per
-   * cluster; a picture that starts in the middle of a sector cost three or
-   * four small transfers per 8 KB read (~320 KB/s for a 166 KB cover).
-   * Read up to the next sector first, then 32 KB at a time from there. */
-  enum { COVER_CHUNK = 32768, COVER_SECTOR = 512 };
-  uint8_t *buf = heap_caps_malloc(COVER_CHUNK, MALLOC_CAP_SPIRAM);
-  if (!buf) return httpd_resp_send_500(req);
-  player_source_t src;
-  esp_err_t err = ESP_FAIL;
-  int fd = -1;
-#if CONFIG_GATEWAY_USB_PLAYER_USB
-  if (strncmp(url, "usb:", 4) == 0) {
-    char path[PL_URL_MAX + 8];
-    snprintf(path, sizeof(path), "%s%s", GW_USB_MOUNT, url + 4);
-    fd = gw_usb_ready() ? open(path, O_RDONLY) : -1;
-    err = fd >= 0 && lseek(fd, (off_t)off, SEEK_SET) == (off_t)off ? ESP_OK : ESP_FAIL;
-  } else
-#endif
-  {
-    err = player_source_http_open(&src, url);
-  }
-  if (err != ESP_OK) {
-    if (fd >= 0) close(fd);
-    free(buf);
+  snprintf(current, sizeof(current), "%" PRIu32, cover.id);
+  if (!cover.length || httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+      httpd_query_key_value(query, "id", requested, sizeof(requested)) != ESP_OK ||
+      strcmp(requested, current) != 0) {
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_send_404(req);
   }
+  if (strncmp(cover.url, "http://", 7) == 0) {
+    httpd_resp_set_type(req, cover.mime);
+    httpd_resp_set_hdr(req, "Cache-Control", "max-age=86400, immutable");
+    if (player_http_span(cover.url, cover.offset, cover.length, cover_sink, req) != ESP_OK)
+      return ESP_FAIL;
+    return httpd_resp_send_chunk(req, NULL, 0);
+  }
+#if CONFIG_GATEWAY_USB_PLAYER_USB
+  if (!gw_usb_acquire_media(cover.media_id)) return httpd_resp_send_404(req);
+  int fd = -1;
+  uint32_t length = cover.length;
+  int64_t offset = cover.offset;
+  const char *mime = cover.mime;
+  const char *cache_control = "max-age=86400, immutable";
+#if CONFIG_IDF_TARGET_ESP32P4
+  char original[4];
+  const bool want_original = httpd_query_key_value(query, "original", original, sizeof(original)) == ESP_OK &&
+                             strcmp(original, "1") == 0;
+  if (cover.thumb.length && !want_original) {
+    fd = gw_cover_thumb_open(&cover.thumb);
+    if (fd >= 0) {
+      length = cover.thumb.length;
+      offset = sizeof(gw_cover_thumb_t);
+      mime = "image/jpeg";
+    } else {
+      cache_control = "no-store";
+    }
+  }
+#endif
+  if (fd < 0) {
+    char path[PL_URL_MAX + 8];
+    snprintf(path, sizeof(path), "%s%.*s", GW_USB_MOUNT, PL_URL_MAX - 5, cover.url + 4);
+    struct stat st;
+    /* FatFs fstat() has no modification time. Use the path for validation. */
+    const bool matches = stat(path, &st) == 0 && st.st_mtime == cover.modified &&
+                         offset >= 0 && offset <= st.st_size && length <= st.st_size - offset;
+    if (matches) fd = open(path, O_RDONLY);
+    if (fd < 0 || lseek(fd, (off_t)offset, SEEK_SET) != (off_t)offset) {
+      if (fd >= 0) close(fd);
+      gw_usb_release_media();
+      httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+      return httpd_resp_send_404(req);
+    }
+  }
+  /* FAT reads aligned sectors directly. */
+  enum { COVER_CHUNK = 32768, COVER_SECTOR = 512 };
+  uint8_t *buf = heap_caps_malloc(COVER_CHUNK, MALLOC_CAP_SPIRAM);
+  if (!buf) {
+    close(fd);
+    gw_usb_release_media();
+    return httpd_resp_send_500(req);
+  }
   httpd_resp_set_type(req, mime);
-  httpd_resp_set_hdr(req, "Cache-Control", "max-age=86400, immutable");
+  httpd_resp_set_hdr(req, "Cache-Control", cache_control);
   uint32_t done = 0;
-  while (done < len) {
-    size_t want = len - done < (uint32_t)COVER_CHUNK ? len - done : (size_t)COVER_CHUNK;
-    const uint32_t mis = (uint32_t)((off + done) % COVER_SECTOR);
-    if (fd >= 0 && mis && want > COVER_SECTOR - mis) want = COVER_SECTOR - mis;
-    int n;
-    if (fd >= 0) n = (int)read(fd, buf, want);
-    else n = src.read_at(&src, off + done, buf, want);
-    if (n <= 0) break;
-    if (httpd_resp_send_chunk(req, (const char *)buf, n) != ESP_OK) break;
+  while (done < length && gw_usb_media_id() == cover.media_id) {
+    size_t want = length - done < (uint32_t)COVER_CHUNK ? length - done : (size_t)COVER_CHUNK;
+    const uint32_t mis = (uint32_t)((offset + done) % COVER_SECTOR);
+    if (mis && want > COVER_SECTOR - mis) want = COVER_SECTOR - mis;
+    const ssize_t n = read(fd, buf, want);
+    if (n <= 0 || !cover_sink(req, buf, (size_t)n)) break;
     done += (uint32_t)n;
   }
-  if (fd >= 0) close(fd);
-  else src.close(&src);
   free(buf);
+  close(fd);
+  gw_usb_release_media();
+  if (done != length) return ESP_FAIL;
   return httpd_resp_send_chunk(req, NULL, 0);
+#else
+  return httpd_resp_send_404(req);
+#endif
 }
 
 /* What the speakers play now, for the status. */
@@ -2335,19 +2462,22 @@ static void publish_track(const track_info_t *ti) {
   s_st.layout = ti->layout;
   s_st.duration_s = ti->duration_s;
   strlcpy(s_st.warning, ti->warning, sizeof(s_st.warning));
-  strlcpy(s_st.title, ti->title, sizeof(s_st.title));
-  strlcpy(s_st.artist, ti->artist, sizeof(s_st.artist));
-  strlcpy(s_st.album, ti->album, sizeof(s_st.album));
-  strlcpy(s_st.track, ti->track, sizeof(s_st.track));
-  strlcpy(s_st.year, ti->year, sizeof(s_st.year));
-  strlcpy(s_st.cover_url, ti->cover_url, sizeof(s_st.cover_url));
-  strlcpy(s_st.cover_mime, ti->cover_mime, sizeof(s_st.cover_mime));
-  s_st.cover_off = ti->cover_off;
-  s_st.cover_len = ti->cover_len;
-  s_st.cover_id = ti->cover_id;
+  set_status_tags(&ti->container_tags);
+  s_st.cover = (cover_ref_t){0};
   s_st.duration_estimated = false;
   s_st.index = ti->ix;
+  if (++s_track_id == 0) ++s_track_id;
+  const uint32_t id = s_track_id;
+  const bool pending = s_metadata_jobs && (ti->id3_bytes || ti->flac_start ||
+                                           ti->container_tags.cover_len || ti->media_id);
+  s_st.track_id = id;
+  s_st.metadata_pending = pending;
   taskEXIT_CRITICAL(&s_mux);
+
+  if (pending) {
+    const metadata_job_t job = {.track = *ti, .id = id};
+    xQueueOverwrite(s_metadata_jobs, &job);
+  }
 }
 
 /* Lets go of the input: its file and decoder. The buffers stay. */
@@ -2407,11 +2537,13 @@ static bool open_track(player_t *p, int *k) {
     if (!queue_url(*k, url, sizeof(url))) break;
     st_set(P_STARTING, "Opening %s", url);
     esp_err_t serr;
+    uint32_t media_id = 0;
 #if CONFIG_GATEWAY_USB_PLAYER_USB
     if (strncmp(url, "usb:", 4) == 0) {
       char path[PL_URL_MAX + 8];
       snprintf(path, sizeof(path), "%s%s", GW_USB_MOUNT, url + 4);
-      serr = gw_usb_ready() ? player_source_file_open(&p->src, path) : ESP_ERR_INVALID_STATE;
+      media_id = gw_usb_media_id();
+      serr = media_id ? player_source_file_open(&p->src, path) : ESP_ERR_INVALID_STATE;
       p->src_usb = serr == ESP_OK;
       if (serr != ESP_OK)
         st_set(P_FAILED, "%s", gw_usb_ready() ? "The file is not on the USB drive" : "No USB drive");
@@ -2427,7 +2559,12 @@ static bool open_track(player_t *p, int *k) {
       p->ti.ix = *k;
       p->in_done = false;
       strlcpy(p->ti.url, url, sizeof(p->ti.url));
-      read_tags(p, url);
+      p->ti.container_tags = p->kind == KIND_M4A ? p->m4a.tags : (player_tags_t){0};
+      p->ti.id3_bytes = (int64_t)p->id3_bytes;
+      p->ti.flac_start = p->kind == KIND_FLAC ? p->flac_audio_start : 0;
+      p->ti.source_size = p->src.size;
+      p->ti.media_id = media_id;
+      p->t_input_us = esp_timer_get_time();
       ESP_LOGI(TAG, "track %d of %d: %s", *k + 1, queue_len(), url);
       return true;
     }
@@ -2450,13 +2587,6 @@ static bool same_stream(const player_t *p) {
          p->wav.layout == p->sess_layout && p->wav.present == p->sess_present;
 }
 
-static int volume_now(void) {
-  taskENTER_CRITICAL(&s_mux);
-  const int v = s_next_volume_db;
-  taskEXIT_CRITICAL(&s_mux);
-  return v;
-}
-
 /* A stream for the input's format: the same one, or a new session (the
  * rate, the depth or the channels change). */
 static bool stream_for_input(player_t *p) {
@@ -2464,12 +2594,13 @@ static bool stream_for_input(player_t *p) {
   if (p->session) ESP_LOGI(TAG, "new format: a new stream to the speakers");
   session_close(p);
   memset(p->lane, 0, sizeof(p->lane));
-  return session_open(p, volume_now());
+  return session_open(p);
 }
 
 /* To queue track k (next, previous, a jump) at pos_s: the speakers drop
  * what they hold, as on a seek. */
 static bool goto_track(player_t *p, int k, double pos_s) {
+  p->t_start_us = esp_timer_get_time();
   pipe_park(p); /* stays parked when it fails: the player stops */
   if (p->session) {
     p->wlen = 0;
@@ -2484,6 +2615,7 @@ static bool goto_track(player_t *p, int k, double pos_s) {
   track_close(p);
   if (!open_track(p, &k)) return false;
   if (!stream_for_input(p)) return false;
+  p->t_session_us = esp_timer_get_time();
   p->burst_rtp = p->rtp;
   p->rtp0 = p->rtp;
   p->play_ix = k;
@@ -2631,14 +2763,20 @@ static void status_update(player_t *p) {
   }
 }
 
-static void player_run(int start, int volume_db) {
+static void player_run(int start) {
+  const int64_t start_us = esp_timer_get_time();
+  const uint64_t clock_id = player_clock_id();
+  if (!clock_id) {
+    st_set(P_FAILED, "The Gateway clock identity is unavailable");
+    return;
+  }
   if (gw_radio_active()) gw_radio_stop(); /* one local sender at a time */
   if (!airplay_release()) {
     if (!atomic_load(&s_stop)) st_set(P_FAILED, "The AirPlay sender did not let go; try again");
     airplay_listen();
     return;
   }
-  take_speakers();
+  take_speakers(clock_id);
   const bool listening = airplay_listen();
 
   player_t *p = heap_caps_calloc(1, sizeof(player_t), MALLOC_CAP_SPIRAM);
@@ -2657,10 +2795,12 @@ static void player_run(int start, int volume_db) {
     goto out;
   }
   p->out_left = UINT64_MAX;
+  p->t_start_us = start_us;
   {
     int k = start;
     if (!open_track(p, &k)) goto out;
-    if (!session_open(p, volume_db)) goto out;
+    if (!session_open(p)) goto out;
+    p->t_session_us = esp_timer_get_time();
     p->play_ix = k;
     publish_track(&p->ti);
     if (!worker_start(p)) {
@@ -2768,19 +2908,20 @@ out_nop:
 
 static void player_task(void *arg) {
   (void)arg;
-  int vol, start;
+  int start;
   taskENTER_CRITICAL(&s_mux);
   s_task = xTaskGetCurrentTaskHandle();
-  vol = s_next_volume_db;
   start = s_queue_start;
   taskEXIT_CRITICAL(&s_mux);
-  player_run(start, vol);
+  player_run(start);
   taskENTER_CRITICAL(&s_mux);
   if (s_st.state != P_FAILED) {
     s_st.state = P_IDLE;
     s_st.message[0] = '\0';
   }
   s_task = NULL;
+  s_st.track_id = 0;
+  s_st.metadata_pending = false;
   taskEXIT_CRITICAL(&s_mux);
   atomic_store(&s_running, false);
   ESP_LOGI(TAG, "player stopped");
@@ -2818,15 +2959,6 @@ void gw_player_stop(void) {
   xSemaphoreGive(s_ctl);
 }
 
-void gw_player_set_volume(int volume_db) {
-  volume_db = clamp_db(volume_db);
-  taskENTER_CRITICAL(&s_mux);
-  s_st.volume_db = volume_db;
-  s_next_volume_db = volume_db;
-  taskEXIT_CRITICAL(&s_mux);
-  if (atomic_load(&s_owns)) sound_engine_set_volume_q15(db_to_q15(volume_db));
-}
-
 static bool url_ok(const char *url) {
   if (!url || strlen(url) >= PL_URL_MAX) return false;
   if (strncmp(url, "http://", 7) == 0) return true;
@@ -2856,7 +2988,10 @@ esp_err_t gw_player_play_queue(const char *const *urls, int n, int start, int vo
   if (!init_once()) return ESP_ERR_NO_MEM;
   if (gw_calib_running()) return ESP_ERR_INVALID_STATE;
   gw_calib_release_recording(); /* a Room EQ sweep's ~2 MiB: the player needs it */
-  volume_db = clamp_db(volume_db);
+  if (volume_db != GW_LOCAL_VOLUME_KEEP_DB) {
+    const esp_err_t err = gw_local_volume_set(gw_local_volume_from_db(volume_db), true);
+    if (err != ESP_OK) return err;
+  }
   xSemaphoreTake(s_ctl, portMAX_DELAY);
   stop_locked();
   (void)xSemaphoreTake(s_done, 0);
@@ -2873,10 +3008,8 @@ esp_err_t gw_player_play_queue(const char *const *urls, int n, int start, int vo
   memset(&s_st, 0, sizeof(s_st));
   s_st.state = P_STARTING;
   strlcpy(s_st.url, url, sizeof(s_st.url));
-  s_st.volume_db = volume_db;
   s_st.index = start;
   s_queue_start = start;
-  s_next_volume_db = volume_db;
   taskEXIT_CRITICAL(&s_mux);
   atomic_store(&s_stop, false);
   atomic_store(&s_running, true);
@@ -2892,7 +3025,7 @@ esp_err_t gw_player_play_queue(const char *const *urls, int n, int start, int vo
     st_set(P_FAILED, "Out of memory");
     return ESP_ERR_NO_MEM;
   }
-  ESP_LOGI(TAG, "play %s at %d dB (%d in the queue)", url, volume_db, n);
+  ESP_LOGI(TAG, "play %s (%d in the queue)", url, n);
   return ESP_OK;
 }
 
@@ -3066,13 +3199,10 @@ esp_err_t gw_player_pause(bool pause) {
   return ESP_OK;
 }
 
-#define PL_BUTTON_VOLUME_DB 2 /* a press of Volume -/+, as a step of Apple's slider */
-
 bool gw_player_button(uint8_t command) {
   if (!atomic_load(&s_running) || !atomic_load(&s_owns)) return false;
   taskENTER_CRITICAL(&s_mux);
   const player_state_t state = s_st.state;
-  const int vol = s_next_volume_db;
   taskEXIT_CRITICAL(&s_mux);
   switch (command) {
     case 2: /* play/pause */
@@ -3087,14 +3217,6 @@ bool gw_player_button(uint8_t command) {
       ESP_LOGI(TAG, "button: previous");
       (void)gw_player_prev();
       return true;
-    case RTSP_REMOTE_VOLUME_DOWN:
-    case RTSP_REMOTE_VOLUME_UP: {
-      const int to = clamp_db(vol + (command == RTSP_REMOTE_VOLUME_UP ? PL_BUTTON_VOLUME_DB
-                                                                      : -PL_BUTTON_VOLUME_DB));
-      ESP_LOGI(TAG, "button: volume %d dB", to);
-      gw_player_set_volume(to);
-      return true;
-    }
     default:
       return false;
   }
@@ -3133,7 +3255,6 @@ static esp_err_t status_handler(httpd_req_t *req) {
   player_status_t st;
   taskENTER_CRITICAL(&s_mux);
   st = s_st;
-  st.volume_db = s_next_volume_db; /* the one it plays at, or the next file will */
   taskEXIT_CRITICAL(&s_mux);
   cJSON *root = cJSON_CreateObject();
   if (!root) return httpd_resp_send_500(req);
@@ -3148,15 +3269,22 @@ static esp_err_t status_handler(httpd_req_t *req) {
   if (st.album[0]) cJSON_AddStringToObject(root, "album", st.album);
   if (st.track[0]) cJSON_AddStringToObject(root, "track", st.track);
   if (st.year[0]) cJSON_AddStringToObject(root, "year", st.year);
-  if (st.cover_len) {
+  cJSON_AddBoolToObject(root, "metadata_pending", st.metadata_pending);
+  if (st.cover.length) {
     char c[48];
-    snprintf(c, sizeof(c), "/api/player/cover?id=%" PRIu32, st.cover_id);
+    snprintf(c, sizeof(c), "/api/player/cover?id=%" PRIu32, st.cover.id);
     cJSON_AddStringToObject(root, "cover", c);
+    if (st.cover.thumb.length) {
+      snprintf(c, sizeof(c), "/api/player/cover?id=%" PRIu32 "&original=1", st.cover.id);
+      cJSON_AddStringToObject(root, "cover_original", c);
+    }
   }
   cJSON_AddNumberToObject(root, "rate", st.rate);
   cJSON_AddNumberToObject(root, "bits", st.bits);
   cJSON_AddNumberToObject(root, "channels", st.channels);
-  cJSON_AddNumberToObject(root, "volume_db", st.volume_db);
+  const int32_t volume = gw_local_volume_get();
+  cJSON_AddNumberToObject(root, "volume_db", gw_local_volume_db(volume));
+  cJSON_AddNumberToObject(root, "volume_percent", gw_local_volume_percent(volume));
   cJSON_AddNumberToObject(root, "lead_ms", st.lead_ms);
   cJSON_AddNumberToObject(root, "position_s", st.position_s);
   cJSON_AddNumberToObject(root, "duration_s", st.duration_s);
@@ -3261,15 +3389,15 @@ static esp_err_t control_handler(httpd_req_t *req) {
       }
       if (strings)
         err = gw_player_play_queue(list, n, cJSON_IsNumber(index) ? index->valueint : 0,
-                                   cJSON_IsNumber(vol) ? vol->valueint : volume_now());
+                                   cJSON_IsNumber(vol) ? vol->valueint : GW_LOCAL_VOLUME_KEEP_DB);
       free(list);
     }
   } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "play") == 0 && cJSON_IsString(url)) {
-    err = gw_player_play(url->valuestring, cJSON_IsNumber(vol) ? vol->valueint : volume_now());
+    err = gw_player_play(url->valuestring, cJSON_IsNumber(vol) ? vol->valueint : GW_LOCAL_VOLUME_KEEP_DB);
   } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "play") == 0 &&
              cJSON_IsString(cJSON_GetObjectItem(j, "playlist"))) {
     err = gw_player_play_playlist(cJSON_GetObjectItem(j, "playlist")->valuestring,
-                                  cJSON_IsNumber(vol) ? vol->valueint : volume_now());
+                                  cJSON_IsNumber(vol) ? vol->valueint : GW_LOCAL_VOLUME_KEEP_DB);
   } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "add") == 0 && cJSON_IsString(url)) {
     err = gw_player_add(url->valuestring);
   } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "next") == 0) {
@@ -3288,9 +3416,19 @@ static esp_err_t control_handler(httpd_req_t *req) {
   } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "seek") == 0 &&
              cJSON_IsNumber(cJSON_GetObjectItem(j, "pos"))) {
     err = gw_player_seek(cJSON_GetObjectItem(j, "pos")->valuedouble);
-  } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "volume") == 0 && cJSON_IsNumber(vol)) {
-    gw_player_set_volume(vol->valueint);
-    err = ESP_OK;
+  } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "volume") == 0) {
+    const cJSON *percent = cJSON_GetObjectItem(j, "volume_percent");
+    const bool has_percent = cJSON_IsNumber(percent) && isfinite(percent->valuedouble);
+    if (has_percent || cJSON_IsNumber(vol)) {
+      const int32_t volume = has_percent
+          ? gw_local_volume_from_percent(percent->valuedouble) : gw_local_volume_from_db(vol->valueint);
+      const bool live = cJSON_IsTrue(cJSON_GetObjectItem(j, "live"));
+      err = gw_local_volume_set(volume, !live);
+      if (err != ESP_OK) {
+        cJSON_Delete(j);
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Volume not saved");
+      }
+    }
   }
   cJSON_Delete(j);
   if (err != ESP_OK)
@@ -3432,6 +3570,15 @@ void gw_player_register_web(httpd_handle_t server) {
   /* /api/player/cover?id=N: the browser keeps a cover a day, so the numbers
    * start somewhere new after every restart, never at an old track's id */
   s_cover_id = esp_random();
+  s_metadata_jobs = xQueueCreate(1, sizeof(metadata_job_t));
+  if (s_metadata_jobs &&
+      xTaskCreatePinnedToCoreWithCaps(metadata_task, "gw_player_meta", 8192, NULL,
+                                     2, NULL, PL_WORKER_CORE,
+                                     MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
+    vQueueDelete(s_metadata_jobs);
+    s_metadata_jobs = NULL;
+  }
+  if (!s_metadata_jobs) ESP_LOGW(TAG, "metadata worker unavailable");
   const httpd_uri_t uris[] = {
       {.uri = "/api/player", .method = HTTP_GET, .handler = status_handler},
       {.uri = "/api/player", .method = HTTP_POST, .handler = control_handler},

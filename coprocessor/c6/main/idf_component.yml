@@ -1,0 +1,5 @@
+dependencies:
+  idf: ">=6.1"
+  # Same version as the P4 host (the Gateway's main/idf_component.yml).
+  espressif/esp_hosted:
+    version: "==3.1.0"

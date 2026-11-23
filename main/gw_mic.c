@@ -7,6 +7,10 @@
 #include <string.h>
 
 #include "driver/i2s_std.h"
+#if CONFIG_AIRPLAY_SURROUND_CAL_MIC_PDM
+#include "driver/i2s_pdm.h"
+#include "soc/soc_caps.h"
+#endif
 #include "esp_attr.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -17,11 +21,23 @@
 static const char *TAG = "gw_mic";
 
 #define MIC_DMA_DESC      6U
+#if CONFIG_AIRPLAY_SURROUND_CAL_MIC_PDM
+/* 16-bit frames: the driver wants DMA buffers in multiples of 64 bytes. */
+#define MIC_DMA_FRAMES    256U  /* 5.3 ms per DMA buffer */
+#else
 #define MIC_DMA_FRAMES    240U  /* 5 ms per DMA buffer */
+#endif
 #define MIC_READ_SAMPLES  512U
 #define MIC_MAX_STAMPS    2048U /* DMA completions: 10 s */
 #define MIC_TASK_STACK    3072U
 #define MIC_TASK_PRIORITY 6
+/* INMP441: 24 bits in a 32-bit I2S slot. PDM: 16-bit PCM from the I2S
+ * PDM-to-PCM filter (the only width it gives). */
+#if CONFIG_AIRPLAY_SURROUND_CAL_MIC_PDM
+typedef int16_t mic_raw_t;
+#else
+typedef int32_t mic_raw_t;
+#endif
 
 static i2s_chan_handle_t s_rx;
 static TaskHandle_t s_task;
@@ -45,7 +61,7 @@ static bool IRAM_ATTR on_recv(i2s_chan_handle_t handle, i2s_event_data_t *event,
                               void *ctx) {
   (void)handle;
   (void)ctx;
-  s_dma_samples += (uint32_t)(event->size / sizeof(int32_t));
+  s_dma_samples += (uint32_t)(event->size / sizeof(mic_raw_t));
   const uint32_t n = s_stamps;
   if (n < MIC_MAX_STAMPS) {
     s_stamp_count[n] = s_dma_samples;
@@ -66,7 +82,7 @@ static bool IRAM_ATTR on_recv_q_ovf(i2s_chan_handle_t handle,
 
 static void reader_task(void *arg) {
   (void)arg;
-  static int32_t chunk[MIC_READ_SAMPLES];
+  static mic_raw_t chunk[MIC_READ_SAMPLES];
   while (s_running) {
     size_t got = 0;
     /* The timeout is in milliseconds, not ticks. On a timeout the samples
@@ -75,11 +91,15 @@ static void reader_task(void *arg) {
     const esp_err_t err =
         i2s_channel_read(s_rx, chunk, sizeof(chunk), &got, 100);
     if (err != ESP_OK && err != ESP_ERR_TIMEOUT) continue;
-    const uint32_t n = (uint32_t)(got / sizeof(int32_t));
+    const uint32_t n = (uint32_t)(got / sizeof(mic_raw_t));
     for (uint32_t i = 0; i < n && s_count < s_capacity; ++i) {
-      /* INMP441: 24 bits, MSB first, in a 32-bit slot; kept as 16, rounded */
+#if CONFIG_AIRPLAY_SURROUND_CAL_MIC_PDM
+      s_samples[s_count++] = chunk[i];
+#else
+      /* INMP441: 24 bits in a 32-bit slot, rounded to signed 16 bits. */
       const int32_t v = ((chunk[i] >> 15) + 1) >> 1;
       s_samples[s_count++] = (int16_t)(v > 32767 ? 32767 : v);
+#endif
     }
   }
   s_task = NULL;
@@ -165,11 +185,36 @@ esp_err_t gw_mic_start(uint32_t min_seconds, uint32_t max_seconds) {
   s_overflows = 0;
   s_line_valid = false;
 
+#if CONFIG_AIRPLAY_SURROUND_CAL_MIC_PDM
+  /* PDM RX is on I2S0 only. */
+  i2s_chan_config_t chan = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
+#else
   i2s_chan_config_t chan = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
+#endif
   chan.dma_desc_num = MIC_DMA_DESC;
   chan.dma_frame_num = MIC_DMA_FRAMES;
   esp_err_t err = i2s_new_channel(&chan, NULL, &s_rx);
   if (err != ESP_OK) return err;
+#if CONFIG_AIRPLAY_SURROUND_CAL_MIC_PDM
+  i2s_pdm_rx_config_t pdm = {
+      .clk_cfg = I2S_PDM_RX_CLK_DEFAULT_CONFIG(GW_MIC_RATE_HZ),
+      .slot_cfg = I2S_PDM_RX_SLOT_PCM_FMT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,
+                                                          I2S_SLOT_MODE_MONO),
+      .gpio_cfg = {
+          .clk = CONFIG_AIRPLAY_SURROUND_CAL_MIC_PDM_CLK_GPIO,
+          .din = CONFIG_AIRPLAY_SURROUND_CAL_MIC_PDM_DATA_GPIO,
+      },
+  };
+#if SOC_I2S_SUPPORTS_APLL
+  /* PDM at 48 kHz needs MCLK 24.576 MHz from a source of at least twice
+   * that. On the ESP32-P4 below v3.0 the default source is XTAL (40 MHz,
+   * hal/i2s_ll.h); the audio PLL gives the exact clock. */
+  pdm.clk_cfg.clk_src = I2S_CLK_SRC_APLL;
+#endif
+  const i2s_event_callbacks_t cbs = {.on_recv = on_recv,
+                                     .on_recv_q_ovf = on_recv_q_ovf};
+  err = i2s_channel_init_pdm_rx_mode(s_rx, &pdm);
+#else
   i2s_std_config_t std = {
       .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(GW_MIC_RATE_HZ),
       .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT,
@@ -186,10 +231,11 @@ esp_err_t gw_mic_start(uint32_t min_seconds, uint32_t max_seconds) {
   const i2s_event_callbacks_t cbs = {.on_recv = on_recv,
                                      .on_recv_q_ovf = on_recv_q_ovf};
   err = i2s_channel_init_std_mode(s_rx, &std);
+#endif
   if (err == ESP_OK) err = i2s_channel_register_event_callback(s_rx, &cbs, NULL);
   if (err == ESP_OK) err = i2s_channel_enable(s_rx);
   if (err != ESP_OK) {
-    ESP_LOGE(TAG, "I2S microphone start failed: %s", esp_err_to_name(err));
+    ESP_LOGE(TAG, "microphone start failed: %s", esp_err_to_name(err));
     i2s_del_channel(s_rx);
     s_rx = NULL;
     return err;

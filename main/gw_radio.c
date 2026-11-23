@@ -31,19 +31,20 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "ap2_port.h"
 #include "cJSON.h"
 #include "esp_audio_simple_dec_default.h"
 #include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
-#include "esp_mac.h"
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "gw_calib.h"
+#include "gw_local_volume.h"
 #include "esp_aac_dec.h"
 #include "esp_alac_enc.h"
 #include "esp_mp3_dec.h"
@@ -103,7 +104,6 @@ static const char *TAG = "gw_radio";
 #define RADIO_STATUS_LOG_MS   10000
 #define RADIO_NVS_NS          "radio"
 #define RADIO_FAVS_MAX        8192 /* favourites JSON, bytes */
-#define RADIO_VOLUME_DEFAULT  (-30)
 
 typedef enum {
   R_IDLE = 0,
@@ -137,7 +137,6 @@ typedef struct {
   char codec[8];
   int src_rate, src_channels, bitrate_kbps;
   int out_rate, out_bits;
-  int volume_db;
   int lead_ms;
   uint32_t rebuffers;
   uint32_t enc_errors; /* ALAC frames lost (8 ms each) */
@@ -155,7 +154,6 @@ static apple_clock_line_t s_line; /* valid while s_owns */
 static int64_t s_owns_since_us;   /* the speakers' TIME follows s_line */
 static uint16_t s_epoch = 0x5200;
 static char s_next_url[256];
-static int s_next_volume_db;
 
 /* ---- status ---- */
 
@@ -177,8 +175,8 @@ static void st_set(radio_state_t state, const char *fmt, ...) {
 /* ---- the radio's clock line ---- */
 
 static uint64_t radio_clock_id(void) {
-  uint8_t mac[6] = {0};
-  (void)esp_read_mac(mac, ESP_MAC_WIFI_STA);
+  uint8_t mac[6];
+  if (ap2_port_device_mac(mac) != ESP_OK) return 0;
   /* Like an EUI-64 from the MAC, with "RD" in the middle: never the id of an
    * Apple sender nor the Gateway's own PTP identity (ff:fe there). */
   return ((uint64_t)mac[0] << 56) | ((uint64_t)mac[1] << 48) |
@@ -641,12 +639,8 @@ static bool send_frame(stream_t *o) {
   return send_all(o->sock, p, wire);
 }
 
-static int32_t db_to_q15(int db) {
-  return (int32_t)lroundf(32768.0f * powf(10.0f, (float)db / 20.0f));
-}
-
 /* Sets the speakers up exactly like an Apple buffered sender does. */
-static bool session_open(stream_t *o, int src_rate, int volume_db) {
+static bool session_open(stream_t *o, int src_rate) {
   o->rate = src_rate == 48000 ? 48000 : src_rate;
   o->bits = o->rate == 48000 ? 24 : 16;
   const airplay_audio_format_t *f = airplay_audio_format_resolve(
@@ -755,7 +749,7 @@ static bool session_open(stream_t *o, int src_rate, int volume_db) {
   const struct timeval tv = {.tv_sec = 1, .tv_usec = 0};
   setsockopt(o->sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
-  sound_engine_set_volume_q15(db_to_q15(volume_db));
+  const int volume_percent = gw_local_volume_percent(gw_local_volume_apply());
   o->need_anchor = true;
 
   taskENTER_CRITICAL(&s_mux);
@@ -763,8 +757,8 @@ static bool session_open(stream_t *o, int src_rate, int volume_db) {
   s_st.out_bits = o->bits;
   taskEXIT_CRITICAL(&s_mux);
   ESP_LOGI(TAG, "stream to the speakers: ALAC %d Hz / %d bit / stereo, "
-           "relay port %u, volume %d dB", o->rate, o->bits, (unsigned)port,
-           volume_db);
+           "relay port %u, volume %d%%", o->rate, o->bits, (unsigned)port,
+           volume_percent);
   return true;
 }
 
@@ -829,12 +823,12 @@ static bool airplay_listen(void) {
   return err == ESP_OK;
 }
 
-static void take_speakers(void) {
+static void take_speakers(uint64_t clock_id) {
   apple_clock_line_t l = {
       .ready = true,
       .realtime = false,
-      .source_clock_id = radio_clock_id(),
-      .grandmaster_clock_id = radio_clock_id(),
+      .source_clock_id = clock_id,
+      .grandmaster_clock_id = clock_id,
       .epoch = s_epoch++,
       .base_local_ns = 0,
       .base_apple_ns = 0,
@@ -854,13 +848,18 @@ static void take_speakers(void) {
 
 /* ---- the task ---- */
 
-static void radio_run(const char *url, int volume_db) {
+static void radio_run(const char *url) {
+  const uint64_t clock_id = radio_clock_id();
+  if (!clock_id) {
+    st_set(R_FAILED, "The Gateway clock identity is unavailable");
+    return;
+  }
   if (!airplay_release()) {
     if (!atomic_load(&s_stop)) st_set(R_FAILED, "The AirPlay sender did not let go; try again");
     airplay_listen();
     return;
   }
-  take_speakers();
+  take_speakers(clock_id);
   /* AirPlay can take the speakers back at any time. */
   const bool listening = airplay_listen();
 
@@ -977,7 +976,7 @@ static void radio_run(const char *url, int volume_db) {
                    info.sample_rate, info.channel, info.bits_per_sample,
                    info.bitrate / 1000U);
           if (info.bits_per_sample != 16 || info.channel < 1 ||
-              !session_open(&o, (int)info.sample_rate, volume_db)) {
+              !session_open(&o, (int)info.sample_rate)) {
             if (info.bits_per_sample != 16) st_set(R_FAILED, "Unexpected PCM");
             atomic_store(&s_stop, true);
             break;
@@ -1042,13 +1041,11 @@ out:
 static void radio_task(void *arg) {
   (void)arg;
   char url[sizeof(s_next_url)];
-  int vol;
   taskENTER_CRITICAL(&s_mux);
   s_task = xTaskGetCurrentTaskHandle();
   strlcpy(url, s_next_url, sizeof(url));
-  vol = s_next_volume_db;
   taskEXIT_CRITICAL(&s_mux);
-  radio_run(url, vol);
+  radio_run(url);
   taskENTER_CRITICAL(&s_mux);
   if (s_st.state != R_FAILED) {
     s_st.state = R_IDLE;
@@ -1094,39 +1091,6 @@ void gw_radio_stop(void) {
   xSemaphoreGive(s_ctl);
 }
 
-/* ---- saved settings (NVS) ---- */
-
-static int saved_volume(void) {
-  nvs_handle_t h;
-  int8_t v = RADIO_VOLUME_DEFAULT;
-  if (nvs_open(RADIO_NVS_NS, NVS_READONLY, &h) == ESP_OK) {
-    (void)nvs_get_i8(h, "vol", &v);
-    nvs_close(h);
-  }
-  return v;
-}
-
-static void save_volume(int db) {
-  nvs_handle_t h;
-  if (nvs_open(RADIO_NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
-  int8_t old = 0;
-  if (nvs_get_i8(h, "vol", &old) != ESP_OK || old != db) {
-    if (nvs_set_i8(h, "vol", (int8_t)db) == ESP_OK) (void)nvs_commit(h);
-  }
-  nvs_close(h);
-}
-
-static int clamp_db(int db) { return db > 0 ? 0 : db < -60 ? -60 : db; }
-
-void gw_radio_set_volume(int volume_db, bool save) {
-  volume_db = clamp_db(volume_db);
-  taskENTER_CRITICAL(&s_mux);
-  s_st.volume_db = volume_db;
-  taskEXIT_CRITICAL(&s_mux);
-  if (atomic_load(&s_owns)) sound_engine_set_volume_q15(db_to_q15(volume_db));
-  if (save) save_volume(volume_db);
-}
-
 esp_err_t gw_radio_start(const char *url, const char *name, const char *logo,
                          int volume_db) {
   if (!url || (strncmp(url, "http://", 7) != 0 && strncmp(url, "https://", 8) != 0))
@@ -1135,7 +1099,10 @@ esp_err_t gw_radio_start(const char *url, const char *name, const char *logo,
   if (!init_once()) return ESP_ERR_NO_MEM;
   if (gw_calib_running()) return ESP_ERR_INVALID_STATE;
   gw_calib_release_recording(); /* a Room EQ sweep's ~2 MiB: the radio needs it */
-  volume_db = volume_db == GW_RADIO_SAVED_VOLUME ? saved_volume() : clamp_db(volume_db);
+  if (volume_db != GW_LOCAL_VOLUME_KEEP_DB) {
+    const esp_err_t err = gw_local_volume_set(gw_local_volume_from_db(volume_db), true);
+    if (err != ESP_OK) return err;
+  }
 #if CONFIG_GATEWAY_USB_PLAYER
   gw_player_stop(); /* one local sender at a time (gw_local_src.h) */
 #endif
@@ -1152,9 +1119,7 @@ esp_err_t gw_radio_start(const char *url, const char *name, const char *logo,
   strlcpy(s_st.url, url, sizeof(s_st.url));
   if (name) strlcpy(s_st.label, name, sizeof(s_st.label));
   if (logo) strlcpy(s_st.logo, logo, sizeof(s_st.logo));
-  s_st.volume_db = volume_db;
   strlcpy(s_next_url, url, sizeof(s_next_url));
-  s_next_volume_db = volume_db;
   taskEXIT_CRITICAL(&s_mux);
   atomic_store(&s_stop, false);
   atomic_store(&s_running, true);
@@ -1168,7 +1133,7 @@ esp_err_t gw_radio_start(const char *url, const char *name, const char *logo,
     st_set(R_FAILED, "Out of memory");
     return ESP_ERR_NO_MEM;
   }
-  ESP_LOGI(TAG, "radio start: %s at %d dB", url, volume_db);
+  ESP_LOGI(TAG, "radio start: %s", url);
   return ESP_OK;
 }
 
@@ -1195,7 +1160,9 @@ static esp_err_t send_status(httpd_req_t *req) {
   cJSON_AddNumberToObject(root, "source_channels", st.src_channels);
   cJSON_AddNumberToObject(root, "alac_rate", st.out_rate);
   cJSON_AddNumberToObject(root, "alac_bits", st.out_bits);
-  cJSON_AddNumberToObject(root, "volume_db", st.volume_db);
+  const int32_t volume = gw_local_volume_get();
+  cJSON_AddNumberToObject(root, "volume_db", gw_local_volume_db(volume));
+  cJSON_AddNumberToObject(root, "volume_percent", gw_local_volume_percent(volume));
   cJSON_AddNumberToObject(root, "lead_ms", st.lead_ms);
   cJSON_AddNumberToObject(root, "rebuffers", st.rebuffers);
   cJSON_AddNumberToObject(root, "encoder_errors", st.enc_errors);
@@ -1239,7 +1206,7 @@ static esp_err_t start_post_handler(httpd_req_t *req) {
   const esp_err_t err = gw_radio_start(cJSON_IsString(u) ? u->valuestring : NULL,
                                        cJSON_IsString(n) ? n->valuestring : NULL,
                                        cJSON_IsString(l) ? l->valuestring : NULL,
-                                       cJSON_IsNumber(v) ? v->valueint : GW_RADIO_SAVED_VOLUME);
+                                       cJSON_IsNumber(v) ? v->valueint : GW_LOCAL_VOLUME_KEEP_DB);
   cJSON_Delete(j);
   if (err == ESP_ERR_INVALID_ARG || err == ESP_ERR_INVALID_SIZE) {
     return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Not a station URL");
@@ -1260,16 +1227,23 @@ static esp_err_t stop_handler(httpd_req_t *req) {
 
 static esp_err_t volume_handler(httpd_req_t *req) {
   if (!web_admin_ok(req)) return ESP_OK;
-  char q[48], v[8], live[4];
-  if (httpd_req_get_url_query_str(req, q, sizeof(q)) != ESP_OK ||
-      httpd_query_key_value(q, "db", v, sizeof(v)) != ESP_OK) {
-    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-                               "Usage: POST /api/radio/volume?db=-30[&live=1]");
-  }
-  /* live=1: the slider is still moving; the last value comes without it. */
+  char q[48], value[16], live[4];
+  if (httpd_req_get_url_query_str(req, q, sizeof(q)) != ESP_OK)
+    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing volume");
+  const bool percent = httpd_query_key_value(q, "pct", value, sizeof(value)) == ESP_OK;
+  if (!percent && httpd_query_key_value(q, "db", value, sizeof(value)) != ESP_OK)
+    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing volume");
+  char *end;
+  const double number = strtod(value, &end);
+  if (end == value || *end != '\0' || !isfinite(number))
+    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid volume");
+  const int32_t volume = percent ? gw_local_volume_from_percent(number)
+      : gw_local_volume_from_db((int)fmax(-60.0, fmin(0.0, number)));
+  /* live=1 sets the level while dragging. Releasing the slider saves it. */
   const bool moving = httpd_query_key_value(q, "live", live, sizeof(live)) == ESP_OK &&
                       strcmp(live, "1") == 0;
-  gw_radio_set_volume(atoi(v), !moving);
+  if (gw_local_volume_set(volume, !moving) != ESP_OK)
+    return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Volume not saved");
   return send_status(req);
 }
 

@@ -30,6 +30,13 @@ endif()
 set(PROJECT_VER "${AIRPLAY_PROJECT_VERSION}")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
+# One component lock file per chip: the dependencies differ (ESP-Hosted on
+# the P4 only), so switching the target never rewrites the other's lock.
+# The S3 keeps dependencies.lock.
+if(NOT IDF_TARGET STREQUAL "esp32s3")
+    idf_build_set_property(DEPENDENCIES_LOCK "${CMAKE_SOURCE_DIR}/dependencies.lock.${IDF_TARGET}")
+endif()
+
 # The project name is also the generated .bin basename:
 # build/airplay-gateway_vX.Y.Z.bin, never to be confused with a speaker's.
 project("airplay-gateway_${AIRPLAY_PROJECT_VERSION}")

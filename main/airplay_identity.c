@@ -6,11 +6,14 @@
 #include "ap2_port.h"
 #include "esp_app_desc.h"
 #include "esp_mac.h"
+#include "settings.h"
 #include "sodium.h"
 
-/* On the S3 the Wi-Fi station MAC is the one in eFuse. */
+/* The chip's eFuse MAC: the Wi-Fi station MAC on the S3 (ESP-IDF gives the
+ * station the base MAC) and the one the P4 gives its C6 radio
+ * (components/wifi), so the same on both. */
 esp_err_t ap2_port_device_mac(uint8_t mac[6]) {
-  return esp_read_mac(mac, ESP_MAC_WIFI_STA);
+  return esp_read_mac(mac, ESP_MAC_BASE);
 }
 
 void airplay_get_pairing_id(char *out, size_t len) {
@@ -18,7 +21,7 @@ void airplay_get_pairing_id(char *out, size_t len) {
     return;
   }
   uint8_t mac[6] = {0};
-  esp_read_mac(mac, ESP_MAC_WIFI_STA);
+  esp_read_mac(mac, ESP_MAC_BASE);
 
   /* Same MAC -> same UUID on every boot; different devices -> different
    * UUIDs. Hash so the UUID does not expose the MAC directly. */
@@ -44,7 +47,7 @@ void airplay_get_pairing_id(char *out, size_t len) {
 void airplay_get_serial_number(char *out, size_t len) {
   if (!out || len == 0) return;
   uint8_t m[6] = {0};
-  esp_read_mac(m, ESP_MAC_WIFI_STA);
+  esp_read_mac(m, ESP_MAC_BASE);
   snprintf(out, len, "%02X%02X%02X%02X%02X%02X", m[0], m[1], m[2], m[3], m[4],
            m[5]);
 }
@@ -55,6 +58,13 @@ void airplay_get_firmware_revision(char *out, size_t len) {
   if (v[0] == 'v' || v[0] == 'V') v++;
   snprintf(out, len, "%s", v);
 }
+
+#if CONFIG_AIRPLAY_MULTICHANNEL
+uint64_t airplay_gateway_buffer_formats(void) {
+  return AIRPLAY_SUPPORTED_5_1_BUFFER_STREAM |
+         (settings_airplay_71_enabled() ? AIRPLAY_FMT_AAC_LC_48000_7_1 : 0U);
+}
+#endif
 
 static volatile bool s_session_active;
 

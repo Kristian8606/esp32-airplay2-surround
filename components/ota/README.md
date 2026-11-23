@@ -39,8 +39,8 @@ board still boots the running firmware.
 
 | Upload | Result |
 |---|---|
-| longer than the partition (0x300000) or shorter than image header + first segment header + `esp_app_desc_t` (288 bytes) | `ESP_ERR_INVALID_SIZE`, before reading |
-| first byte not `0xE9`, chip id not ESP32-S3, `hash_appended` not 1, description magic not `0xABCD5432` | `ESP_ERR_IMAGE_INVALID` |
+| longer than the partition (0x300000 on the S3, 0x600000 on the P4) or shorter than image header + first segment header + `esp_app_desc_t` (288 bytes) | `ESP_ERR_INVALID_SIZE`, before reading |
+| first byte not `0xE9`, chip id not the running chip's (`CONFIG_IDF_FIRMWARE_CHIP_ID`: ESP32-S3 0x0009, ESP32-P4 0x0012), `hash_appended` not 1, description magic not `0xABCD5432` | `ESP_ERR_IMAGE_INVALID` |
 | another kind than the running firmware (the project name up to the first `_`: `airplay-gateway`, `airplay-speaker`), or no kind | `ESP_ERR_NOT_SUPPORTED` |
 | 10 s without a byte | `ESP_ERR_TIMEOUT` |
 | connection closed early, other read error | `ESP_FAIL` |
@@ -62,7 +62,8 @@ and a text file:
 2. Gateway, speaker image: `ESP_ERR_NOT_SUPPORTED`, flash untouched.
 3. Speaker, Gateway image: `ESP_ERR_NOT_SUPPORTED`.
 4. The text file: `ESP_ERR_IMAGE_INVALID`.
-5. Chip id changed to 0 (ESP32): `ESP_ERR_IMAGE_INVALID`.
+5. Chip id changed to 0 (ESP32): `ESP_ERR_IMAGE_INVALID`. So is an S3 image
+   on a P4 Gateway and a P4 image on an S3 Gateway.
 6. Length 0x300001: `ESP_ERR_INVALID_SIZE`, before reading the body.
 7. Length 100: `ESP_ERR_INVALID_SIZE`.
 8. A Gateway image of another version: accepted.

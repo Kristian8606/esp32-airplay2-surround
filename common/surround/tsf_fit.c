@@ -5,6 +5,7 @@
 
 #include "esp_timer.h"
 #include "esp_wifi.h"
+#include "soc/soc_caps.h"
 
 /* A reading this far off the line is a bad reading... */
 #define TSF_FIT_REJECT_NS 200000.0
@@ -21,6 +22,18 @@ void tsf_fit_reset(tsf_fit_t *fit) {
   fit->restarts = restarts;
 }
 
+#if !SOC_WIFI_SUPPORTED
+/* The Wi-Fi radio is a co-processor (the P4 Gateway's C6): ESP-Hosted does not
+ * carry the TSF. A sample is the local time of the C6's time pulse edge,
+ * captured in hardware, and the TSF at that edge, from the C6
+ * (main/gw_c6_time.c). Its quality comes from that path, so the read checks
+ * below are the S3's only. */
+bool gw_c6_time_sample(int64_t *local_ns, int64_t *tsf_ns);
+
+bool tsf_fit_read_sample(int64_t *local_ns, int64_t *tsf_ns) {
+  return gw_c6_time_sample(local_ns, tsf_ns);
+}
+#else
 bool tsf_fit_read_sample(int64_t *local_ns, int64_t *tsf_ns) {
   int64_t best_span = INT64_MAX;
   for (int i = 0; i < TSF_READ_TRIES; ++i) {
@@ -37,6 +50,7 @@ bool tsf_fit_read_sample(int64_t *local_ns, int64_t *tsf_ns) {
   }
   return best_span <= TSF_READ_MAX_SPAN_US;
 }
+#endif
 
 static void recompute(tsf_fit_t *fit) {
   const uint32_t n = fit->count;

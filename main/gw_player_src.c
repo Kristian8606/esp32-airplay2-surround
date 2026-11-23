@@ -139,13 +139,13 @@ static int http_read(player_source_t *s, uint8_t *buf, size_t len) {
   return n;
 }
 
-static int http_read_at(player_source_t *s, int64_t off, uint8_t *buf, size_t len) {
-  http_src_t *h = s->ctx;
+static int http_read_at_url(player_source_t *s, const char *url, int64_t off,
+                            uint8_t *buf, size_t len) {
   if (!len) return 0;
   esp_http_client_handle_t c = NULL;
   int64_t clen = 0;
   const int64_t t0 = esp_timer_get_time();
-  if (http_get(h->url, off, off + (int64_t)len - 1, &c, &clen) != ESP_OK) return -1;
+  if (http_get(url, off, off + (int64_t)len - 1, &c, &clen) != ESP_OK) return -1;
   const int64_t t1 = esp_timer_get_time();
   size_t got = 0;
   while (got < len) {
@@ -162,6 +162,11 @@ static int http_read_at(player_source_t *s, int64_t off, uint8_t *buf, size_t le
              (unsigned)len, (long long)((t1 - t0) / 1000), (long long)((t2 - t1) / 1000),
              (long long)((t3 - t2) / 1000));
   return (int)got;
+}
+
+static int http_read_at(player_source_t *s, int64_t off, uint8_t *buf, size_t len) {
+  http_src_t *h = s->ctx;
+  return http_read_at_url(s, h->url, off, buf, len);
 }
 
 esp_err_t player_http_span(const char *url, int64_t off, uint32_t len,
@@ -343,16 +348,83 @@ static esp_err_t file_seek(player_source_t *s, int64_t off) {
   return f->err ? ESP_FAIL : ESP_OK;
 }
 
-static int file_read_at(player_source_t *s, int64_t off, uint8_t *buf, size_t len) {
-  file_src_t *f = s->ctx;
-  if (lseek(f->fd_at, (off_t)off, SEEK_SET) != (off_t)off) return -1;
+static int fd_read_at(int fd, int64_t off, uint8_t *buf, size_t len) {
+  if (lseek(fd, (off_t)off, SEEK_SET) != (off_t)off) return -1;
   size_t got = 0;
   while (got < len) {
-    const ssize_t n = read(f->fd_at, buf + got, len - got);
+    const ssize_t n = read(fd, buf + got, len - got);
     if (n <= 0) break;
     got += (size_t)n;
   }
   return (int)got;
+}
+
+static int file_read_at(player_source_t *s, int64_t off, uint8_t *buf, size_t len) {
+  file_src_t *f = s->ctx;
+  return fd_read_at(f->fd_at, off, buf, len);
+}
+
+/* An independent descriptor and a small read window for nearby tags.
+ * For HTTP the window replaces multiple short Range requests. */
+#define META_WINDOW_BYTES 4096U
+
+typedef struct {
+  int fd;
+  const char *url;
+  uint8_t *window;
+  int64_t start;
+  size_t have;
+} metadata_source_t;
+
+static int metadata_fetch(player_source_t *s, int64_t off, uint8_t *buf, size_t len) {
+  const metadata_source_t *m = s->ctx;
+  if (m->fd >= 0) return fd_read_at(m->fd, off, buf, len);
+  return http_read_at_url(s, m->url, off, buf, len);
+}
+
+static int metadata_read_at(player_source_t *s, int64_t off, uint8_t *buf, size_t len) {
+  metadata_source_t *m = s->ctx;
+  if (off < 0 || player_source_interrupted(s)) return -1;
+  if (!len || (s->size >= 0 && off >= s->size)) return 0;
+  if (s->size >= 0 && (uint64_t)(s->size - off) < len) len = (size_t)(s->size - off);
+  if (!m->window || len > META_WINDOW_BYTES) return metadata_fetch(s, off, buf, len);
+  if (off >= m->start && (uint64_t)(off - m->start) <= m->have &&
+      len <= m->have - (size_t)(off - m->start)) {
+    memcpy(buf, m->window + (size_t)(off - m->start), len);
+    return (int)len;
+  }
+  size_t want = META_WINDOW_BYTES;
+  if (s->size >= 0 && (uint64_t)(s->size - off) < want) want = (size_t)(s->size - off);
+  const int n = metadata_fetch(s, off, m->window, want);
+  m->start = off;
+  m->have = n > 0 ? (size_t)n : 0;
+  if (n <= 0) return n;
+  if (len > m->have) len = m->have;
+  memcpy(buf, m->window, len);
+  return (int)len;
+}
+
+static void metadata_close(player_source_t *s) {
+  metadata_source_t *m = s->ctx;
+  if (m->fd >= 0) close(m->fd);
+  free(m->window);
+  free(m);
+}
+
+esp_err_t player_source_metadata_open(player_source_t *s, const char *url,
+                                      const char *path, int64_t size) {
+  metadata_source_t *m = calloc(1, sizeof(*m));
+  if (!m) return ESP_ERR_NO_MEM;
+  m->fd = path ? open(path, O_RDONLY) : -1;
+  if (path && m->fd < 0) {
+    free(m);
+    return ESP_ERR_NOT_FOUND;
+  }
+  m->url = url;
+  m->window = heap_caps_malloc(META_WINDOW_BYTES, MALLOC_CAP_SPIRAM);
+  *s = (player_source_t){.read_at = metadata_read_at, .close = metadata_close,
+                         .size = size, .ctx = m};
+  return ESP_OK;
 }
 
 static void file_close(player_source_t *s) {

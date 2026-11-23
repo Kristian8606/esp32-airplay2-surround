@@ -42,6 +42,10 @@ esp_err_t settings_get_volume(float *volume_db);
 esp_err_t settings_set_volume(float volume_db);
 esp_err_t settings_persist_volume(void);
 
+/* Gateway's AirPlay channel limit. Missing key means All (up to 7.1). */
+bool settings_airplay_71_enabled(void);
+esp_err_t settings_set_airplay_71_enabled(bool enabled);
+
 /* Output latency after the ESP (us). Returns the Kconfig default
  * CONFIG_AIRPLAY_OUTPUT_LATENCY_US when nothing was saved. */
 esp_err_t settings_get_output_latency_us(int32_t *us);

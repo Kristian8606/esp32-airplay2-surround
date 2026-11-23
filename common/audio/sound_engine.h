@@ -11,9 +11,15 @@
  * order; framing and FLUSH interpretation belong to the sequential consumer. */
 #define AP2_BUFFERED_AUDIO_BUFFER_REQUEST_BYTES (6U * 1024U * 1024U)
 
-/* AirPlay type-103 capacity advertised to the sender. Keep this equal to the
- * physical 6 MiB raw FIFO so normal TCP backpressure bounds sender preload. */
+/* Capacity advertised to the AirPlay type-103 sender. Speakers advertise
+ * their 6 MiB FIFO. The Gateway takes its advertisement from Kconfig and
+ * applies TCP backpressure based on the available space in its relay ring. */
+#ifdef CONFIG_AIRPLAY_GW_ADVERTISED_BUFFER_KIB
+#define AP2_BUFFERED_AUDIO_ADVERTISED_BYTES \
+  ((uint32_t)CONFIG_AIRPLAY_GW_ADVERTISED_BUFFER_KIB * 1024U)
+#else
 #define AP2_BUFFERED_AUDIO_ADVERTISED_BYTES (6U * 1024U * 1024U)
+#endif
 
 /* AirPlay 2 audio receiver: buffered AAC/ALAC plus realtime ALAC. Implemented
  * twice: the speaker's audio engine (speaker/main/audio/sound_engine.c) and

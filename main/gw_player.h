@@ -20,7 +20,8 @@
 #include "esp_err.h"
 #include "esp_http_server.h"
 
-/* Plays url (http://) at volume_db (-60..0). Stops the radio or a file
+/* Plays url (http://) with the shared volume, or sets it from volume_db
+ * (-60..0, GW_LOCAL_VOLUME_KEEP_DB to keep it). Stops the radio or a file
  * that plays. Returns at once; GET /api/player shows how it goes. */
 esp_err_t gw_player_play(const char *url, int volume_db);
 /* url: http://... or, with CONFIG_GATEWAY_USB_PLAYER_USB, usb:/folder/file
@@ -42,8 +43,6 @@ esp_err_t gw_player_jump(int index);
  * it does not play. Not from the player's own task. */
 void gw_player_stop(void);
 
-void gw_player_set_volume(int volume_db);
-
 /* Phase 3d: pause (true) or resume (false), and seek to a place in the
  * file (WAV and FLAC for now). ESP_ERR_INVALID_STATE when nothing plays. */
 esp_err_t gw_player_pause(bool pause);
@@ -53,9 +52,8 @@ esp_err_t gw_player_seek(double position_s);
 bool gw_player_active(void);
 
 /* A hardware button (phase 6d; playback_buttons.c, rtsp_remote command
- * numbers): play/pause, next, previous, volume -/+ go to the player while
- * it holds the speakers. False when it does not: the button goes to AirPlay
- * as before. */
+ * numbers): play/pause, next and previous go to the player while it holds
+ * the speakers. False when it does not handle the command. */
 bool gw_player_button(uint8_t command);
 
 /* For /api/speakers: a 5.1/7.1 file in lane mode sends each speaker its
@@ -75,7 +73,9 @@ void gw_player_yield(void);
 bool gw_player_clock_line(apple_clock_line_t *out);
 
 /* GET /api/player (status) and POST /api/player {"cmd":"play","url":...,
- * "vol":-30} | {"cmd":"stop"} | {"cmd":"volume","vol":-25} | {"cmd":"pause"}
+ * "vol":-30} | {"cmd":"stop"} | {"cmd":"volume","volume_percent":50,"live":true}
+ * | {"cmd":"pause"}. Volume changes are saved unless live is true. Legacy
+ * volume requests may still send "vol" in dB.
  * | {"cmd":"resume"} | {"cmd":"seek","pos":95.5} | {"cmd":"play","urls":[...],
  * "index":0} | {"cmd":"add","url":...} | {"cmd":"next"} | {"cmd":"prev"} |
  * {"cmd":"jump","index":2}. The status shows the queue and its index. POST asks the

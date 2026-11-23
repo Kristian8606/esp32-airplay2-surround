@@ -18,6 +18,52 @@ menu "Surround Build Role"
             bool "Gateway (AirPlay front end, no audio output)"
     endchoice
 
+    choice AIRPLAY_GATEWAY_BOARD
+        prompt "Gateway board"
+        depends on AIRPLAY_ROLE_GATEWAY
+        default AIRPLAY_GW_BOARD_S3_DEVKIT if IDF_TARGET_ESP32S3
+        default AIRPLAY_GW_BOARD_FIREBEETLE_P4 if IDF_TARGET_ESP32P4
+        default AIRPLAY_GW_BOARD_CUSTOM
+        help
+            The board the Gateway runs on; it sets the default pins below
+            (they can still be changed one by one). Only the boards of the
+            current target are listed (idf.py set-target esp32s3 or
+            esp32p4). Custom keeps the defaults of the target's board.
+        config AIRPLAY_GW_BOARD_S3_DEVKIT
+            bool "ESP32-S3 DevKit N8R8"
+            depends on IDF_TARGET_ESP32S3
+        config AIRPLAY_GW_BOARD_FIREBEETLE_P4
+            bool "DFRobot FireBeetle 2 ESP32-P4 (Wi-Fi through its ESP32-C6)"
+            depends on IDF_TARGET_ESP32P4
+        config AIRPLAY_GW_BOARD_CUSTOM
+            bool "Custom"
+    endchoice
+
+    config AIRPLAY_GW_TIME_PULSE_GPIO
+        int "Time pulse from the C6 (P4 GPIO)"
+        default 6
+        range 0 SOC_GPIO_IN_RANGE_MAX
+        depends on AIRPLAY_ROLE_GATEWAY && IDF_TARGET_ESP32P4
+        help
+            The line on which the C6 co-processor sends its time pulse
+            (the WAKEUP line of ESP-Hosted; 6 on the FireBeetle 2). The C6
+            side is GW_C6_WAKEUP_GPIO of the C6 firmware (coprocessor/c6,
+            default 2); a board that uses another C6 pin needs that firmware
+            rebuilt (coprocessor/c6/update_prebuilt.sh).
+
+    # The size of the Gateway relay ring and the capacity advertised in
+    # AirPlay SETUP can be varied independently during buffering tests.
+    config AIRPLAY_GW_RELAY_RING_KIB
+        int
+        depends on AIRPLAY_ROLE_GATEWAY
+        default 8192 if IDF_TARGET_ESP32P4
+        default 4096
+    config AIRPLAY_GW_ADVERTISED_BUFFER_KIB
+        int
+        depends on AIRPLAY_ROLE_GATEWAY
+        default 8192 if IDF_TARGET_ESP32P4
+        default 6144
+
     config AIRPLAY_SURROUND_GATEWAY_HOST
         string "Gateway IPv4 address (empty = find it by mDNS)"
         default ""
@@ -42,44 +88,83 @@ menu "Surround Build Role"
 
     config AIRPLAY_SURROUND_SYNC_PULSE_GPIO
         int "Sync test pulse GPIO"
+        default 50 if IDF_TARGET_ESP32P4
         default 9
-        range 0 48
+        range 0 SOC_GPIO_OUT_RANGE_MAX
         depends on AIRPLAY_SURROUND_SYNC_PULSE
         help
-            Pick a free pin (default 9: not used by the default I2S 4/5/6,
-            amplifier 21, LED 38 or latency loopback 7; avoid the strapping
-            pins 0, 3, 45, 46, USB 19/20 and the flash/PSRAM pins 26-37).
+            Pick a free pin. ESP32-S3 (default 9): not used by the default
+            I2S 4/5/6, amplifier 21, LED 38 or latency loopback 7; avoid the
+            strapping pins 0, 3, 45, 46, USB 19/20 and the flash/PSRAM pins
+            26-37. ESP32-P4 (default 50): 9 is the FireBeetle 2's onboard
+            microphone.
 
     config AIRPLAY_SURROUND_CAL_MIC
-        bool "Room calibration microphone (INMP441) on the Gateway"
+        bool "Room calibration microphone on the Gateway"
         default y
         depends on AIRPLAY_ROLE_GATEWAY
         help
-            An I2S MEMS microphone (INMP441) on the Gateway, placed at the
-            listening seat, measures every speaker's travel time and level
-            from test chirps and suggests each speaker's delay and level
-            (speakers page, Room calibration). The microphone runs only
-            during a measurement; without one the page says there is no
-            signal. Wiring: VDD to 3V3, GND and L/R to GND, SCK, WS and SD
-            to the pins below.
+            A microphone on the Gateway, placed at the listening seat,
+            measures every speaker's travel time and level from test chirps
+            and suggests each speaker's delay and level (speakers page, Room
+            calibration). The microphone runs only during a measurement;
+            without one the page says there is no signal. Either an INMP441
+            on I2S, or a PDM microphone such as the one on the FireBeetle 2
+            ESP32-P4 board.
+
+    choice AIRPLAY_SURROUND_CAL_MIC_TYPE
+        prompt "Calibration microphone type"
+        depends on AIRPLAY_SURROUND_CAL_MIC
+        default AIRPLAY_SURROUND_CAL_MIC_PDM if AIRPLAY_GW_BOARD_FIREBEETLE_P4
+        default AIRPLAY_SURROUND_CAL_MIC_INMP441
+        config AIRPLAY_SURROUND_CAL_MIC_INMP441
+            bool "INMP441 on I2S (SCK, WS, SD)"
+            help
+                Wiring: VDD to 3V3, GND and L/R to GND, SCK, WS and SD to the
+                pins below.
+        config AIRPLAY_SURROUND_CAL_MIC_PDM
+            bool "PDM microphone (CLK, DATA): the FireBeetle 2 P4's onboard one"
+            depends on SOC_I2S_SUPPORTS_PDM_RX
+            help
+                A PDM MEMS microphone, read through the I2S PDM-to-PCM filter
+                (16-bit PCM). The FireBeetle 2 ESP32-P4 has one on the board:
+                CLK GPIO12, DATA GPIO9 (DFRobot wiki).
+    endchoice
+
+    config AIRPLAY_SURROUND_CAL_MIC_PDM_CLK_GPIO
+        int "PDM microphone CLK GPIO"
+        default 12
+        range 0 SOC_GPIO_OUT_RANGE_MAX
+        depends on AIRPLAY_SURROUND_CAL_MIC_PDM
+
+    config AIRPLAY_SURROUND_CAL_MIC_PDM_DATA_GPIO
+        int "PDM microphone DATA GPIO"
+        default 9
+        range 0 SOC_GPIO_IN_RANGE_MAX
+        depends on AIRPLAY_SURROUND_CAL_MIC_PDM
 
     config AIRPLAY_SURROUND_CAL_MIC_SCK_GPIO
         int "Calibration microphone SCK GPIO"
         default 5
-        range 0 48
-        depends on AIRPLAY_SURROUND_CAL_MIC
+        range 0 SOC_GPIO_OUT_RANGE_MAX
+        depends on AIRPLAY_SURROUND_CAL_MIC_INMP441
 
     config AIRPLAY_SURROUND_CAL_MIC_WS_GPIO
         int "Calibration microphone WS GPIO"
+        default 52 if IDF_TARGET_ESP32P4
         default 6
-        range 0 48
-        depends on AIRPLAY_SURROUND_CAL_MIC
+        range 0 SOC_GPIO_OUT_RANGE_MAX
+        depends on AIRPLAY_SURROUND_CAL_MIC_INMP441
+        help
+            6 on the ESP32-S3. 52 on the ESP32-P4, where 6 carries the time
+            pulse from the C6 (on the FireBeetle 2 the microphone then sits
+            on 52, 4, 5, next to each other on the right header).
 
     config AIRPLAY_SURROUND_CAL_MIC_SD_GPIO
         int "Calibration microphone SD (data) GPIO"
         default 4
-        range 0 48
-        depends on AIRPLAY_SURROUND_CAL_MIC
+        range 0 SOC_GPIO_IN_RANGE_MAX
+        depends on AIRPLAY_SURROUND_CAL_MIC_INMP441
 endmenu
 
 menu "AirPlay Receiver"
@@ -139,7 +224,7 @@ menu "AirPlay Receiver"
 
     config ENABLE_AIRPLAY_ARTWORK
         bool "Advertise artwork support"
-        default y if AIRPLAY_HOMEKIT
+        default y if AIRPLAY_ROLE_GATEWAY
         default n
 
     menu "Hardware playback buttons"
@@ -162,23 +247,23 @@ menu "AirPlay Receiver"
         if AIRPLAY_HARDWARE_BUTTONS
             config AIRPLAY_BUTTON_PLAY_PAUSE_GPIO
                 int "Play/Pause GPIO (-1 = disabled)"
-                range -1 48
+                range -1 SOC_GPIO_IN_RANGE_MAX
                 default -1
             config AIRPLAY_BUTTON_NEXT_GPIO
                 int "Next GPIO (-1 = disabled)"
-                range -1 48
+                range -1 SOC_GPIO_IN_RANGE_MAX
                 default -1
             config AIRPLAY_BUTTON_PREVIOUS_GPIO
                 int "Previous GPIO (-1 = disabled)"
-                range -1 48
+                range -1 SOC_GPIO_IN_RANGE_MAX
                 default -1
             config AIRPLAY_BUTTON_VOLUME_DOWN_GPIO
                 int "Volume - GPIO (-1 = disabled)"
-                range -1 48
+                range -1 SOC_GPIO_IN_RANGE_MAX
                 default -1
             config AIRPLAY_BUTTON_VOLUME_UP_GPIO
                 int "Volume + GPIO (-1 = disabled)"
-                range -1 48
+                range -1 SOC_GPIO_IN_RANGE_MAX
                 default -1
             config AIRPLAY_BUTTON_DEBOUNCE_MS
                 int "Button debounce (milliseconds)"
@@ -322,7 +407,7 @@ menu "Amplifier Power Control"
     config AIRPLAY_AMP_GPIO
         int "Amplifier control GPIO"
         default 21
-        range 0 48
+        range 0 SOC_GPIO_OUT_RANGE_MAX
         depends on AIRPLAY_AMP_CONTROL
 
     choice AIRPLAY_AMP_ACTIVE_LEVEL
@@ -508,6 +593,7 @@ endmenu
 menu "RGB Audio/VU LED"
     config ENABLE_RGB_AUDIO_LED
         bool "Enable WS2812 RGB audio/VU LED"
+        default n if AIRPLAY_GW_BOARD_FIREBEETLE_P4
         default y
         help
             One WS2812 RGB LED shows the AirPlay state and, while playing, a
@@ -516,8 +602,9 @@ menu "RGB Audio/VU LED"
 
     config RGB_AUDIO_LED_GPIO
         int "WS2812 data GPIO"
+        default 33 if IDF_TARGET_ESP32P4
         default 38
-        range 0 48
+        range 0 SOC_GPIO_OUT_RANGE_MAX
         depends on ENABLE_RGB_AUDIO_LED
         help
             GPIO connected to the WS2812 data input. Use 38 on the current
@@ -600,20 +687,15 @@ menu "USB Player (experimental)"
 
     config GATEWAY_USB_PLAYER_USB
         bool "Gateway player: a USB drive"
-        depends on GATEWAY_USB_PLAYER && !ESP_CONSOLE_USB_SERIAL_JTAG && !ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
+        depends on GATEWAY_USB_PLAYER && (IDF_TARGET_ESP32P4 || (!ESP_CONSOLE_USB_SERIAL_JTAG && !ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG))
         select GATEWAY_USB_PLAYER_USB_COMPONENTS
         default y
         help
-            The native USB port (GPIO19/20)
-            becomes a USB host: a FAT32 drive is mounted at /usb when it is
-            plugged in and let go when it is pulled out, and the player
-            plays "usb:/folder/file.flac". The drive needs 5 V on that
-            port. That port is then no longer the console or the flashing
-            port: the console has to be on UART0, flashing goes over OTA
-            (the web page) or the UART port. Needs the components
-            espressif/usb and usb_host_msc (fetched only with this on).
-            Shown once the console is on UART0. FAT32 with UTF-8 names:
-            set FAT Filesystem support -> API character encoding to UTF-8.
+            Mount a FAT32 drive at /usb and play files from it. On the P4
+            use the dedicated high-speed USB OTG port. On the S3 use the
+            native USB port (GPIO19/20) and move the console to UART0.
+            The drive needs 5 V. Set FAT Filesystem support -> API character
+            encoding to UTF-8 for UTF-8 names.
 
     config GATEWAY_USB_PLAYER_USB_COMPONENTS
         bool "Fetch the USB host components (the USB drive turns this on)"

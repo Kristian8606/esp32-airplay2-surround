@@ -1,0 +1,36 @@
+--- a/rtsp_tables.c
++++ b/rtsp_tables.c
+@@ -85,6 +85,10 @@
+                         sound_format_t *format) {
+   if (stream_type != SOUND_STREAM_REALTIME &&
+       stream_type != SOUND_STREAM_BUFFERED) {
++    return false;
++  }
++  if (stream_type == SOUND_STREAM_BUFFERED &&
++      (AIRPLAY_SUPPORTED_BUFFER_STREAM & audio_format) == 0) {
+     return false;
+   }
+   for (size_t i = 0; i < sizeof(FORMATS) / sizeof(FORMATS[0]); i++) {
+--- a/rtsp_core.c
++++ b/rtsp_core.c
+@@ -310,6 +310,20 @@
+   rtsp_port_unlock();
+   return idle;
+ }
++
++#if defined(CONFIG_AIRPLAY_ROLE_GATEWAY) && CONFIG_AIRPLAY_ROLE_GATEWAY && \
++    defined(CONFIG_AIRPLAY_MULTICHANNEL) && CONFIG_AIRPLAY_MULTICHANNEL
++void airplay_gateway_disconnect_sender(void) {
++  rtsp_port_lock();
++  rtsp_conn_t *sender = s.holder;
++  if (sender && !sender->closing) {
++    sender->closing = true;
++    RTSP_LOGI("AirPlay format limit changed: disconnect sender %u", sender->id);
++    rtsp_port_conn_close(sender); /* conn_task handles the normal session teardown */
++  }
++  rtsp_port_unlock();
++}
++#endif
+ 
+ /* ---- Helpers for requests ---- */
+ 

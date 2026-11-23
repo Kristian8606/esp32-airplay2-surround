@@ -1,0 +1,14 @@
+menu "Gateway C6"
+
+    config GW_C6_WAKEUP_GPIO
+        int "Time pulse GPIO (the WAKEUP line to the P4)"
+        default 2
+        range 0 30
+        help
+            C6 pin of the line to the P4 that carries the time pulse: a rising
+            edge every SURROUND_TIME_INTERVAL_MS (125 ms). On the FireBeetle 2
+            ESP32-P4 and the ESP32-P4 Function EV board this is GPIO2 of the C6,
+            wired to GPIO6 of the P4. ESP-Hosted host power save must stay off
+            on both sides, so ESP-Hosted never drives this line.
+
+endmenu

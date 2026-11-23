@@ -55,6 +55,7 @@ int ota_image_kind_len(const char *project, size_t max_len)
 }
 
 ota_image_result_t ota_image_check_head(const uint8_t *head, size_t head_len,
+                                        uint16_t chip_id,
                                         const char *running_project, size_t running_len,
                                         ota_image_info_t *info)
 {
@@ -64,7 +65,7 @@ ota_image_result_t ota_image_check_head(const uint8_t *head, size_t head_len,
     if (head[0] != OTA_IMAGE_MAGIC) {
         return OTA_IMAGE_INVALID;
     }
-    if (rd_le16(head + OTA_IMAGE_CHIP_ID_OFFSET) != OTA_IMAGE_CHIP_ID_ESP32S3) {
+    if (rd_le16(head + OTA_IMAGE_CHIP_ID_OFFSET) != chip_id) {
         return OTA_IMAGE_INVALID;
     }
     /* 0 is no SHA-256 appended; any value other than 1 is unknown. */
@@ -118,7 +119,7 @@ const char *ota_image_result_str(ota_image_result_t r)
     switch (r) {
     case OTA_IMAGE_OK:         return "ok";
     case OTA_IMAGE_BAD_SIZE:   return "bad size";
-    case OTA_IMAGE_INVALID:    return "not an ESP32-S3 application image";
+    case OTA_IMAGE_INVALID:    return "not an application image for this chip";
     case OTA_IMAGE_OTHER_KIND: return "another kind of firmware";
     }
     return "?";

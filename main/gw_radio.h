@@ -21,18 +21,14 @@
  * AirPlay wins: the first sound_engine call of a sender while the radio
  * plays stops the radio before the call goes on (gw_radio_yield). */
 
-/* Play url (http:// or https://) at volume_db (-60..0, or
- * GW_RADIO_SAVED_VOLUME for the last one set). name and logo (may be NULL)
+/* Play url (http:// or https://) with the shared volume, or set it from
+ * volume_db (-60..0, GW_LOCAL_VOLUME_KEEP_DB to keep it). name and logo
+ * (may be NULL)
  * are shown on the page. Stops a station that plays. ESP_ERR_INVALID_STATE
  * while the room calibration runs. Returns at once; /api/radio shows how the
  * start goes. */
-#define GW_RADIO_SAVED_VOLUME 1
 esp_err_t gw_radio_start(const char *url, const char *name, const char *logo,
                          int volume_db);
-
-/* The radio's volume (-60..0 dB). save: also kept for the next start (NVS);
- * false while a slider is still moving, so the flash is written once. */
-void gw_radio_set_volume(int volume_db, bool save);
 
 /* Stops the radio and waits until it let go of the speakers (at most a few
  * seconds). Nothing when it does not play. Not from the radio's own task. */
@@ -50,7 +46,7 @@ void gw_radio_yield(void);
 bool gw_radio_clock_line(apple_clock_line_t *out);
 
 /* GET /api/radio (status), POST /api/radio/start {"url","name","logo","vol"},
- * POST /api/radio/stop, POST /api/radio/volume?db=-30, GET/POST
+ * POST /api/radio/stop, POST /api/radio/volume?pct=50 (legacy: db=-30), GET/POST
  * /api/radio/favs (a JSON array kept in NVS) and GET /radio.js (the page's
  * radio controls). What changes something asks the admin password
  * (web_admin_ok), like the other settings. */
