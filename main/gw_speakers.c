@@ -478,11 +478,7 @@ static void handle_hello(gw_speaker_t *sp, const uint8_t *p, size_t len) {
   memcpy(&h, p, sizeof(h));
   h.name[sizeof(h.name) - 1] = '\0';
   h.firmware[sizeof(h.firmware) - 1] = '\0';
-  bool version_supported = h.version == SURROUND_PROTO_VERSION;
-#if CONFIG_IDF_TARGET_ESP32P4
-  /* Versions 12 and 13 share the control messages used by this Gateway. */
-  version_supported |= h.version == SURROUND_PROTO_VERSION_SWEEPS;
-#endif
+  const bool version_supported = h.version == SURROUND_PROTO_VERSION;
   if (h.magic != SURROUND_HELLO_MAGIC || !version_supported) {
     AP_LOGW(TAG, "%s: protocol version %u, Gateway speaks %u", sp->ip,
             (unsigned)h.version, (unsigned)SURROUND_PROTO_VERSION);
