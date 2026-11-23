@@ -118,4 +118,5 @@ controlled from its web page.*
   </tr>
 </table>
 
-Wiring, building and flashing are in the [README](README.md).
+Wiring is in [docs/hardware.md](docs/hardware.md), building and flashing in
+[docs/install.md](docs/install.md).
