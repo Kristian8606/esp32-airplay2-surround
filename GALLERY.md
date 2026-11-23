@@ -11,9 +11,9 @@ subwoofer, every speaker its own channel.
 
 Click an image to open it full size. Back to the [README](README.md).
 
-*The picture above is an illustration of the idea; the real Gateway is a
-bare board with no screen, and everything is controlled from its web
-page.*
+*The picture above shows where the Gateway is going: the screen on its
+front is coming, display support is planned. Today the Gateway is a bare
+board, and everything is controlled from its web page.*
 
 ## The system
 

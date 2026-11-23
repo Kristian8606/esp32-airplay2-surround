@@ -6,7 +6,8 @@
 </p>
 
 <p align="center">
-  <a href="images/airplay-surround-dark.png"><img src="images/airplay-surround-dark.png" alt="ESP32 AirPlay 2 Surround 7.1" width="100%"></a>
+  <a href="images/stream.png"><img src="images/stream.png" alt="Wireless surround 7.1 / 5.1 / 2.1 from an ESP32 streamer: USB, radio and AirPlay to wireless speakers" width="100%"></a>
+  <br><sub><i>The Gateway as a streamer. The screen on its front is coming: display support is planned.</i></sub>
 </p>
 
 # ESP32 AirPlay 2 Surround Gateway
@@ -86,6 +87,8 @@ system.
 > **Planned:**
 > - 🔊 **USB sound card** support.
 > - 📺 **DLNA**: play to the system from DLNA / UPnP apps, not only AirPlay.
+> - 🖥️ **A display on the Gateway**: what plays, its cover, the source and
+>   the controls, as in the picture at the top.
 
 ## Contents
 
@@ -121,8 +124,12 @@ artwork included, each with a short description: [GALLERY.md](GALLERY.md).
     </td>
   </tr>
   <tr>
-    <td align="center" colspan="2">
-      <a href="images/airplay-surround-light.png"><img src="images/airplay-surround-light.png" alt="Surround setup around a TV" width="60%"></a>
+    <td align="center" width="50%">
+      <a href="images/airplay-surround-dark.png"><img src="images/airplay-surround-dark.png" alt="ESP32 AirPlay 2 Surround 7.1" width="100%"></a>
+      <br><sub><b>7.1 around the listener:</b> one Gateway, one ESP32-S3 board in every speaker</sub>
+    </td>
+    <td align="center" width="50%">
+      <a href="images/airplay-surround-light.png"><img src="images/airplay-surround-light.png" alt="Surround setup around a TV" width="100%"></a>
       <br><sub>One board in every speaker, all fed wirelessly through the Gateway</sub>
     </td>
   </tr>
