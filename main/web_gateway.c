@@ -568,15 +568,14 @@ static esp_err_t speaker_eq_handler(httpd_req_t *req) {
   }
   int len = 0;
   if (!get) {
-    while (len < (int)req->content_len) {
-      const int r = httpd_req_recv(req, buf + len, req->content_len - len);
-      if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;
-      if (r <= 0) {
-        free(buf);
-        return ESP_FAIL;
-      }
-      len += r;
+    /* a bounded read: a client that stops sending must not hold the web
+     * server's only task */
+    if (web_recv_json(req, buf, SPK_EQ_BODY_MAX + 1) != ESP_OK) {
+      free(buf);
+      httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid EQ body");
+      return ESP_FAIL;
     }
+    len = (int)req->content_len;
   }
   char auth[160] = "";
   const size_t alen = httpd_req_get_hdr_value_len(req, "Authorization");

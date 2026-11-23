@@ -3357,17 +3357,10 @@ static esp_err_t control_handler(httpd_req_t *req) {
   if (req->content_len > BODY_MAX) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Too long");
   char *body = heap_caps_malloc((size_t)req->content_len + 1U, MALLOC_CAP_SPIRAM);
   if (!body) return httpd_resp_send_500(req);
-  const int len = req->content_len;
-  int got = 0;
-  while (got < len) {
-    const int r = httpd_req_recv(req, body + got, len - got);
-    if (r <= 0) {
-      free(body);
-      return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-    }
-    got += r;
+  if (web_recv_json(req, body, (size_t)req->content_len + 1U) != ESP_OK) {
+    free(body);
+    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
   }
-  body[got] = '\0';
   cJSON *j = cJSON_Parse(body);
   free(body);
   if (!j) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Not JSON");

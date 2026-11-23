@@ -1187,16 +1187,10 @@ static esp_err_t start_post_handler(httpd_req_t *req) {
   }
   char *b = malloc(req->content_len + 1);
   if (!b) return httpd_resp_send_500(req);
-  size_t got = 0;
-  while (got < req->content_len) {
-    const int r = httpd_req_recv(req, b + got, req->content_len - got);
-    if (r <= 0) {
-      free(b);
-      return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body");
-    }
-    got += (size_t)r;
+  if (web_recv_json(req, b, req->content_len + 1) != ESP_OK) {
+    free(b);
+    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body");
   }
-  b[got] = '\0';
   cJSON *j = cJSON_Parse(b);
   free(b);
   const cJSON *u = cJSON_GetObjectItem(j, "url");
@@ -1276,16 +1270,11 @@ static esp_err_t favs_post_handler(httpd_req_t *req) {
   }
   char *b = malloc(req->content_len + 1);
   if (!b) return httpd_resp_send_500(req);
-  size_t got = 0;
-  while (got < req->content_len) {
-    const int r = httpd_req_recv(req, b + got, req->content_len - got);
-    if (r <= 0) {
-      free(b);
-      return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body");
-    }
-    got += (size_t)r;
+  if (web_recv_json(req, b, req->content_len + 1) != ESP_OK) {
+    free(b);
+    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body");
   }
-  b[got] = '\0';
+  const size_t got = req->content_len;
   cJSON *j = cJSON_Parse(b);
   const bool ok = j && cJSON_IsArray(j);
   cJSON_Delete(j);
