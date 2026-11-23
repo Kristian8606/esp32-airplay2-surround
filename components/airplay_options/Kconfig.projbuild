@@ -30,7 +30,7 @@ menu "Surround Build Role"
             current target are listed (idf.py set-target esp32s3 or
             esp32p4). Custom keeps the defaults of the target's board.
         config AIRPLAY_GW_BOARD_S3_DEVKIT
-            bool "ESP32-S3 DevKit N8R8"
+            bool "ESP32-S3 DevKit N8R8 or N16R8"
             depends on IDF_TARGET_ESP32S3
         config AIRPLAY_GW_BOARD_FIREBEETLE_P4
             bool "DFRobot FireBeetle 2 ESP32-P4 (Wi-Fi through its ESP32-C6)"

@@ -262,6 +262,7 @@ page as well, or the bass is cut twice.
 | Part | Notes |
 |---|---|
 | **One ESP32-S3 board**, the same type as the speakers (N8R8, or N16R8: see the note at the top), with a **UART port** besides its native USB port (DevKitC boards have both) | It has no audio output: no DAC, no amplifier, no wiring. A USB supply is all it needs. It is flashed and logs over its UART port; the native USB port takes the [USB player](#usb-player-experimental)'s drive. |
+| *Or:* **a DFRobot FireBeetle 2 ESP32-P4** (16 MB flash, 32 MB PSRAM, Wi-Fi through its ESP32-C6) | The most capable Gateway: faster CPU, more memory, an 8 MiB relay buffer, and an onboard microphone for room calibration. Built with `./board.sh p4-firebeetle` ([Boards](#boards), [bring-up](docs/p4-gateway-bringup.md)). The speakers stay ESP32-S3. |
 | **A place with a good signal** | It receives the stream from the Apple TV and sends it again to every speaker, so it carries the most Wi-Fi traffic. Near the access point is best. |
 | *Optional:* **a USB stick** | Music for the [USB player](#usb-player-experimental): FAT32, on the native USB port, which needs 5 V from the board. |
 | *Optional:* **INMP441 I2S microphone** | For [room calibration](#room-calibration): VDD → 3V3, GND and L/R → GND, SCK → GPIO 5, WS → GPIO 6, SD → GPIO 4 (changeable in `menuconfig`). |
@@ -457,7 +458,8 @@ page.
 #### 16 MB flash
 
 By default both firmwares are built for **8 MB** flash (`partitions.csv`).
-A board with **16 MB** (N16R8) uses all of it with `partitions_16mb.csv`:
+A board with **16 MB** (N16R8) uses all of it with `partitions_16mb.csv`, two settings next to each other in menuconfig (ESP-IDF
+does not tie the partition table to the flash size):
 
 1. `idf.py menuconfig` → **Serial flasher config → Flash size** → **16 MB**.
 2. **Partition Table → Custom partition CSV file** →
@@ -478,6 +480,34 @@ The 16 MB table does not fit an 8 MB flash: ESP-IDF stops the build. A
 16 MB flash with the 8 MB table builds and runs, with a warning that the
 rest is unused. The Gateway matters most (it keeps the speaker firmware);
 speakers can stay on the 8 MB table, their firmware fits their slot.
+
+#### Boards
+
+The chip is chosen the usual ESP-IDF way, with `idf.py set-target`; the
+flash size in menuconfig.
+
+| Board | Chip | Flash |
+|---|---|---|
+| ESP32-S3 N8R8 (8 MB flash, 8 MB PSRAM), the smallest supported | `esp32s3`, the default | the default |
+| ESP32-S3 N16R8 (16 MB flash, 8 MB PSRAM) | `esp32s3` | [16 MB flash](#16-mb-flash) |
+| DFRobot FireBeetle 2 ESP32-P4 with its ESP32-C6, Gateway only | `esp32p4` | set by the target: 16 MB, `partitions_esp32p4.csv` |
+
+```bash
+idf.py set-target esp32p4
+idf.py -p /dev/cu.usbserial-0001 build flash monitor
+```
+
+`set-target` applies `sdkconfig.defaults.<chip>` (for the P4: Wi-Fi through
+the C6, the board's pins, an 8 MiB relay buffer; see
+[bring-up](docs/p4-gateway-bringup.md)). It starts the settings again from
+the defaults: what you changed in menuconfig is kept only in `sdkconfig.old`.
+To keep a P4 and an S3 Gateway side by side, give one its own build folder
+and settings file:
+
+```bash
+idf.py -B build_p4 -D SDKCONFIG=sdkconfig.p4 set-target esp32p4
+idf.py -B build_p4 -D SDKCONFIG=sdkconfig.p4 -p PORT build flash monitor
+```
 
 ### 5. Build and flash
 

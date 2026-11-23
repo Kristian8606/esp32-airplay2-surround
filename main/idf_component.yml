@@ -2,9 +2,14 @@ dependencies:
   idf: ">=6.1"
   espressif/mdns: "^1.14.1"
   espressif/libsodium: "^1.0.21"
-  # FireBeetle 2 uses P4 revision 1.x. esp_audio_codec 2.6+ needs P4 v3.0.
+  # FireBeetle 2 uses P4 revision 1.x. esp_audio_codec 2.6+ needs P4 v3.0,
+  # so the P4 stays on 2.5; the S3 keeps the newest 2.x.
   espressif/esp_audio_codec:
-    version: ">=2.5.0,<2.6.0"
+    matches:
+      - if: "target == esp32p4"
+        version: ">=2.5.0,<2.6.0"
+      - if: "target != esp32p4"
+        version: "^2.5.0"
   espressif/cjson: "^1.7.19"
   # Wi-Fi of the P4 Gateway through its C6 co-processor (SDIO). ESP-IDF
   # v6.1 has esp_wifi_remote built in, so this is the only extra component.
