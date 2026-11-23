@@ -358,6 +358,10 @@ cd speaker
 idf.py -p PORT build flash monitor
 ```
 
+The speaker is its own project with its own `build/` and settings: it is
+always built for the ESP32-S3, whatever chip the Gateway was set to. No
+`set-target` is needed.
+
 Then [First start](#first-start): Wi-Fi, names, roles. Later versions go
 over Wi-Fi ([Updates](docs/install.md#6-updates)); the speakers update from the Gateway.
 

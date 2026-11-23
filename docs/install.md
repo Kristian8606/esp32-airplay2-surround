@@ -37,7 +37,10 @@ cd esp32-airplay2-surround
 Both use the shared settings in `sdkconfig.defaults`; the Gateway adds
 `sdkconfig.defaults.gateway`, and ESP-IDF adds `sdkconfig.defaults.esp32s3`
 or `sdkconfig.defaults.esp32p4` for the chip. Each is an ordinary ESP-IDF
-project: go into its folder and run `idf.py` as usual. The ESP32-C6
+project: go into its folder and run `idf.py` as usual. The speaker is its
+own project with its own `build/` and settings: it is always built for the
+ESP32-S3, whatever chip the Gateway was set to. No `set-target` is needed.
+The ESP32-C6
 firmware of the P4 board is in `coprocessor/c6/`; the Gateway carries a
 built copy and installs it on the C6 by itself.
 
