@@ -1,0 +1,8 @@
+# ESP32-P4 Gateway: applied after sdkconfig.defaults.gateway (ESP-IDF adds
+# <defaults file>.<target> by itself). On the S3 the USB player's drive
+# takes the native USB port, so its console is on UART0; the P4 has a
+# separate port for the drive, so the console stays on the USB-Serial/JTAG
+# of the board's USB-C connector: idf.py flash monitor over one cable.
+# CONFIG_ESP_CONSOLE_UART_DEFAULT is not set
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y

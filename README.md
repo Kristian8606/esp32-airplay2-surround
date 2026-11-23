@@ -89,7 +89,7 @@ system.
 
 ## Contents
 
-- [Gallery](#gallery)
+- [Gallery](#gallery) (all pictures with short descriptions: [GALLERY.md](GALLERY.md))
 - [Apple Home (HomeKit)](#apple-home-homekit)
 - [How it works](#how-it-works)
 - [What you need](#what-you-need)
@@ -106,7 +106,8 @@ system.
 
 ## Gallery
 
-Click an image to open it full size.
+Click an image to open it full size. **All pictures**, AirPlay with its
+artwork included, each with a short description: [GALLERY.md](GALLERY.md).
 
 <table>
   <tr>
@@ -296,7 +297,7 @@ limits below.
 | Covers of USB music | sent to the page as they are in the file | turned into small thumbnails by the P4's JPEG hardware and kept on the stick (folder `.airplay-covers-v1`), so the page shows them quickly |
 | Player start | 2 s | 1 s |
 | Calibration microphone | INMP441 | INMP441, or the PDM microphone on the board |
-| Console, flashing | its UART port (the native USB port is the player's) | UART0, 115200 baud |
+| Console, flashing | its UART port (the native USB port is the player's) | the board's USB-C (USB-Serial/JTAG) |
 | Flash | 8 MB, or 16 MB ([16 MB flash](#16-mb-flash)) | 16 MB, with 6 MB firmware slots |
 
 The heavy-file limits of the S3 are measured; the P4's high-speed port has
@@ -434,6 +435,53 @@ from the I2S wires.
 
 ## Installation
 
+### Quick start
+
+The whole way from download to flashed boards; the numbered steps below
+explain each part.
+
+**Once: ESP-IDF v6.1 and the code**
+
+```bash
+git clone -b v6.1 --recursive https://github.com/espressif/esp-idf.git ~/esp-idf-v6.1
+~/esp-idf-v6.1/install.sh esp32s3,esp32p4
+git clone https://github.com/Kristian8606/esp32-airplay2-surround.git
+```
+
+**In every new terminal**
+
+```bash
+. ~/esp-idf-v6.1/export.sh
+cd esp32-airplay2-surround
+```
+
+**The Gateway: pick its chip, build, flash.** The firmware goes to
+`build/airplay-gateway_<version>.bin`.
+
+| | ESP32-S3 Gateway (N8R8) | ESP32-P4 Gateway (FireBeetle 2) |
+|---|---|---|
+| Pick the chip | nothing to do: the S3 is the default | `idf.py set-target esp32p4` (once) |
+| Connect | the **UART** port (`/dev/cu.usbserial-…` on a Mac) | the board's **USB-C** (`/dev/cu.usbmodem…`) |
+| Build and flash | `idf.py -p PORT build flash monitor` | `idf.py -p PORT build flash monitor` |
+| First start | as usual | if the C6 does not run this project's firmware yet, the Gateway installs it over the C6's link and restarts once by itself |
+
+For an **N16R8** (16 MB) S3, set the flash size and the partition table in
+`idf.py menuconfig` before the first build ([16 MB flash](#16-mb-flash)).
+
+**The speakers** (always ESP32-S3), over each speaker's **USB** port:
+
+```bash
+cd speaker
+idf.py -p PORT build flash monitor
+```
+
+Then [First start](#first-start): Wi-Fi, names, roles. Later versions go
+over Wi-Fi ([Updates](#6-updates)); the speakers update from the Gateway.
+
+> [!NOTE]
+> `set-target` starts the settings again from the defaults. To go back from
+> a P4 to an S3 build in the same folder, run `idf.py set-target esp32s3`.
+
 ### 1. Install ESP-IDF
 
 The firmware is built with **ESP-IDF v6.1**. Follow Espressif's
@@ -560,7 +608,7 @@ idf.py -p /dev/cu.usbserial-0001 build flash monitor
 ```
 
 For an **ESP32-P4** Gateway run `idf.py set-target esp32p4` once first
-([Boards](#boards)); it is flashed and logs over UART0 (115200 baud).
+([Boards](#boards)); it is flashed and logs over its USB-C port.
 
 On macOS list the ports with `ls /dev/cu.*` (a speaker's USB port is a
 `usbmodem`, a UART port a `usbserial` or `wchusbserial`); on Windows the port
@@ -1358,7 +1406,7 @@ are listed in
 | One speaker early or late | Its **Delay** on `/speakers`; its **Output Latency** (DSP, external processors). |
 | The USB stick is not seen | The Library says *no drive*: the native USB port gets no 5 V (on many DevKitC boards a solder bridge, see [the USB stick](#usb-player-experimental)). *Not FAT32*: format it FAT32 with a Master Boot Record. |
 | A song from the stick stops every few seconds | `buffering: The file comes too slowly` in the Gateway log: on an ESP32-S3 a WAV 5.1 / 7.1 or a 7.1 at 24-bit is too heavy; convert it to FLAC (16-bit for 7.1), or use an ESP32-P4 Gateway. |
-| No log or no flashing over the Gateway's USB port | An ESP32-S3 Gateway's console is on its **UART** port; the native USB port is the USB player's. The ESP32-P4's console is UART0 as well. |
+| No log or no flashing over the Gateway's USB port | An ESP32-S3 Gateway's console is on its **UART** port; the native USB port is the USB player's. The ESP32-P4's console is on its USB-C. |
 
 Every board streams its log to `http://<board-ip>/logs`. Useful lines:
 
