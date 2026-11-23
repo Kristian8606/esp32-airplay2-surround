@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="images/stream.png"><img src="images/stream.png" alt="Wireless surround 7.1 / 5.1 / 2.1 from an ESP32 streamer: USB, radio and AirPlay to wireless speakers" width="100%"></a>
-  <br><sub><i>The Gateway as a streamer. The screen on its front is coming: display support is planned.</i></sub>
+  <br><sub><i>An illustration. A display and an enclosure for the Gateway are planned.</i></sub>
 </p>
 
 # ESP32 AirPlay 2 Surround Gateway
@@ -87,8 +87,8 @@ system.
 > **Planned:**
 > - 🔊 **USB sound card** support.
 > - 📺 **DLNA**: play to the system from DLNA / UPnP apps, not only AirPlay.
-> - 🖥️ **A display on the Gateway**: what plays, its cover, the source and
->   the controls, as in the picture at the top.
+> - 🖥️ **A display and an enclosure for the Gateway**: the display shows
+>   what plays, its cover, the source and the controls.
 
 ## Contents
 

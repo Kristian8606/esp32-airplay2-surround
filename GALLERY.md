@@ -11,9 +11,9 @@ subwoofer, every speaker its own channel.
 
 Click an image to open it full size. Back to the [README](README.md).
 
-*The picture above shows where the Gateway is going: the screen on its
-front is coming, display support is planned. Today the Gateway is a bare
-board, and everything is controlled from its web page.*
+*The picture above is an illustration. A display and an enclosure for the
+Gateway are planned. Today the Gateway is a bare board, and everything is
+controlled from its web page.*
 
 ## The system
 
