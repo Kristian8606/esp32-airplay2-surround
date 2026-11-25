@@ -3224,13 +3224,16 @@ static int roomcal_ways(cal_chirp_kind_t kind, int bursts, uint8_t flags,
   if (tweeter >= 0 && cal_chirp_is_sweep(kind) && !cal_chirp_is_low(kind) &&
       (flags & SURROUND_CAL_PER_WAY)) {
     const uint8_t tw = tweeter ? SURROUND_CAL_WAY_RIGHT : SURROUND_CAL_WAY_LEFT;
+    const int per = (flags & SURROUND_CAL_ALL_WAYS) ? 3 : 2;
     int reps = repeats ? bursts : 1;
-    if (reps > SURROUND_CAL_BURSTS_MAX / 2) reps = SURROUND_CAL_BURSTS_MAX / 2;
+    if (reps > SURROUND_CAL_BURSTS_MAX / per) reps = SURROUND_CAL_BURSTS_MAX / per;
     for (int r = 0; r < reps; ++r) {
-      way[2 * r] = tw | SURROUND_CAL_WAY_TWEETER;
-      way[2 * r + 1] = (uint8_t)(both & ~tw) | SURROUND_CAL_WAY_WOOFER;
+      way[per * r] = tw | SURROUND_CAL_WAY_TWEETER;
+      way[per * r + 1] = (uint8_t)(both & ~tw) | SURROUND_CAL_WAY_WOOFER;
+      if (per == 3)
+        way[per * r + 2] = both | SURROUND_CAL_WAY_TWEETER | SURROUND_CAL_WAY_WOOFER;
     }
-    return 2 * reps;
+    return per * reps;
   }
   const uint8_t all = tweeter >= 0
                           ? both | SURROUND_CAL_WAY_TWEETER | SURROUND_CAL_WAY_WOOFER

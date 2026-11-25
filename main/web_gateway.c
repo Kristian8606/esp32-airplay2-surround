@@ -528,6 +528,7 @@ static esp_err_t calibration_post_handler(httpd_req_t *req) {
       if (cJSON_IsNumber(v = cJSON_GetObjectItem(j, "hi_hz"))) o.hi_hz = (uint16_t)v->valuedouble;
       if (cJSON_IsNumber(v = cJSON_GetObjectItem(j, "level_db"))) o.level_db10 = (int16_t)lround(v->valuedouble * 10.0);
       if (cJSON_IsNumber(v = cJSON_GetObjectItem(j, "repeats"))) o.repeats = (uint8_t)v->valuedouble;
+      o.all_ways = cJSON_IsTrue(cJSON_GetObjectItem(j, "all_ways"));
       e = gw_calib_sweep_start(mac, !cJSON_IsFalse(raw), !cJSON_IsFalse(per_way), &o);
       if (e == ESP_ERR_NOT_SUPPORTED) error = "built without the calibration microphone";
       else if (e == ESP_ERR_INVALID_STATE) error = "a measurement is already running";

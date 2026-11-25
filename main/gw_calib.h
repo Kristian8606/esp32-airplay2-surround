@@ -123,6 +123,7 @@ typedef struct {
   uint16_t lo_hz, hi_hz;
   int16_t level_db10; /* RMS, tenths of a dB below full scale */
   uint8_t repeats;    /* 1 .. GW_CAL_REPEATS_MAX */
+  bool all_ways;      /* per way: also both drivers together (ALL_WAYS) */
 } gw_cal_sweep_opts_t;
 #define GW_CAL_LEVEL_MIN_DB10 (-400)
 #define GW_CAL_LEVEL_MAX_DB10 (-30)  /* REW: -3 dBFS RMS at most */

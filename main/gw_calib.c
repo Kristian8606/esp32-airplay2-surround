@@ -909,14 +909,15 @@ static void run_sweep(bool mic_ok, const char *mic_why, const cal_noise_t *noise
   const cal_chirp_kind_t kind =
       o.channel == CAL_AAC_SPEAKER_LFE ? CAL_SWEEP_LOW : CAL_SWEEP_WIDE;
   const bool per_way = s_sweep_req.per_way && kind == CAL_SWEEP_WIDE;
+  const gw_cal_sweep_opts_t *opts = &s_sweep_req.opts;
+  const bool all = per_way && opts->all_ways;
   const uint8_t flags = (s_sweep_req.raw ? SURROUND_CAL_RAW : 0U) |
-                        (per_way ? SURROUND_CAL_PER_WAY : 0U);
+                        (per_way ? SURROUND_CAL_PER_WAY : 0U) | (all ? SURROUND_CAL_ALL_WAYS : 0U);
   const double noise_ms = cal_chirp_is_low(kind)
                               ? pow(10.0, (double)noise_dbfs / 10.0)
                               : noise->wide_ms;
-  const gw_cal_sweep_opts_t *opts = &s_sweep_req.opts;
   /* Per driver: each driver plays every repeat (the speaker alternates). */
-  const int sweeps = (per_way ? 2 : 1) * (int)opts->repeats;
+  const int sweeps = (all ? 3 : per_way ? 2 : 1) * (int)opts->repeats;
   xSemaphoreTake(s_lock, portMAX_DELAY);
   s_status.steps = 1;
   s_status.step = 1;
@@ -1207,7 +1208,7 @@ esp_err_t gw_calib_sweep_start(const uint8_t mac[6], bool raw, bool per_way,
   const esp_err_t lv = level_allowed(mac, opts->level_db10);
   if (lv != ESP_OK) return lv;
   const bool ways = per_way && channel != CAL_AAC_SPEAKER_LFE;
-  const int sweeps = (ways ? 2 : 1) * (int)opts->repeats;
+  const int sweeps = (ways ? (opts->all_ways ? 3 : 2) : 1) * (int)opts->repeats;
   cal_sweep_def_t def;
   uint32_t play_ms = 0;
   if (sweeps > SURROUND_CAL_BURSTS_MAX || !sweep_plan(opts, sweeps, &def, &play_ms))

@@ -315,6 +315,10 @@ typedef struct __attribute__((packed)) {
 #define SURROUND_CAL_BURSTS_MAX 6
 #define SURROUND_CAL_RAW        0x01U
 #define SURROUND_CAL_PER_WAY    0x02U
+/* With PER_WAY on a bi-amp speaker (version 14, Room EQ): after the tweeter
+ * and the woofer also both drivers together, in the same playback; repeats
+ * take turns (tweeter, woofer, both, tweeter, ...). */
+#define SURROUND_CAL_ALL_WAYS   0x04U
 
 typedef struct __attribute__((packed)) {
   uint8_t seq;      /* echoed in CAL_RESULT */
