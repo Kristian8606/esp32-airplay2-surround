@@ -142,16 +142,15 @@ table.ftab input{width:16px;height:16px;accent-color:#8b7bff}
 <div class='steps' id='steps' role='tablist' aria-label='Room EQ steps'>
  <button type='button' data-s='1' class='on'><b>1</b>Speaker</button><button type='button' data-s='2'><b>2</b>Settings</button><button type='button' data-s='3'><b>3</b>Measurement</button><button type='button' data-s='4'><b>4</b>EQ</button><button type='button' data-s='5'><b>5</b>Alignment</button><button type='button' data-s='6'><b>6</b>Check</button>
 </div>
-<div class='pane' id='pane1'><div class='side'>
- <div class='panel'><div class='ptitle'>Click a speaker</div>
-  <div class='room' id='eqroom'><div class='floor'></div><div class='ring'></div><div class='screen'></div><div class='seat'>you</div></div>
-  <div class='mixrow' id='eqmix'></div></div>
- <div class='panel spkcard'><div class='ptitle'>Speaker</div><h2 id='sc-name'>&mdash;</h2><div class='meta' id='sc-meta'>Click one on the map.</div>
+<div class='pane' id='pane1'>
+ <div class='panel spkcard'><div class='ptitle'>Speaker</div>
+  <div class='fg' style='max-width:420px;margin-top:0'><label for='sc-spk'>Speaker</label><select id='sc-spk'><option>Loading&hellip;</option></select></div>
+  <h2 id='sc-name' style='margin-top:14px'>&mdash;</h2><div class='meta' id='sc-meta'>Choose one above.</div>
   <div class='fg' id='sc-what-l'><label>What to measure</label><div class='pick' id='sc-what'><button type='button' data-w='ways' class='on'>Each driver</button><button type='button' data-w='both'>Both together</button><button type='button' data-w='all'>All three</button></div></div>
   <div class='fg'><label>Microphone position</label><div class='pick' id='sc-pos'><button type='button' data-p='1' class='on'>1 &middot; main seat</button><button type='button' data-p='2'>2</button><button type='button' data-p='3'>3</button><button type='button' data-p='4'>4</button><button type='button' data-p='5'>5</button></div></div>
   <div class='actions'><button class='btn' type='button' id='sc-next'>Next: settings</button></div>
   <p class='help'>Measure each speaker from two or three positions 40&ndash;60 cm apart around your seat; Room EQ averages them. A bi-amp speaker is measured driver by driver, both drivers together, or all three in a row.</p></div>
-</div></div>
+</div>
 <div class='pane' id='pane2'>
 <div class='panel' id='mpanel'>
  <div class='ptitle'>Measurement settings</div>
@@ -241,6 +240,7 @@ table.ftab input{width:16px;height:16px;accent-color:#8b7bff}
   <div class='actions'><button class='btn sec' id='a-apply'>Apply</button><button class='btn' id='a-save'>Apply &amp; Save</button><button class='btn sec' id='a-both'>Measure both together</button><span class='msg' id='a-amsg'></span></div>
  </div>
  <p class='help'>For a bi-amp speaker: the delay and polarity of its outputs that make woofer and tweeter add up in phase around the crossover. It measures each driver as the speaker plays it now (its EQ, crossover, polarity and delay on), both on one time base, then tries every delay of the earlier driver from 0 to 2 ms (0.01 ms steps) and both polarities of the tweeter, and keeps the one whose sum is flattest from half to twice the crossover frequency, in the direct sound (a window of 8 periods of the crossover frequency). The proposal is a change from the speaker's current delay and polarity. Nothing changes until you apply it. <b>Measure both together</b> then draws the measured sum over the expected one. The check after Apply &amp; Save above measures the drivers the same way, so it gives a proposal too.</p>
+</div>
 </div>
 <div class='pane' id='pane6'>
 <div class='panel' id='kpanel'>
@@ -610,11 +610,6 @@ function goStep(n){markStep(n);const p=document.getElementById('pane'+n);if(p)p.
 document.querySelectorAll('#steps button').forEach(b=>b.onclick=()=>goStep(+b.dataset.s));
 document.getElementById('sc-next').onclick=()=>goStep(2);
 document.getElementById('to-eq').onclick=()=>goStep(4);
-(function(){const room=document.getElementById('eqroom');
- SPOTS.forEach(([ch,x,y])=>{const n=document.createElement('div');n.className='node';n.style.left=x+'%';n.style.top=y+'%';
-  n.innerHTML="<div class='dot'>"+SHORT[ch]+"</div><div class='who'></div>";room.appendChild(n);
-  eqNodes[ch]={el:n,who:n.querySelector('.who'),macs:[]};
-  n.onclick=()=>{const m=eqNodes[ch].macs;if(!m.length)return;const i=m.indexOf(selMac());pickSpeaker(m[(i+1)%m.length]);};});})();
 const selMac=()=>{const v=document.getElementById('spk').value;return /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i.test(v)?v:'';};
 /* Choosing a speaker sets the measurement's and the correction's speaker. */
 function pickSpeaker(mac){
@@ -625,23 +620,22 @@ function pickSpeaker(mac){
  if(biampOf[mac]===undefined){biampOf[mac]=null;speakerEq(mac,'get').then(e=>{biampOf[mac]=e.output_mode==='biamp';drawMap();}).catch(()=>{delete biampOf[mac];});}
  drawMap();render();}
 function drawMap(){
- const mac=selMac(),mix=[];for(const ch in eqNodes)eqNodes[ch].macs=[];
- speakers.forEach(s=>{if(s.channel===-1)mix.push(s);else if(eqNodes[s.channel])eqNodes[s.channel].macs.push(s.mac);});
- for(const ch in eqNodes){const n=eqNodes[ch],on=n.macs.length>0,sel=n.macs.includes(mac);
-  n.el.className='node'+(on?' on':'')+(sel?' sel':'');
-  const sm=sel?mac:n.macs[0],cnt=sm?meas.filter(m=>m.mac===sm).length:0;
-  n.who.innerHTML=on?esc((speakers.find(s=>s.mac===sm)||{}).name||'')+(cnt?" <span class='done'>&middot; "+cnt+"</span>":''):'';}
- document.getElementById('eqmix').innerHTML=mix.map(s=>"<button type='button' class='btn sec' data-m='"+esc(s.mac)+"'"+(s.mac===mac?" style='border-color:var(--accent)'":'')+">Mono mix: "+esc(s.name)+"</button>").join('');
- document.querySelectorAll('#eqmix button').forEach(b=>b.onclick=()=>pickSpeaker(b.dataset.m));
+ const mac=selMac();
+ /* The speaker menu: role and name, and how many measurements it has here. */
+ const ss=document.getElementById('sc-spk');
+ ss.innerHTML=speakers.length?speakers.slice().sort((a,b)=>a.channel-b.channel).map(s=>{const n=meas.filter(m=>m.mac===s.mac).length;
+  return "<option value='"+esc(s.mac)+"'"+(s.mac===mac?' selected':'')+">"+esc((TITLE[s.channel]||'Speaker')+' — '+s.name)+(n?' · '+n+' measured':'')+"</option>";}).join(''):"<option value=''>No speaker connected</option>";
+ if(!mac&&speakers.length)ss.insertAdjacentHTML('afterbegin',"<option value='' selected>Choose a speaker</option>");
  const s=speakers.find(x=>x.mac===mac),bi=!!(s&&biampOf[mac]),sub=s&&s.channel===3;
  document.getElementById('sc-name').textContent=s?(TITLE[s.channel]||'Speaker'):'—';
- document.getElementById('sc-meta').textContent=s?s.name+' · '+s.ip+(bi?' · bi-amp':sub?' · subwoofer':'')+' · '+meas.filter(m=>m.mac===mac).length+' measurements in this browser':'Click one on the map.';
+ document.getElementById('sc-meta').textContent=s?s.name+' · '+s.ip+(bi?' · bi-amp':sub?' · subwoofer':'')+' · '+meas.filter(m=>m.mac===mac).length+' measurements in this browser':'Choose one above.';
  document.getElementById('sc-what-l').style.display=bi?'':'none';
  document.getElementById('a-for').textContent=s?(bi?'For '+(TITLE[s.channel]||s.name)+' · '+s.name+': each driver and both together, as it plays now.':(TITLE[s.channel]||s.name)+' is not bi-amp: nothing to align.'):'';
  document.getElementById('a-go').style.display=bi?'':'none';
  document.getElementById('c-mode-l').style.display=bi?'':'none';
  document.getElementById('m-for').textContent=s?'For '+(TITLE[s.channel]||s.name)+' · '+s.name+(bi?' · '+({ways:'each driver',both:'both drivers together',all:'each driver, then both together'})[what]:'')+' · position '+document.getElementById('pos').value:'';
 }
+document.getElementById('sc-spk').onchange=e=>{if(e.target.value)pickSpeaker(e.target.value);};
 document.querySelectorAll('#sc-what button').forEach(b=>b.onclick=()=>{what=b.dataset.w;document.querySelectorAll('#sc-what button').forEach(x=>x.classList.toggle('on',x===b));
  document.getElementById('perway').checked=what!=='both';drawMap();});
 document.querySelectorAll('#sc-pos button').forEach(b=>b.onclick=()=>{document.getElementById('pos').value=b.dataset.p;document.querySelectorAll('#sc-pos button').forEach(x=>x.classList.toggle('on',x===b));drawMap();});

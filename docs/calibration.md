@@ -92,56 +92,117 @@ distances, delays and levels ready to apply.* Without a microphone signal:
 ## Room EQ
 
 **Room EQ** (`/roomeq` on the Gateway, the button on the speakers page)
-uses the same microphone to measure one speaker's **frequency response**
-and correct it with the speaker's EQ:
+uses the same microphone to measure each speaker's **frequency response**
+and correct it with the speaker's EQ. It works as
+[REW](https://www.roomeqwizard.com) does: the same measurement, the same
+smoothing, the same kind of target and filters.
 
-- The speaker plays a 2.5 s sweep (30 Hz–21 kHz, the subwoofer
-  15–400 Hz), at −30 dBFS first and louder until it is clear of the room
-  noise. Several microphone positions are averaged.
-- The browser computes the response: below 500 Hz the room as you hear it
-  at the seat, above it mostly the speaker's own sound.
-- It fits **peaking filters** to a target line, the way REW's EQ does:
-  - **Target level** places the line (dB on the chart's scale, at 1 kHz).
-    By default it is the speaker's own level between 200 Hz and 2 kHz,
-    smoothed over one octave; type another value to move it. It is kept
-    for each speaker in the browser.
-  - Everything **above** the line is cut down to it.
-  - **Below** it, a dip no deeper than **Individual max boost** is raised
-    towards the line, and a deeper one is left as it is. **Overall max
-    boost** limits all filters together (+3 dB by default): with
-    a high individual and a low overall limit, deeper dips are raised
-    partly. A narrow dip is never raised.
-  - **Flatness target** (±1 to ±6 dB) sets how close it goes; a wider
-    one gives fewer, broader filters.
-  - **Match range** limits where filters may go; inside it, it corrects
-    from where the curve first reaches the line to where it last does, so a
-    speaker's own roll-off is never boosted; at most up to the
-    microphone's limit (16 kHz for the INMP441), a subwoofer up to 300 Hz.
-  - **Allow low shelf** / **Allow high shelf** (off by default) add a shelf
-    at that end of the range when the curve stays above or below the line
-    for at least half an octave there, as REW does.
-  - How narrow a filter may be is set as in REW: **Allow narrow filters
-    below 200 Hz** allows Q up to 10 there, Q 5 above; **Vary max Q above
-    200 Hz** lets it fall from 10 at 200 Hz to 3 at 10 kHz instead. Without
-    narrow filters Q is 5 at most. It may use all 24 bands of an output,
-    but for the high- and low-pass bands it keeps (a bi-amp crossover is
-    apart from them). Above 500 Hz it works on the speaker's own sound (a
-    frequency-dependent window), not on the room's reflections there.
-  - With a **bi-amp** speaker each driver (woofer, tweeter) gets its own
-    filters through its crossover, and the tweeter's level is matched to
-    the woofer's, raised by at most the overall max boost.
-- The chart shows the measurement, the target and the expected result.
-  **Apply** sends the filters to the speaker now, **Apply & Save** also
-  keeps them after a restart. They replace the EQ bands and levels of its
-  outputs; the high- and low-pass bands, crossover, polarity and delay
-  stay as they are.
-- After **Apply & Save** it offers a check: the speaker is measured again
-  with its new EQ, at the same microphone position, and that curve is drawn
-  over the one before, without calculating anything again. A bi-amp
-  speaker is checked driver by driver and then with both together, which
-  shows a dip or a peak at the crossover. Afterwards run
-  **Calibrate** on the speakers page, as the correction changes the
-  speaker's level.
+It is one page that scrolls down through six steps; the bar of steps stays
+at the top to jump between them.
+
+### 1. Speaker
+
+Choose the speaker in the menu (each shows its role, name and how many
+measurements this browser keeps of it). Below it: whether it is bi-amp or a
+subwoofer. Choose the **microphone
+position** (1 is the main seat; measure two or three positions 40–60 cm
+apart, they are averaged). A **bi-amp** speaker can be measured:
+
+- **Each driver**: the tweeter, then the woofer, the other output silent;
+- **Both together**: as it plays, through its crossover;
+- **All three**: each driver and both together, in one run.
+
+### 2. Settings
+
+The settings of REW's measurement dialog:
+
+| Setting | |
+|---|---|
+| **Start / End (Hz)** | the range to measure; the sweep runs from half the start to twice the end, as REW's (10 Hz – 21 kHz at most). A subwoofer starts at 15–300 Hz. |
+| **Length** | 128k (2.7 s), **256k** (5.5 s, REW's default) or 512k (10.9 s) samples. Each doubling gives almost 3 dB less noise. |
+| **Level (dBFS RMS)** | the sweep's RMS level, as REW states it (its peak is 3 dB higher); −18 dBFS by default. |
+| **Repetitions** | 1, 2 or 4 sweeps, averaged as REW does (almost 3 dB less noise per doubling; one longer sweep is better than more of them). |
+| **Speaker's limit** | the loudest this speaker may play, kept on the Gateway (−12 dBFS RMS until set). Neither a sweep nor the noise of Check levels is ever louder. |
+
+**Check levels** first plays 3 s of pink noise at the level set, as REW
+does. It shows the microphone's RMS level against REW's range (−30 to
+−12 dBFS), the headroom to full scale (red under 6 dB), how far it is above
+the room noise and, with an INMP441, an approximate SPL (REW aims at about
+75 dB SPL at the seat). A measurement that clips stops with an error.
+
+**Export for REW** saves the last measurement's impulse responses as WAV
+files; REW opens them with **File → Import → Import impulse response**, to
+compare its own analysis with this one.
+
+### 3. Measurement
+
+The graph as REW draws it: a log frequency scale with every line and
+labels where they fit, dB on the left. Move over it for the frequency and
+every curve's value; drag across it to zoom in, double-click (or tap twice)
+for the whole range. **Smoothing** as REW's: **Var** by default (1/48 octave
+below 100 Hz, 1/6 at 1 kHz, 1/3 above 10 kHz), Psy, ERB, 1/1 to 1/48
+octave or none. **Window**: the room (500 ms, as REW) or the direct sound
+(FDW). The tick boxes beside it choose what is shown and what the
+correction uses. Measurements with the speaker's EQ on are dashed. The
+measurements are kept in this browser only.
+
+### 4. EQ
+
+The correction is calculated as REW's EQ does, on the room's response
+(500 ms) with Var smoothing; **Direct sound above 500 Hz** uses the
+speaker's own sound up there instead.
+
+- **Target type**, as REW's: **Full range** (an LF cutoff and slope; 0 for
+  flat), **Bass limited** (the bass management high-pass, 80 Hz at
+  12 dB/octave) or **Subwoofer** (20 Hz at 24 dB/octave, chosen by itself
+  for the subwoofer), with REW's room curve on top (**HF fall**, **LF
+  rise**). A bi-amp driver's target goes through its own crossover.
+- **Target level**: by default the speaker's own level, as REW sets it;
+  drag the dashed target line up or down on the graph, or type a level.
+- **Filters**, as REW's filter tasks: individual and overall max boost,
+  flatness target, narrow filters below 200 Hz, vary max Q above 200 Hz,
+  low and high shelf, match range. Filters go where the curve is furthest
+  from the target first, then their gain, Q and frequency are optimised;
+  one under half the flatness target is dropped.
+- The filters are a table as REW shows them (#, type, Fc, gain, Q). A
+  ticked **Lock** keeps a filter as it is when you calculate again; the
+  others fit around it. Each driver shows its expected deviation from the
+  target.
+- A bi-amp speaker is corrected **driver by driver** or as a **whole
+  speaker** (the measurement of both together; the same filters on both
+  outputs, ahead of the crossover).
+- **Apply** sends the filters now, **Apply & Save** also keeps them after a
+  restart. They replace the EQ bands and levels of the outputs; the high-
+  and low-pass bands, crossover, polarity and delay stay.
+
+### 5. Alignment (bi-amp)
+
+**Measure for alignment** measures the woofer, the tweeter and both
+together in one run, as the speaker plays now. Both drivers are placed on
+one time base, each sweep from the time the speaker played it to a
+fraction of a sample (it repeats within about ±5 µs from one microphone
+position). The page tries every delay of the earlier driver from 0 to 2 ms
+(0.01 ms steps) and both polarities of the tweeter, and keeps the sum
+closest to both drivers in phase from half to twice the crossover
+frequency. It shows both drivers, the sum now, the sum with the proposal and
+the sum measured together, how much the sum loses at the crossover (for
+example 19.9 dB → 0.1 dB), and the new delay and polarity of each output.
+When the best polarity is not the usual one for the slope (LR2 inverted,
+LR4 and LR8 not), a driver is probably wired the other way round. Nothing
+changes until **Apply** or **Apply & Save**, which set only the delays and
+the polarity.
+
+### 6. Check
+
+After **Apply & Save** the speaker is measured again with its new EQ, at
+the same position and settings (a bi-amp speaker in one run, each driver
+and both together), or later with **Measure the check**. The graph draws the
+curve before, the target, the expected curve and the measured one. For each
+driver: how far the measurement is from the target, and how far from what
+was expected. More than 1 dB from the expected curve gives a warning: the
+microphone moved, the room was noisier, or a setting changed. Afterwards
+run **Calibrate** on the speakers page, as the correction changes the
+speaker's level.
 
 <a href="../images/roomeq-page.png"><img src="../images/roomeq-page.png" alt="Room EQ page: measured response of a 2-way speaker, its target and the expected result, with the filters for the woofer and the tweeter" width="100%"></a>
 

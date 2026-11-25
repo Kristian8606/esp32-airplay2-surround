@@ -39,9 +39,11 @@ system.
 - 🎤 **Room calibration** with an optional INMP441 microphone on the
   Gateway (or the ESP32-P4 board's own microphone): distance, delay and
   level of every speaker measured from your seat, applied with one click.
-- 📈 **Room EQ** with the same microphone: each speaker's frequency
-  response measured from your seat and corrected with its own EQ, with
-  settings like REW's.
+- 📈 **Room EQ** with the same microphone, as REW works: REW's sweep,
+  level and Check levels, REW's graph and smoothing, its target types and
+  filters, each speaker corrected from your seat. A bi-amp speaker gets its
+  woofer and tweeter aligned (delay and polarity), and every correction is
+  checked by measuring it again.
 - 📻 **Web radio** on the Gateway: stations of your country, a search, your
   favourites or any stream address (MP3 or AAC over HTTP / HTTPS), played on
   all speakers like an AirPlay stream. AirPlay always takes over.
@@ -107,7 +109,7 @@ system.
 | [Assembly and wiring](docs/hardware.md) | the speaker's I2S amplifier or DAC, GPIOs, optional extras |
 | [Installation](docs/install.md) | ESP-IDF, the code, configuration, 16 MB flash, boards, building, flashing and updates |
 | [Settings](docs/web-pages.md) | every web page of the Gateway and of the speakers |
-| [Room calibration and Room EQ](docs/calibration.md) | measuring the speakers from your seat; measuring sync with an oscilloscope |
+| [Room calibration and Room EQ](docs/calibration.md) | measuring the speakers from your seat; Room EQ step by step; measuring sync with an oscilloscope |
 | [USB player](docs/usb-player.md) | music from a USB drive (experimental) |
 | [Technical details](docs/technical.md) | formats, channels, signal path, synchronisation, relaying, memory, the code |
 | [Limitations and troubleshooting](docs/troubleshooting.md) | what is not done or not tested, problems and log lines |
