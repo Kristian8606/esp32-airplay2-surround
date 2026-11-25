@@ -59,8 +59,14 @@ select.shelf{width:auto;padding:5px 8px;font-size:12px;border-radius:8px;margin-
 .help b{color:var(--text);font-weight:500}
 .sel{display:flex;gap:8px;flex-wrap:wrap}
 .sel select{width:auto;padding:6px 10px;font-size:12px;border-radius:999px}
-svg.graph{width:100%;height:auto;display:block;background:var(--panel2);border-radius:12px}
+svg.graph{width:100%;height:auto;display:block;background:var(--panel2);border-radius:12px;touch-action:pan-y;user-select:none;-webkit-user-select:none}
 svg.graph text{font-size:11px;fill:var(--muted);font-family:inherit}
+svg.graph .cur text{fill:var(--text);font-size:12px}
+svg.graph .cur .box{fill:var(--panel);stroke:var(--line2)}
+.gwrap{display:grid;grid-template-columns:minmax(0,3fr) minmax(240px,1fr);gap:14px;align-items:start}
+.gwrap .legend{margin-top:0;max-height:440px;overflow:auto}
+@media(max-width:900px){.gwrap{grid-template-columns:1fr}.gwrap .legend{max-height:none}}
+.ghint{font-size:11px;color:var(--muted);margin-top:6px}
 .legend{margin-top:12px;display:flex;flex-direction:column;gap:2px}
 .li{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:10px;font-size:13px}
 .li:hover{background:var(--panel2)}
@@ -120,11 +126,14 @@ svg.graph text{font-size:11px;fill:var(--muted);font-family:inherit}
 <div class='panel'>
  <div class='prow'><div class='ptitle'>Response</div>
   <div class='sel'>
-   <select id='smooth' title='Smoothing'><option value='3'>1/3 octave</option><option value='6' selected>1/6 octave</option><option value='12'>1/12 octave</option><option value='24'>1/24 octave</option><option value='48'>1/48 octave</option></select>
+   <select id='smooth' title='Smoothing (as REW)'><option value='var' selected>Var smoothing</option><option value='psy'>Psy smoothing</option><option value='erb'>ERB smoothing</option><option value='1'>1/1 octave</option><option value='2'>1/2 octave</option><option value='3'>1/3 octave</option><option value='6'>1/6 octave</option><option value='12'>1/12 octave</option><option value='24'>1/24 octave</option><option value='48'>1/48 octave</option><option value='none'>No smoothing</option></select>
+   <select id='gwin' title='Window'><option value='0' selected>Room · 500 ms</option><option value='4'>Direct sound · FDW</option></select>
+   <select id='gspan' title='Vertical range'><option value='30'>30 dB</option><option value='50' selected>50 dB</option><option value='70'>70 dB</option><option value='90'>90 dB</option></select>
   </div>
  </div>
- <svg class='graph' id='graph' viewBox='0 0 1000 440' preserveAspectRatio='xMidYMid meet'></svg>
- <div class='legend' id='legend'></div>
+ <div class='gwrap'><div><svg class='graph' id='graph' viewBox='0 0 1000 440' preserveAspectRatio='xMidYMid meet'></svg>
+ <div class='ghint'>Move over the graph for the values at a frequency; drag across it to zoom in, double-click (or tap twice) for the whole range.</div></div>
+ <div class='legend' id='legend'></div></div>
  <div class='actions'><button class='btn sec' id='clear'>Delete all</button></div>
  <p class='help'>The levels are relative to the level played, so speakers, drivers and positions compare directly. The tick boxes choose what the graph shows, and the correction below uses the ones shown. The graph shows what reaches the seat in the 500 ms after the direct sound: the speaker with the room. Measurements with the speaker's EQ on are drawn dashed. The INMP441 is not calibrated and is specified from 60 Hz to 15 kHz, so with it the curves end at 16 kHz. The measurements are kept in this browser only.</p>
 </div>
@@ -309,23 +318,104 @@ function smoothed(m,win,oct){
  for(let g=0;g<GCOUNT;g++){let s=0,c=0;for(let j=Math.max(0,g-k);j<=Math.min(GCOUNT-1,g+k);j++){s+=Math.pow(10,src[j]/10);c++;}out[g]=10*Math.log10(s/c);}
  return out;
 }
-function drawGraph(){
- const svg=document.getElementById('graph'),win=0,oct=+document.getElementById('smooth').value;
- const shown=meas.filter(m=>m.on),curves=shown.map(m=>{const w=win===4&&!m.mags[4]?0:win,lo=Math.max(m.lo,w===4?0:1.5/WINDOWS[w]),v=smoothed(m,w,oct),pts=[];
-  for(let g=0;g<GCOUNT;g++){const f=gridF(g);if(f>=lo&&f<=m.hi)pts.push([f,v[g]]);}return {m,pts};});
- let top=-1e9;curves.forEach(c=>c.pts.forEach(p=>{if(p[1]>top)top=p[1];}));
- top=top>-1e8?Math.ceil((top+3)/10)*10:0;const span=60,bot=top-span;
- const fy=d=>Y0+(Y1-Y0)*(top-Math.max(bot,Math.min(top,d)))/span;
- let h='';
- [20,30,40,50,60,70,80,90,100,200,300,400,500,600,700,800,900,1000,2000,3000,4000,5000,6000,7000,8000,9000,10000,20000].forEach(f=>{
-  const major=[20,50,100,200,500,1000,2000,5000,10000,20000].includes(f);
-  h+="<line x1='"+fx(f)+"' x2='"+fx(f)+"' y1='"+Y0+"' y2='"+Y1+"' stroke='rgba(255,255,255,"+(major?.1:.04)+")'/>";
-  if(major)h+="<text x='"+fx(f)+"' y='"+(Y1+20)+"' text-anchor='middle'>"+(f>=1000?f/1000+'k':f)+"</text>";});
- for(let d=top;d>=bot;d-=10){h+="<line x1='"+X0+"' x2='"+X1+"' y1='"+fy(d)+"' y2='"+fy(d)+"' stroke='rgba(255,255,255,.07)'/><text x='"+(X0-8)+"' y='"+(fy(d)+4)+"' text-anchor='end'>"+d+"</text>";}
- if(!curves.length)h+="<text x='520' y='215' text-anchor='middle'>No measurement shown</text>";
- curves.forEach(c=>{if(c.pts.length<2)return;h+="<polyline fill='none' stroke='"+c.m.color+"' stroke-width='1.4'"+(c.m.raw?'':" stroke-dasharray='7 4'")+" stroke-linejoin='round' points='"+c.pts.map(p=>fx(p[0]).toFixed(1)+','+fy(p[1]).toFixed(1)).join(' ')+"'/>";});
- h+="<text x='"+X0+"' y='"+(Y0+12)+"' dx='6'>dB</text>";
+/* ==== Smoothing as REW's (its Graph menu) ====
+ * On the 1/48-octave grid (each point is already the mean power of its
+ * 1/48 octave): a Gaussian in log frequency whose width (its equivalent
+ * rectangle) is the octave fraction, power averaged; Psy averages the
+ * cubed magnitude (REW: "applies more weighting to peaks").
+ *   1/N:  1/N octave everywhere
+ *   Var:  1/48 octave below 100 Hz, 1/6 at 1 kHz, 1/3 above 10 kHz
+ *   Psy:  1/3 octave below 100 Hz, 1/6 above 1 kHz
+ *   ERB:  the ear's bandwidth, 107.77 f(kHz) + 24.673 Hz */
+const logi=(f,f0,f1,w0,w1)=>w0*Math.pow(w1/w0,Math.log(f/f0)/Math.log(f1/f0));
+function smoothWidth(kind,f){
+ if(kind==='var')return f<=100?1/48:f<=1000?logi(f,100,1000,1/48,1/6):f<=10000?logi(f,1000,10000,1/6,1/3):1/3;
+ if(kind==='psy')return f<=100?1/3:f<=1000?logi(f,100,1000,1/3,1/6):1/6;
+ if(kind==='erb'){const bw=107.77*f/1000+24.673;return Math.log2((f+bw/2)/Math.max(f*0.05,f-bw/2));}
+ const n=+kind;return n>0?1/n:0;
+}
+function smoothDb(v,kind){
+ const n=v.length,o=new Float64Array(n);
+ if(kind==='none'){for(let g=0;g<n;g++)o[g]=v[g];return o;}
+ const p=kind==='psy'?1.5:1; /* power^1.5 = magnitude cubed */
+ const lin=new Float64Array(n);for(let g=0;g<n;g++)lin[g]=Math.pow(10,p*v[g]/10);
+ for(let g=0;g<n;g++){
+  const sig=smoothWidth(kind,gridF(g))*GN/Math.sqrt(2*Math.PI);
+  if(sig<0.35){o[g]=v[g];continue;}
+  const r=Math.ceil(3*sig);let s=0,w=0;
+  for(let j=Math.max(0,g-r);j<=Math.min(n-1,g+r);j++){const k=Math.exp(-0.5*((j-g)/sig)*((j-g)/sig));s+=k*lin[j];w+=k;}
+  o[g]=10*Math.log10(s/w+1e-30)/p;}
+ return o;
+}
+
+/* ==== The graph, as REW draws it ====
+ * Log frequency with every 1-2-..-9 line, labels where they fit, dB on the
+ * left every 5 dB. A cursor shows the frequency and every curve's value
+ * under it; dragging across zooms in, a double click (or double tap) goes
+ * back to the whole range. series: [{pts:[[f,dB]..], color, width, dash,
+ * op, name}]. */
+const RG={};
+const RG_LABELS=[20,30,40,50,60,80,100,150,200,300,400,500,600,800,1000,1500,2000,3000,4000,5000,6000,8000,10000,15000,20000];
+const fmtF=f=>f>=1000?(+(f/1000).toFixed(f>=10000?1:2))+'k':String(Math.round(f));
+function rgView(id){return RG[id]||(RG[id]={lo:20,hi:20000,series:[],span:null});}
+function rgDraw(id,series,opt){
+ const svg=document.getElementById(id);if(!svg)return;const st=rgView(id);st.series=series;st.opt=opt||{};
+ const lo=st.lo,hi=st.hi,X=f=>X0+(X1-X0)*Math.log10(f/lo)/Math.log10(hi/lo);
+ let top=-1e9;series.forEach(s=>s.pts.forEach(p=>{if(p[0]>=lo&&p[0]<=hi&&p[1]>top)top=p[1];}));
+ const span=st.opt.span||50;top=top>-1e8?Math.ceil((top+3)/5)*5:0;const bot=top-span,Y=d=>Y0+(Y1-Y0)*(top-Math.max(bot,Math.min(top,d)))/span;
+ st.X=X;st.Y=Y;st.top=top;st.span=span;
+ let h="<defs><clipPath id='"+id+"-clip'><rect x='"+X0+"' y='"+Y0+"' width='"+(X1-X0)+"' height='"+(Y1-Y0)+"'/></clipPath></defs>";
+ h+="<rect x='"+X0+"' y='"+Y0+"' width='"+(X1-X0)+"' height='"+(Y1-Y0)+"' fill='none' stroke='rgba(255,255,255,.18)'/>";
+ for(let dec=1;dec<=10000;dec*=10)for(let m=1;m<=9;m++){const f=m*dec;if(f<=lo||f>=hi)continue;
+  h+="<line x1='"+X(f)+"' x2='"+X(f)+"' y1='"+Y0+"' y2='"+Y1+"' stroke='rgba(255,255,255,"+(m===1?.16:.06)+")'/>";}
+ let last=-1e9;const labels=(Math.log10(hi/lo)<1.2?Array.from({length:40},(_,i)=>i).flatMap(i=>{const d=Math.pow(10,Math.floor(i/9)+1),m=i%9+1;return [m*d];}):RG_LABELS).filter(f=>f>=lo&&f<=hi).sort((a,b)=>a-b);
+ labels.forEach(f=>{const x=X(f);if(x-last<34)return;last=x;h+="<text x='"+x+"' y='"+(Y1+18)+"' text-anchor='middle'>"+fmtF(f)+"</text>";});
+ const step=span>60?10:5;
+ for(let d=top;d>=bot;d-=5){h+="<line x1='"+X0+"' x2='"+X1+"' y1='"+Y(d)+"' y2='"+Y(d)+"' stroke='rgba(255,255,255,"+(d%10?.05:.1)+")'/>";if(d%step===0)h+="<text x='"+(X0-8)+"' y='"+(Y(d)+4)+"' text-anchor='end'>"+d+"</text>";}
+ h+="<g clip-path='url(#"+id+"-clip)'>";
+ series.forEach(s=>{const pts=s.pts.filter(p=>p[0]>=lo/1.05&&p[0]<=hi*1.05);if(pts.length<2)return;
+  h+="<polyline fill='none' stroke='"+s.color+"' stroke-opacity='"+(s.op===undefined?1:s.op)+"' stroke-width='"+(s.width||1.4)+"'"+(s.dash?" stroke-dasharray='"+s.dash+"'":'')+" stroke-linejoin='round' points='"+pts.map(p=>X(p[0]).toFixed(1)+','+Y(p[1]).toFixed(1)).join(' ')+"'/>";});
+ h+="</g><text x='"+X0+"' y='"+(Y0+12)+"' dx='6'>dB</text><text x='"+X1+"' y='"+(Y1+34)+"' text-anchor='end'>Hz</text>";
+ if(st.opt.empty&&!series.some(s=>s.pts.length>1))h+="<text x='520' y='215' text-anchor='middle'>"+st.opt.empty+"</text>";
+ h+="<rect class='zoom' x='"+X0+"' y='"+Y0+"' width='0' height='"+(Y1-Y0)+"' fill='rgba(139,123,255,.18)' style='display:none'/><g class='cur'></g>";
  svg.innerHTML=h;
+ if(!svg.dataset.rg){svg.dataset.rg='1';rgBind(svg,id);}
+}
+/* A curve's value at f: linear in log frequency between its points. */
+function rgAt(pts,f){let a=0,b=pts.length-1;if(b<1||f<pts[0][0]||f>pts[b][0])return null;
+ while(b-a>1){const m=(a+b)>>1;if(pts[m][0]<=f)a=m;else b=m;}
+ const t=Math.log(f/pts[a][0])/Math.log(pts[b][0]/pts[a][0]||1);return pts[a][1]+(pts[b][1]-pts[a][1])*(isFinite(t)?t:0);}
+function rgBind(svg,id){
+ const fAt=ev=>{const st=RG[id],r=svg.getBoundingClientRect(),x=(ev.clientX-r.left)*1000/r.width;
+  return {x,f:st.lo*Math.pow(st.hi/st.lo,Math.max(0,Math.min(1,(x-X0)/(X1-X0))))};};
+ let drag=null,lastTap=0;
+ const cursor=ev=>{const st=RG[id],g=svg.querySelector('.cur');if(!g)return;const {x,f}=fAt(ev);
+  if(x<X0||x>X1){g.innerHTML='';return;}
+  const vals=st.series.filter(s=>s.name&&s.pts.length>1).map(s=>({s,v:rgAt(s.pts,f)})).filter(o=>o.v!==null).slice(0,8);
+  let t="<line x1='"+x+"' x2='"+x+"' y1='"+Y0+"' y2='"+Y1+"' stroke='rgba(255,255,255,.45)' stroke-dasharray='3 3'/>";
+  vals.forEach(o=>{t+="<circle cx='"+x+"' cy='"+st.Y(o.v)+"' r='3' fill='"+o.s.color+"'/>";});
+  const w=210,hh=20+16*vals.length,bx=x+12+w>X1?x-12-w:x+12,by=Y0+8;
+  t+="<rect class='box' x='"+bx+"' y='"+by+"' width='"+w+"' height='"+hh+"' rx='6'/><text x='"+(bx+10)+"' y='"+(by+15)+"'>"+fmtF(f)+" Hz</text>";
+  vals.forEach((o,i)=>{t+="<text x='"+(bx+10)+"' y='"+(by+31+16*i)+"' style='fill:"+o.s.color+"'>"+o.v.toFixed(1)+" dB  "+esc(o.s.name).slice(0,24)+"</text>";});
+  g.innerHTML=t;};
+ svg.addEventListener('pointermove',ev=>{cursor(ev);if(drag){const {x}=fAt(ev),z=svg.querySelector('.zoom');const a=Math.max(X0,Math.min(drag.x,x)),b=Math.min(X1,Math.max(drag.x,x));z.setAttribute('x',a);z.setAttribute('width',b-a);z.style.display='';}});
+ svg.addEventListener('pointerleave',()=>{const g=svg.querySelector('.cur');if(g)g.innerHTML='';});
+ svg.addEventListener('pointerdown',ev=>{const p=fAt(ev);if(p.x<X0||p.x>X1)return;
+  const now=Date.now();if(ev.pointerType!=='mouse'&&now-lastTap<350){rgReset(id);lastTap=0;return;}lastTap=now;
+  drag=p;try{svg.setPointerCapture(ev.pointerId);}catch(e){}});
+ svg.addEventListener('pointerup',ev=>{if(!drag)return;const p=fAt(ev),a=Math.min(drag.f,p.f),b=Math.max(drag.f,p.f);drag=null;
+  const z=svg.querySelector('.zoom');if(z)z.style.display='none';
+  if(b/a>1.25){const st=RG[id];st.lo=Math.max(10,a);st.hi=Math.min(24000,b);rgDraw(id,st.series,st.opt);}});
+ svg.addEventListener('dblclick',()=>rgReset(id));
+}
+function rgReset(id){const st=RG[id];if(!st)return;st.lo=20;st.hi=20000;rgDraw(id,st.series,st.opt);}
+
+function drawGraph(){
+ const kind=document.getElementById('smooth').value,win=+document.getElementById('gwin').value,span=+document.getElementById('gspan').value;
+ const series=meas.filter(m=>m.on).map(m=>{const w=win===4&&!m.mags[4]?0:win,lo=Math.max(m.lo,w===4?0:1.5/WINDOWS[w]),v=smoothDb(m.mags[w],kind),pts=[];
+  for(let g=0;g<GCOUNT;g++){const f=gridF(g);if(f>=lo&&f<=m.hi)pts.push([f,v[g]]);}
+  return {pts,color:m.color,width:1.5,dash:m.raw?'':'7 4',name:(TITLE[m.channel]||m.name)+' · '+m.way+' · p'+m.pos};});
+ rgDraw('graph',series,{span,empty:'No measurement shown'});
 }
 function wayText(m){
  if(m.way==='tweeter')return 'tweeter ('+m.outputs+' output)';
@@ -431,7 +521,8 @@ document.getElementById('exp').onclick=()=>{if(!lastIR)return;
   for(let i=0;i<n;i++)v.setFloat32(44+i*4,w.ir[from+i]*g,true);
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([buf],{type:'audio/wav'}));
   a.download=(TITLE[lastIR.channel]||lastIR.name).replace(/\s+/g,'-')+'-'+w.way+'.wav';document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1000);});};
-document.getElementById('smooth').onchange=drawGraph;
+['smooth','gwin','gspan'].forEach(id=>{const e=document.getElementById(id);try{const v=localStorage.getItem('roomeq.'+id);if(v&&[...e.options].some(o=>o.value===v))e.value=v;}catch(x){}
+ e.onchange=()=>{try{localStorage.setItem('roomeq.'+id,e.value);}catch(x){}drawGraph();};});
 document.getElementById('clear').onclick=()=>{if(meas.length&&confirm('Delete all measurements kept in this browser?')){meas=[];save();render();}};
 /* ==== Correction ====
  * Per driver: the measurements of one speaker averaged (power), smoothed
@@ -757,15 +848,7 @@ function showCorrection(){
    (w.filters.length?w.filters.map(f=>"<span class='chip "+(f.g<0?'cut':'boost')+"'>"+(f.t?(f.t==='LS'?'low shelf ':'high shelf '):'')+(f.f>=1000?(f.f/1000).toFixed(2)+' kHz':f.f.toFixed(0)+' Hz')+" &middot; "+(f.g>0?'+':'')+f.g.toFixed(1)+" dB"+(f.t?'':" &middot; Q "+f.q.toFixed(2))+"</span>").join(''):"<span class='chip'>no filters needed</span>")+
    w.keep.map(f=>"<span class='chip keep'>keeps "+f.type+' '+Math.round(f.frequency_hz)+" Hz</span>").join('')+"</div></div>";}).join('');
 }
-function drawSeries(id,series){
- const svg=document.getElementById(id);let top=-1e9;series.forEach(s=>s.pts.forEach(p=>{if(p[1]>top)top=p[1];}));
- top=top>-1e8?Math.ceil((top+3)/10)*10:0;const span=40,bot=top-span,fy=d=>Y0+(Y1-Y0)*(top-Math.max(bot,Math.min(top,d)))/span;
- let h='';
- [20,50,100,200,500,1000,2000,5000,10000,20000].forEach(f=>{h+="<line x1='"+fx(f)+"' x2='"+fx(f)+"' y1='"+Y0+"' y2='"+Y1+"' stroke='rgba(255,255,255,.1)'/><text x='"+fx(f)+"' y='"+(Y1+20)+"' text-anchor='middle'>"+(f>=1000?f/1000+'k':f)+"</text>";});
- for(let d=top;d>=bot;d-=5){h+="<line x1='"+X0+"' x2='"+X1+"' y1='"+fy(d)+"' y2='"+fy(d)+"' stroke='rgba(255,255,255,"+(d%10?.03:.07)+")'/>"+(d%10?'':"<text x='"+(X0-8)+"' y='"+(fy(d)+4)+"' text-anchor='end'>"+d+"</text>");}
- series.forEach(s=>{if(s.pts.length<2)return;h+="<polyline fill='none' stroke='"+s.color+"' stroke-opacity='"+s.op+"' stroke-width='"+s.width+"'"+(s.dash?" stroke-dasharray='"+s.dash+"'":'')+" stroke-linejoin='round' points='"+s.pts.map(p=>fx(p[0]).toFixed(1)+','+fy(p[1]).toFixed(1)).join(' ')+"'/>";});
- h+="<text x='"+X0+"' y='"+(Y0+12)+"' dx='6'>dB</text>";svg.innerHTML=h;
-}
+function drawSeries(id,series){rgDraw(id,series,{span:40});}
 async function applyCorrection(action){
  const c=cur,m=document.getElementById('c-amsg');if(!c)return;
  if(action==='both'&&!confirm('Save this correction on the speaker? It replaces the EQ bands and levels of its outputs (their high- and low-pass bands stay).'))return;
