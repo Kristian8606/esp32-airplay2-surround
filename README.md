@@ -44,6 +44,9 @@ system.
   filters, each speaker corrected from your seat. A bi-amp speaker gets its
   woofer and tweeter aligned (delay and polarity), and every correction is
   checked by measuring it again.
+- 📐 **Set up with REW**: REW on a Mac measures through AirPlay while only
+  the speaker or driver you click plays, and its filters go straight to
+  that speaker ([Set up with REW](docs/calibration.md#set-up-with-rew)).
 - 📻 **Web radio** on the Gateway: stations of your country, a search, your
   favourites or any stream address (MP3 or AAC over HTTP / HTTPS), played on
   all speakers like an AirPlay stream. AirPlay always takes over.
@@ -109,7 +112,7 @@ system.
 | [Assembly and wiring](docs/hardware.md) | the speaker's I2S amplifier or DAC, GPIOs, optional extras |
 | [Installation](docs/install.md) | ESP-IDF, the code, configuration, 16 MB flash, boards, building, flashing and updates |
 | [Settings](docs/web-pages.md) | every web page of the Gateway and of the speakers |
-| [Room calibration and Room EQ](docs/calibration.md) | measuring the speakers from your seat; Room EQ step by step; measuring sync with an oscilloscope |
+| [Room calibration and Room EQ](docs/calibration.md) | measuring the speakers from your seat; Room EQ step by step; set up with REW; measuring sync with an oscilloscope |
 | [USB player](docs/usb-player.md) | music from a USB drive (experimental) |
 | [Technical details](docs/technical.md) | formats, channels, signal path, synchronisation, relaying, memory, the code |
 | [Limitations and troubleshooting](docs/troubleshooting.md) | what is not done or not tested, problems and log lines |

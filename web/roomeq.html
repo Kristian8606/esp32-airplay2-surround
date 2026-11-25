@@ -10,6 +10,7 @@ a{color:var(--accent);text-decoration:none}
 /* Steps, as a window: one at a time. */
 .steps{display:flex;gap:4px;flex-wrap:wrap;padding:4px;border-radius:14px;background:var(--panel);border:1px solid var(--line);margin-bottom:14px;position:sticky;top:8px;z-index:20;box-shadow:0 8px 24px rgba(0,0,0,.45)}
 .pane{scroll-margin-top:90px}
+body .rew-bar{position:static}
 .steps button{flex:1;min-width:120px;white-space:nowrap;border:0;border-radius:10px;padding:10px 12px;font:inherit;font-size:14px;font-weight:600;color:var(--muted);background:transparent;cursor:pointer;text-align:left}
 .steps button b{display:inline-block;width:22px;height:22px;line-height:22px;text-align:center;border-radius:50%;border:1px solid var(--line2);font-size:12px;margin-right:8px}
 .steps button.on{background:var(--accent-soft,rgba(139,123,255,.14));color:var(--text)}
@@ -1271,4 +1272,4 @@ document.getElementById('c-spk').onchange=()=>{const m=document.getElementById('
 document.getElementById('c-apply').onclick=()=>applyCorrection('apply');
 document.getElementById('c-save').onclick=()=>applyCorrection('both');
 load();render();loadSpeakers();poll();setInterval(loadSpeakers,15000);
-</script></body></html>
+</script><script src='/rew.js'></script></body></html>

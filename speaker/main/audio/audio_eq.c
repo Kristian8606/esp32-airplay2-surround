@@ -84,6 +84,13 @@ typedef struct {
   uint8_t switch_phase; /* eq_switch_phase_t */
   float switch_gain;
   uint32_t hush_left;
+  /* REW mode (audio_eq_set_measure): what plays, and a change that waits
+   * for the switch's silence like a new layout. */
+  bool ov_eq_off;
+  bool ov_invert;
+  bool ov_next_eq_off;
+  bool ov_next_invert;
+  bool ov_pending;
 } audio_eq_runtime_t;
 
 static audio_eq_runtime_t s_eq;
@@ -411,10 +418,20 @@ static void install_next_unlocked(void) {
   reset_state_unlocked();
 }
 
+/* The waiting REW overlay becomes the one that plays. The filters start from
+ * silence when they are switched on or off. */
+static void install_overlay_unlocked(void) {
+  if (s_eq.ov_eq_off != s_eq.ov_next_eq_off) reset_eq_state_unlocked();
+  s_eq.ov_eq_off = s_eq.ov_next_eq_off;
+  s_eq.ov_invert = s_eq.ov_next_invert;
+  s_eq.ov_pending = false;
+}
+
 void audio_eq_reset_state(void) {
   eq_lock();
   /* A real stop: nothing is playing, so a waiting layout needs no fade. */
   if (s_eq.next_pending) install_next_unlocked();
+  if (s_eq.ov_pending) install_overlay_unlocked();
   s_eq.switch_phase = SWITCH_NONE;
   s_eq.switch_gain = 1.0f;
   reset_state_unlocked();
@@ -537,6 +554,7 @@ static bool prepare_for_rate_unlocked(int sample_rate) {
     s_eq.plan.config = s_eq.next.config;
     s_eq.next_pending = false;
   }
+  if (s_eq.ov_pending) install_overlay_unlocked();
   s_eq.switch_phase = SWITCH_NONE;
   s_eq.switch_gain = 1.0f;
 
@@ -567,6 +585,27 @@ esp_err_t audio_eq_get_active_config(audio_eq_config_t *out) {
   *out = s_eq.next_pending ? s_eq.next.config : s_eq.plan.config;
   eq_unlock();
   return ESP_OK;
+}
+
+void audio_eq_set_measure(bool eq_off, bool invert_tweeter) {
+  eq_lock();
+  const bool cur_eq_off = s_eq.ov_pending ? s_eq.ov_next_eq_off : s_eq.ov_eq_off;
+  const bool cur_invert = s_eq.ov_pending ? s_eq.ov_next_invert : s_eq.ov_invert;
+  if (cur_eq_off == eq_off && cur_invert == invert_tweeter) {
+    eq_unlock();
+    return;
+  }
+  s_eq.ov_next_eq_off = eq_off;
+  s_eq.ov_next_invert = invert_tweeter;
+  s_eq.ov_pending = true;
+  if (!s_eq.ready) {
+    install_overlay_unlocked(); /* nothing is built to play: at once */
+  } else if (s_eq.switch_phase == SWITCH_NONE || s_eq.switch_phase == SWITCH_FADE_IN) {
+    s_eq.switch_phase = SWITCH_FADE_OUT; /* at the next silence */
+  }
+  eq_unlock();
+  AP_LOGI(TAG, "REW mode: EQ %s, tweeter polarity %s", eq_off ? "off" : "as set",
+          invert_tweeter ? "flipped" : "as set");
 }
 
 int audio_eq_tweeter_output(void) {
@@ -788,7 +827,8 @@ static void process_biamp(float *pcm, size_t frames) {
   for (int ch = 0; ch < 2; ++ch) {
     const biquad_coeff_t *c = p->xover[ch];
     biquad_state_t *st = s_eq.xover_state[ch];
-    const bool invert = ((p->config.invert_mask >> ch) & 1U) != 0U;
+    bool invert = ((p->config.invert_mask >> ch) & 1U) != 0U;
+    if (s_eq.ov_invert && ch == (int)p->config.tweeter_output) invert = !invert;
     float *line = s_eq.delay_line[ch];
     const uint32_t d = p->delay_frames[ch];
     uint32_t w = s_eq.delay_pos;
@@ -840,8 +880,9 @@ static void process_switch(float *pcm, size_t frames, int sample_rate) {
     pcm[i * 2 + 1] *= g;
   }
   if ((phase == SWITCH_FADE_OUT && g == 0.0f) ||
-      (phase == SWITCH_HUSH && s_eq.next_pending)) {
+      (phase == SWITCH_HUSH && (s_eq.next_pending || s_eq.ov_pending))) {
     if (s_eq.next_pending) install_next_unlocked();
+    if (s_eq.ov_pending) install_overlay_unlocked();
     phase = SWITCH_HUSH;
     s_eq.hush_left = (uint32_t)((uint64_t)SWITCH_HUSH_MS * (uint32_t)sample_rate / 1000U);
   }
@@ -887,7 +928,7 @@ void audio_eq_process(float *pcm, size_t frames, int channels,
   const audio_eq_channel_mode_t mode =
       (audio_eq_channel_mode_t)p->config.channel_mode;
 
-  if (!p->config.enabled) {
+  if (!p->config.enabled || s_eq.ov_eq_off) {
     if (mode != AUDIO_EQ_CHANNEL_STEREO) process_source_bypass(pcm, frames, mode);
   } else if (mode != AUDIO_EQ_CHANNEL_STEREO || p->active[0] != 0U ||
              p->active[1] != 0U || p->preamp_gain[0] != 1.0f ||

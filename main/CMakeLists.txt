@@ -17,6 +17,7 @@ set(GATEWAY_SRCS
     "gw_mic.c"
     "gw_calib.c"
     "gw_radio.c"
+    "gw_rew.c"
     "gw_local_volume.c"
 )
 if(CONFIG_GATEWAY_AIRPLAY_ARTWORK)
@@ -61,6 +62,11 @@ idf_component_register(
 airplay_embed_web_pages(index logs speedtest speakers roomeq)
 target_add_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_LIST_DIR}/../web/radio.js"
     BINARY RENAME_TO "web_radio_js")
+if(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS)
+    # The REW mode (gw_rew.c) comes with protocol 14, which needs this option.
+    target_add_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_LIST_DIR}/../web/rew.js"
+        BINARY RENAME_TO "web_rew_js")
+endif()
 if(CONFIG_GATEWAY_USB_PLAYER)
     target_add_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_LIST_DIR}/../web/player.js"
         BINARY RENAME_TO "web_player_js")

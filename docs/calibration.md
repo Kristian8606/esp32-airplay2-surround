@@ -206,6 +206,125 @@ speaker's level.
 
 <a href="../images/roomeq-page.png"><img src="../images/roomeq-page.png" alt="Room EQ page: measured response of a 2-way speaker, its target and the expected result, with the filters for the woofer and the tweeter" width="100%"></a>
 
+## Set up with REW
+
+**Set up with REW** on the speakers page (next to the room map and next to
+Room EQ) lets [REW](https://www.roomeqwizard.com) on a Mac measure the
+speakers the usual way, through AirPlay to the Gateway, with your own
+measurement microphone (a UMIK-1, for example). Only the speaker or driver
+you click plays, and the filters REW makes for it go straight to that
+speaker.
+
+<a href="../images/rew-window.png"><img src="../images/rew-window.png" alt="The Set up with REW window: the room map with the Centre speaker marked, Whole / Woofer / Tweeter, EQ while measuring and Invert the tweeter; at the top the bar REW: only ESP32 AirPlay 484 plays, with Open and Exit" width="100%"></a>
+
+*The window over the speakers page: only the centre speaker (bi-amp) plays.
+The bar at the top stays while the mode is on, also with the window closed.*
+
+### What the window has
+
+| Part | What it does |
+|---|---|
+| **The bar** *REW: only … plays* | at the top of `/speakers` and `/roomeq` while the mode is on: which speaker plays, which driver, EQ off or the tweeter flipped. **Open** brings the window back, **Exit** ends the mode. |
+| **Hint** | the output to choose in REW: *AirPlay to* the Gateway's name |
+| **Room map** | the same map as on the speakers page. Click a speaker: only it plays, lit, the others grey and silent (still in the stream and in sync). Click another: the mode moves to it at once. Click the lit one again: none plays. A mono-mix speaker is a button under the map. |
+| **Whole / Woofer / Tweeter** | a bi-amp speaker only: both drivers through the crossover, or one of them, the other output silent |
+| **EQ while measuring** | on: the speaker as it plays, with its EQ bands and levels. Off: without them, for a measurement to make new filters from. The crossover, polarity and delay always stay. |
+| **Invert the tweeter** | a bi-amp speaker only: flips the tweeter while the mode is on, nothing saved. With both drivers playing it shows the dip at the crossover, which helps to find their delay with REW's RTA. |
+| **Filters from REW** | REW's filters for the marked speaker or driver (below) |
+| **Warnings** | a 5.1 or 7.1 stream (the speaker plays its own channel, not L+R), and clipping: samples above full scale, with the peak |
+| **Close / Exit REW mode** | Close only hides the window, the mode stays on; Exit ends it |
+
+### REW settings
+
+- **macOS:** make the Gateway the sound output (Control Centre → Sound, or
+  System Settings → Sound → Output), as for any AirPlay speaker. Keep the
+  Mac's volume where it is during a measurement: it scales the level after
+  the speaker's EQ.
+- **REW → Preferences → Soundcard:** the output is the Gateway (or the
+  default output, now the Gateway); the input is your measurement
+  microphone, with its calibration file in **Preferences → Cal files**.
+- **Channel:** L, R or L+R, any of them. Every speaker plays the stereo
+  source as L+R, not halved, so L+R is 6 dB louder than one channel.
+- **Level:** REW's usual sweep level is fine. If the window warns about
+  clipping, turn the level down in REW or on the Mac.
+- **Timing reference:** none needed. AirPlay delays the sound as it does
+  with any AirPlay speaker, and REW finds the sweep in its recording.
+- **EQ in REW:** **Equaliser: Generic**, peaking filters and shelves at
+  their default slope, at most 24 for an output. Then **Export filter
+  settings as text** and paste it in the window.
+
+### Steps
+
+1. In REW set the output and the microphone as above.
+2. Open **Set up with REW** and click a speaker on the room map: only it
+   plays, the others stay silent but in sync. Click another and the mode
+   moves to it; click the marked one again and none plays. A bi-amp speaker
+   gets **Whole / Woofer / Tweeter**.
+3. Turn **EQ while measuring** off to measure the speaker for new
+   filters, or leave it on to check the result. **Invert the tweeter**
+   flips it only while the mode is on, to hear or measure the dip at the
+   crossover.
+4. Make the filters in REW and import them (below).
+5. Closing the window keeps the mode on, so REW can measure with the window
+   behind it. **Exit**, on the window or on the bar at the top of
+   `/speakers` and `/roomeq`, ends it; so do 15 minutes without an action,
+   a Gateway restart, and the web radio or the USB player starting.
+   Nothing of the mode is saved: roles, EQ, polarity, loudness and LFE gain
+   come back as they were.
+
+A 5.1 or 7.1 stream plays each speaker's own channel, not L+R: play stereo
+from REW. Calibration and Room EQ do not start while the mode is on.
+
+A good order for a bi-amp speaker: the EQ of each driver (Woofer, then
+Tweeter), then their delay and polarity (Room EQ's [Alignment](#5-alignment-bi-amp)
+step, or by ear with **Invert the tweeter** and REW's RTA), then **Calibrate** on the speakers
+page for level and delay against the other speakers.
+
+### Filters from REW
+
+<a href="../images/rew-filters.png"><img src="../images/rew-filters.png" alt="Filters from REW in the window: the text box with a REW filter line, Load .txt, Whole speaker bi-amp: to both drivers, Apply and Apply and Save" width="100%"></a>
+
+*The import for the centre speaker: paste REW's text or load its file,
+choose where the filters go, check them, then Apply.*
+
+REW's filters then go to the marked speaker from the same window:
+
+- In REW's EQ window choose **Equaliser: Generic**, then **Export filter
+  settings as text**. An Equalizer APO file (`Preamp:` and `Filter:`
+  lines) works too.
+- Paste the text or load the `.txt` file. The window shows the filters as
+  REW wrote them, what the speaker will compute, and their curve, before
+  anything is applied.
+- The filters go to the marked speaker's EQ:
+  - a **bi-amp** speaker: to the driver chosen in the window. With
+    **Whole** (both drivers play through the crossover) you choose under
+    the text: **both drivers** (the same filters on both outputs, ahead of
+    the crossover, so they correct the whole speaker), the woofer or the
+    tweeter;
+  - a speaker with one full-range output pair: to both outputs.
+- **Apply** plays them now and **Apply & Save** also keeps them, as in
+  Room EQ. They replace that output's EQ bands; its high- and low-pass
+  bands, the crossover, polarity and delay stay. A `Preamp` line sets the
+  output's level (−24 to 0 dB); without one the level stays.
+- After Apply, **EQ while measuring** is switched on, so the next REW
+  measurement shows the result.
+
+Which filters work (checked with REW 5.31.3: a measurement with the
+imported filters on matches REW's prediction within 0.5 dB):
+
+| REW / Equalizer APO | On the speaker |
+|---|---|
+| `PK`, `Modal`, `PEQ` (Q or BW Oct) | peaking filter. REW's Q is converted to the speaker's: same curve. |
+| `LP`, `HP`, `LPQ`, `HPQ` | low- and high-pass, 12 dB/octave |
+| `NO`, `BP` (with Q) | notch, band-pass |
+| `LS`, `HS`, `LSC`/`HSC` at 12 dB/octave or Q 0.707, `LS 12dB`, `HS 12dB` | low and high shelf, 12 dB/octave |
+| other shelves (6 dB/octave, another Q), `AP`, `IIR` and the rest | not supported: an error on that line |
+
+An output takes 24 bands at most, the high- and low-pass bands it keeps
+included. In REW, **Generic** with peaking filters (and shelves at their
+default slope) is what fits.
+
+
 ## Measuring sync
 
 1. Enable **Surround Build Role → Sync test pulse** on the Gateway and on two

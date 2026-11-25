@@ -134,6 +134,17 @@ void audio_eq_process_raw(float *pcm, size_t frames, int channels,
  * sees silence rather than being asynchronously reset. */
 void audio_eq_reset_state(void);
 
+/* REW measuring mode (spk_link.c, ROADMAP_REW_AND_ALIGNMENT.md), on top of
+ * the configuration and never part of it: audio_eq_get_active_config()
+ * does not show it and nothing is saved.
+ *   eq_off:         no preamp and no filters, as with the EQ disabled (the
+ *                   source selection, the bi-amp crossover, polarity and
+ *                   delay stay);
+ *   invert_tweeter: the bi-amp tweeter output's polarity flipped on top of
+ *                   the configured one.
+ * A change under running audio goes through the output layout switch
+ * (5 ms fade out, 20 ms silence, 10 ms fade in). (false, false) = off. */
+void audio_eq_set_measure(bool eq_off, bool invert_tweeter);
 /* The physical output that drives the tweeter (0 = left, 1 = right), or -1
  * when the outputs are not bi-amped. Audio written to I2S past
  * audio_eq_process() (the wired latency test's bursts) must keep this

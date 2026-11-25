@@ -102,5 +102,12 @@ typedef struct {
 bool gw_speakers_fifo_low(uint32_t audio_id, uint32_t kib);
 
 /* Changes whenever any entry of gw_speakers_audio_targets() changes. */
+#if defined(SURROUND_PROTO_MEASURE)
+/* REW measuring mode (gw_rew.c): *m to every speaker now and to every one
+ * that joins later, with play = 1 only for the speaker with this MAC (NULL:
+ * none plays). m->active = 0 ends the mode on all of them. */
+void gw_speakers_set_measure(const surround_measure_t *m, const uint8_t *mac);
+#endif
+
 uint32_t gw_speakers_audio_generation(void);
 void gw_speakers_audio_targets(gw_audio_target_t out[SURROUND_MAX_SPEAKERS]);

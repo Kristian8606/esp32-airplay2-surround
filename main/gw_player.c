@@ -42,6 +42,7 @@
 #include "freertos/task.h"
 #include "gw_bench_alac_lite.h"
 #include "gw_calib.h"
+#include "gw_rew.h"
 #include "gw_local_volume.h"
 #include "gw_player_decim.h"
 #include "gw_player_m4a.h"
@@ -2987,6 +2988,7 @@ esp_err_t gw_player_play_queue(const char *const *urls, int n, int start, int vo
     if (!url_ok(urls[i])) return ESP_ERR_INVALID_ARG;
   if (!init_once()) return ESP_ERR_NO_MEM;
   if (gw_calib_running()) return ESP_ERR_INVALID_STATE;
+  gw_rew_stop_for("the USB player started");
   gw_calib_release_recording(); /* a Room EQ sweep's ~2 MiB: the player needs it */
   if (volume_db != GW_LOCAL_VOLUME_KEEP_DB) {
     const esp_err_t err = gw_local_volume_set(gw_local_volume_from_db(volume_db), true);

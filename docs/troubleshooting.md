@@ -13,9 +13,10 @@
   obstacle) still misleads its timing, and the subwoofer's level is left
   to the ear. Its delay includes its own crossover's delay and the
   microphone's low cut (about 1 ms in the simulation), so check it by ear.
-- **Not yet tested:** realtime (screen mirroring, system audio) through the
-  Gateway, the stereo routing to front pair and subwoofer, oscilloscope
-  measurements, more than five speakers, a weak Wi-Fi signal.
+- **Realtime** (screen mirroring, system audio from a Mac) through the
+  Gateway works, also in the REW measuring mode.
+- **Not yet tested:** the stereo routing to front pair and subwoofer,
+  oscilloscope measurements, more than five speakers, a weak Wi-Fi signal.
 - **Late joins:** a speaker that connects during a film waits for the next
   skip or seek; until then it stays silent.
 - **One access point.** All boards must be associated with the same access

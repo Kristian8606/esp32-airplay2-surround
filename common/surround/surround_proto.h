@@ -24,14 +24,16 @@
 
 #if defined(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS) && CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS
 /* 13: USB player lanes (surround_player_formats.h) and SET_ALAC_CONFIG. Only
- * with the experimental option, on both sides: a speaker that cannot play
+ * with the option (on by default), on both sides: a speaker that cannot play
  * the player's lanes does not join a Gateway that sends them, and gets the
  * Gateway's firmware through FW_UPDATE as for any version change.
  * 14: Room EQ's sweeps as REW's (ROADMAP_ROOM_EQ.md): CAL_PLAY carries the
  * sweep's length, range and RMS level, and pink noise for Check levels.
- * Built on 13, so with the same option. */
-#define SURROUND_PROTO_VERSION   14
+ * 15: REW measuring mode (ROADMAP_REW_AND_ALIGNMENT.md): SET_MEASURE and
+ * STATUS.measure_*. Built on 13, so with the same option. */
+#define SURROUND_PROTO_VERSION   15
 #define SURROUND_PROTO_ROOMEQ    1
+#define SURROUND_PROTO_MEASURE   1
 #else
 #define SURROUND_PROTO_VERSION   SURROUND_PROTO_VERSION_SWEEPS
 #endif
@@ -118,6 +120,8 @@ typedef enum {
   /* Gateway -> speaker: install the firmware the Gateway holds (gw_fw.c).
    * Type and layout are fixed for good (SURROUND_PROTO_FW_UPDATE). */
   SURROUND_MSG_FW_UPDATE = 0x34,
+  /* Gateway -> speaker: REW measuring mode (version 15, gw_rew.c) */
+  SURROUND_MSG_SET_MEASURE = 0x35,
 } surround_msg_type_t;
 
 /* Fixed for good, like FW_UPDATE: a Gateway reads it from speakers of any
@@ -298,7 +302,30 @@ typedef struct __attribute__((packed)) {
   uint16_t fifo_used_kib;
   uint16_t fifo_capacity_kib;
   uint16_t tsf_rms_ns10;   /* TSF fit residual, units of 10 ns */
+#if defined(SURROUND_PROTO_MEASURE)
+  /* REW mode: samples above full scale since the last STATUS (saturating)
+   * and their highest peak, tenths of a dB above full scale. */
+  uint16_t measure_clips;
+  uint16_t measure_peak_db10;
+#endif
 } surround_status_t;
+
+/* REW measuring mode (SURROUND_MSG_SET_MEASURE, version 15). Every speaker
+ * gets it, the one that plays with play = 1. A stereo source plays as L+R
+ * (not halved) on both outputs; a speaker with play = 0 is silent but stays
+ * in the stream and in sync. Nothing is saved: active = 0, a lost link or a
+ * restart bring every setting back. Loudness and the LFE limiter are off. */
+#define SURROUND_MEASURE_WAY_FULL    0U
+#define SURROUND_MEASURE_WAY_WOOFER  1U
+#define SURROUND_MEASURE_WAY_TWEETER 2U
+
+typedef struct __attribute__((packed)) {
+  uint8_t active;
+  uint8_t play;           /* this speaker plays */
+  uint8_t way;            /* SURROUND_MEASURE_WAY_*: bi-amp only */
+  uint8_t eq_on;          /* 0: no preamp and filters (the crossover stays) */
+  uint8_t invert_tweeter; /* bi-amp: tweeter polarity flipped */
+} surround_measure_t;
 
 /* Room calibration. The speaker plays CAL_CHIRP_BURSTS test chirps
  * (cal_chirp.h) through its EQ while the Gateway records its microphone, and
@@ -372,6 +399,7 @@ static_assert(sizeof(surround_cal_result_t) <= SURROUND_MAX_PAYLOAD,
               "cal result");
 static_assert(sizeof(surround_cal_play_t) <= SURROUND_MAX_PAYLOAD, "cal play");
 static_assert(sizeof(surround_status_t) <= SURROUND_MAX_PAYLOAD, "status");
+static_assert(sizeof(surround_measure_t) <= SURROUND_MAX_PAYLOAD, "measure");
 static_assert(sizeof(surround_config_t) <= SURROUND_MAX_PAYLOAD, "config");
 static_assert(sizeof(surround_time_t) <= SURROUND_MAX_PAYLOAD, "time");
 static_assert(sizeof(surround_format_t) <= SURROUND_MAX_PAYLOAD, "format");

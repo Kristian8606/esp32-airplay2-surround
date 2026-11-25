@@ -88,6 +88,21 @@ controlled from its web page.*
   </tr>
 </table>
 
+## Set up with REW
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <a href="images/rew-window.png"><img src="images/rew-window.png" alt="The Set up with REW window: the room map with the centre speaker marked, Whole / Woofer / Tweeter, EQ while measuring and Invert the tweeter" width="100%"></a>
+      <br><sub><b>Only the speaker you click plays:</b> REW on a Mac measures it through AirPlay; a bi-amp speaker also by driver</sub>
+    </td>
+    <td align="center" width="50%">
+      <a href="images/rew-filters.png"><img src="images/rew-filters.png" alt="Filters from REW: the text box, Load .txt, the target, Apply and Apply and Save" width="100%"></a>
+      <br><sub><b>REW's filters straight to the speaker:</b> paste the export or load the file, check, Apply</sub>
+    </td>
+  </tr>
+</table>
+
 ## Apple Home
 
 <table>

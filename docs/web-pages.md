@@ -39,6 +39,13 @@ Click a position to jump to its speaker. Above both: what is playing now
 (`AAC · 48 kHz · Stereo`), how many positions are taken and the colour
 switch.
 
+**Set up with REW** (on the room map and next to Room EQ) opens a window
+with the same map for measuring with REW on a Mac: click a speaker and only
+it plays, choose a bi-amp speaker's driver, switch its EQ or flip its
+tweeter while measuring, and paste REW's filters for it
+([Set up with REW](calibration.md#set-up-with-rew)). While the mode is on,
+`/speakers` and `/roomeq` show a bar, *REW: only … plays*, with **Exit**.
+
 <a href="../images/speakers-page-tiles.png"><img src="../images/speakers-page-tiles.png" alt="Speaker tiles with role, level, delay and live status" width="100%"></a>
 
 Below it, one tile per connected speaker, side by side:

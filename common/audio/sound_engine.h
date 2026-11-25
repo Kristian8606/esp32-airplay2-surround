@@ -161,8 +161,19 @@ typedef enum {
   SOUND_STEREO_ROUTE_RIGHT,
   SOUND_STEREO_ROUTE_MONO,       /* (L+R)/2 on both outputs */
   SOUND_STEREO_ROUTE_MUTE,
+  SOUND_STEREO_ROUTE_SUM,        /* L+R, not halved, on both (REW mode) */
 } sound_stereo_route_t;
 void sound_engine_set_stereo_route(sound_stereo_route_t route);
+/* Surround speaker, REW measuring mode (spk_link.c,
+ * ROADMAP_REW_AND_ALIGNMENT.md): mute_mask silences outputs after the PCM
+ * FIFO on top of sound_engine_set_output_muted() (bit 0 = left, 1 = right;
+ * a change fades over one DMA block). While active, loudness and the LFE
+ * limiter are skipped, and samples above full scale are counted instead of
+ * being limited. Runtime only, no NVS. */
+void sound_engine_set_measure(bool active, uint32_t mute_mask);
+/* Samples above full scale (both outputs) since the last call, and their
+ * highest peak (1.0 = full scale; 0 when none). */
+uint32_t sound_engine_take_measure_clips(float *peak);
 /* Surround subwoofer: crossover low-pass on everything it plays (a stereo
  * source's mix and the LFE channel alike), Linkwitz-Riley 24 dB/octave,
  * before the EQ. 0 = off, the default; spk_link.c sets it from the role.

@@ -44,6 +44,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "gw_calib.h"
+#include "gw_rew.h"
 #include "gw_local_volume.h"
 #include "esp_aac_dec.h"
 #include "esp_alac_enc.h"
@@ -1098,6 +1099,7 @@ esp_err_t gw_radio_start(const char *url, const char *name, const char *logo,
   if (strlen(url) >= sizeof(s_next_url)) return ESP_ERR_INVALID_SIZE;
   if (!init_once()) return ESP_ERR_NO_MEM;
   if (gw_calib_running()) return ESP_ERR_INVALID_STATE;
+  gw_rew_stop_for("the web radio started");
   gw_calib_release_recording(); /* a Room EQ sweep's ~2 MiB: the radio needs it */
   if (volume_db != GW_LOCAL_VOLUME_KEEP_DB) {
     const esp_err_t err = gw_local_volume_set(gw_local_volume_from_db(volume_db), true);

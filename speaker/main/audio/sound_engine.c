@@ -192,6 +192,18 @@ static bool payload_format_supported(const airplay_audio_format_t *f) {
 static volatile int32_t s_volume_target_q15 = 32768;
 /* Independent physical-output mute; survives stream changes, not reboot. */
 static uint32_t s_output_mute_mask;
+/* REW measuring mode (sound_engine_set_measure): its own output mute, on
+ * top of the one above, and the clip count of the end of the chain. */
+static uint32_t s_measure_mute_mask;
+static bool s_measure_active;
+static uint32_t s_measure_clips;
+static uint32_t s_measure_peak_bits; /* float bits of the highest peak */
+
+/* What apply_output_volume_f32() silences now. */
+static inline uint32_t output_mute_now(void) {
+  return __atomic_load_n(&s_output_mute_mask, __ATOMIC_ACQUIRE) |
+         __atomic_load_n(&s_measure_mute_mask, __ATOMIC_ACQUIRE);
+}
 
 typedef struct {
   bool anchor_valid;
@@ -2740,7 +2752,7 @@ static void apply_output_volume_f32(float *pcm, uint32_t frames,
   int32_t volume = __atomic_load_n(&s_volume_target_q15, __ATOMIC_ACQUIRE);
   if (volume < 0) volume = 0;
   if (volume > 32768) volume = 32768;
-  const uint32_t muted = sound_engine_get_output_mute_mask();
+  const uint32_t muted = output_mute_now();
   const int32_t target[2] = {
       (muted & 1U) ? 0 : volume, (muted & 2U) ? 0 : volume};
   const int32_t start[2] = {current_q15[0], current_q15[1]};
@@ -2869,9 +2881,33 @@ static void apply_stereo_route(float *block, uint32_t frames,
     const float v = route == SOUND_STEREO_ROUTE_LEFT    ? f[0]
                     : route == SOUND_STEREO_ROUTE_RIGHT ? f[1]
                     : route == SOUND_STEREO_ROUTE_MONO  ? 0.5f * (f[0] + f[1])
+                    : route == SOUND_STEREO_ROUTE_SUM   ? f[0] + f[1]
                                                         : 0.0f;
     f[0] = v;
     f[1] = v;
+  }
+}
+
+/* REW mode: samples the float -> int32 step will clip. Playout task only. */
+static void measure_count_clips(const float *block, uint32_t frames) {
+  uint32_t n = 0U;
+  float peak = 0.0f;
+  for (uint32_t i = 0; i < frames * 2U; ++i) {
+    const float a = fabsf(block[i]);
+    if (a > 1.0f) {
+      ++n;
+      if (a > peak) peak = a;
+    }
+  }
+  if (n == 0U) return;
+  __atomic_fetch_add(&s_measure_clips, n, __ATOMIC_ACQ_REL);
+  uint32_t bits;
+  memcpy(&bits, &peak, sizeof(bits));
+  /* Positive floats order like their bits. */
+  uint32_t old = __atomic_load_n(&s_measure_peak_bits, __ATOMIC_ACQUIRE);
+  while (bits > old &&
+         !__atomic_compare_exchange_n(&s_measure_peak_bits, &old, bits, false,
+                                      __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
   }
 }
 
@@ -2889,13 +2925,21 @@ static const audio_out_sample_t *output_stage(float *block, uint32_t frames,
   lfe_lowpass_apply(block, frames, sample_rate);
   audio_eq_process(block, frames, 2, sample_rate > 0 ? sample_rate : 44100);
   apply_output_volume_f32(block, frames, current_q15);
+  /* REW mode measures the speaker itself: no loudness, and a peak above
+   * full scale is counted (and clipped below), never limited. */
+  const bool measure = __atomic_load_n(&s_measure_active, __ATOMIC_ACQUIRE);
   /* Loudness follows the volume just applied (current_q15 = its target). */
-  audio_loudness_process_f32(block, frames, current_q15[0] > current_q15[1]
-                                                ? current_q15[0] : current_q15[1]);
+  if (!measure)
+    audio_loudness_process_f32(block, frames, current_q15[0] > current_q15[1]
+                                                  ? current_q15[0] : current_q15[1]);
   fade_in_apply(block, frames);
-  /* The subwoofer's LFE gain can take a 5.1/7.1 peak above full scale at a
-   * high volume: limit it here, where the level is final. */
-  lfe_limiter_apply(block, frames, sample_rate);
+  if (measure) {
+    measure_count_clips(block, frames);
+  } else {
+    /* The subwoofer's LFE gain can take a 5.1/7.1 peak above full scale at
+     * a high volume: limit it here, where the level is final. */
+    lfe_limiter_apply(block, frames, sample_rate);
+  }
   return audio_out_from_float_block_inplace(block, (size_t)frames * 2U);
 }
 
@@ -3328,7 +3372,7 @@ static void ap2_playout_task(void *arg) {
   uint32_t cursor_generation = 0;
   const int32_t initial_volume =
       __atomic_load_n(&s_volume_target_q15, __ATOMIC_ACQUIRE);
-  const uint32_t initial_mute = sound_engine_get_output_mute_mask();
+  const uint32_t initial_mute = output_mute_now();
   int32_t volume_current_q15[2] = {
       (initial_mute & 1U) ? 0 : initial_volume,
       (initial_mute & 2U) ? 0 : initial_volume};
@@ -4776,6 +4820,24 @@ esp_err_t sound_engine_set_output_muted(uint32_t channel, bool muted) {
   if (muted) __atomic_fetch_or(&s_output_mute_mask, bit, __ATOMIC_ACQ_REL);
   else __atomic_fetch_and(&s_output_mute_mask, ~bit, __ATOMIC_ACQ_REL);
   return ESP_OK;
+}
+
+void sound_engine_set_measure(bool active, uint32_t mute_mask) {
+  __atomic_store_n(&s_measure_mute_mask, active ? (mute_mask & 3U) : 0U,
+                   __ATOMIC_RELEASE);
+  if (active && !__atomic_load_n(&s_measure_active, __ATOMIC_ACQUIRE)) {
+    /* A new run counts from zero. */
+    __atomic_store_n(&s_measure_clips, 0U, __ATOMIC_RELEASE);
+    __atomic_store_n(&s_measure_peak_bits, 0U, __ATOMIC_RELEASE);
+  }
+  __atomic_store_n(&s_measure_active, active, __ATOMIC_RELEASE);
+}
+
+uint32_t sound_engine_take_measure_clips(float *peak) {
+  const uint32_t n = __atomic_exchange_n(&s_measure_clips, 0U, __ATOMIC_ACQ_REL);
+  const uint32_t bits = __atomic_exchange_n(&s_measure_peak_bits, 0U, __ATOMIC_ACQ_REL);
+  if (peak) memcpy(peak, &bits, sizeof(*peak));
+  return n;
 }
 
 void sound_engine_seek_flush(void) {

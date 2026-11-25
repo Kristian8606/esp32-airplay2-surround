@@ -22,6 +22,7 @@
 #include "gw_mic.h"
 #include "gw_fw.h"
 #include "gw_radio.h"
+#include "gw_rew.h"
 #if CONFIG_GATEWAY_USB_PLAYER
 #include "gw_player.h"
 #endif
@@ -507,7 +508,12 @@ static esp_err_t calibration_post_handler(httpd_req_t *req) {
   esp_err_t e = ESP_ERR_INVALID_ARG;
   int applied = 0;
   const char *error = NULL;
-  if (strcmp(action, "test") == 0 || strcmp(action, "start") == 0) {
+  const bool measuring = strcmp(action, "test") == 0 || strcmp(action, "start") == 0 ||
+                         strcmp(action, "sweep") == 0 || strcmp(action, "levels") == 0;
+  if (measuring && gw_rew_active()) {
+    e = ESP_ERR_INVALID_STATE;
+    error = "the REW mode is on: end it first";
+  } else if (strcmp(action, "test") == 0 || strcmp(action, "start") == 0) {
     e = gw_calib_start(strcmp(action, "test") == 0);
     if (e == ESP_ERR_NOT_SUPPORTED) error = "built without the calibration microphone";
     else if (e == ESP_ERR_INVALID_STATE) error = "a measurement is already running";
@@ -827,6 +833,7 @@ void web_role_register(httpd_handle_t server) {
 #endif
 #undef REG
   gw_radio_register_web(server);
+  gw_rew_register_web(server);
 #if CONFIG_GATEWAY_USB_PLAYER
   gw_player_register_web(server);
 #endif

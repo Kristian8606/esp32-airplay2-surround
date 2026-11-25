@@ -153,6 +153,13 @@ static struct {
   int64_t since_us; /* FW_UPDATE sent; GW_FW_TIMEOUT_US from here */
   bool left; /* its connection closed since FW_UPDATE (it restarted) */
 } s_fw_busy;
+#if defined(SURROUND_PROTO_MEASURE)
+/* REW mode (gw_speakers_set_measure), under s_lock. */
+static surround_measure_t s_measure;
+static uint8_t s_measure_mac[6];
+static bool s_measure_mac_valid;
+
+#endif
 /* gw_speakers_post_volume() -> speakers task. */
 static int32_t s_volume_next;
 static bool s_volume_dirty;
@@ -460,6 +467,16 @@ void gw_speakers_send(surround_msg_type_t type, const void *payload,
   xSemaphoreGive(s_lock);
 }
 
+#if defined(SURROUND_PROTO_MEASURE)
+/* The REW mode's state for this speaker. Caller holds s_lock. */
+static void send_measure(gw_speaker_t *sp) {
+  surround_measure_t m = s_measure;
+  m.play = m.active && s_measure_mac_valid &&
+           memcmp(sp->hello.mac, s_measure_mac, sizeof(s_measure_mac)) == 0;
+  send_frame(sp, SURROUND_MSG_SET_MEASURE, &m, sizeof(m));
+}
+#endif
+
 /* Caller holds s_lock. */
 static void handle_hello(gw_speaker_t *sp, const uint8_t *p, size_t len) {
   if (sp->state != SPK_CONNECTED) {
@@ -526,6 +543,9 @@ static void handle_hello(gw_speaker_t *sp, const uint8_t *p, size_t len) {
     send_frame(sp, s_rec[REC_VOLUME].type, s_rec[REC_VOLUME].payload,
                s_rec[REC_VOLUME].len);
   }
+#if defined(SURROUND_PROTO_MEASURE)
+  if (s_measure.active) send_measure(sp); /* the REW mode is on */
+#endif
 }
 
 /* Caller holds s_lock. */
@@ -987,6 +1007,23 @@ bool gw_speakers_tsf_to_local(int64_t tsf_ns, int64_t *local_ns) {
   xSemaphoreGive(s_lock);
   return ok;
 }
+
+#if defined(SURROUND_PROTO_MEASURE)
+void gw_speakers_set_measure(const surround_measure_t *m, const uint8_t *mac) {
+  if (!s_lock || !m) return;
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  s_measure = *m;
+  if (!s_measure.active) memset(&s_measure, 0, sizeof(s_measure));
+  s_measure_mac_valid = s_measure.active && mac != NULL;
+  if (s_measure_mac_valid) memcpy(s_measure_mac, mac, sizeof(s_measure_mac));
+  for (size_t i = 0; i < SURROUND_MAX_SPEAKERS; ++i) {
+    gw_speaker_t *sp = &s_spk[i];
+    if (sp->fd < 0 || sp->dead || sp->state == SPK_CONNECTED || sp->fw_only) continue;
+    send_measure(sp);
+  }
+  xSemaphoreGive(s_lock);
+}
+#endif
 
 uint32_t gw_speakers_audio_generation(void) {
   return __atomic_load_n(&s_audio_gen, __ATOMIC_ACQUIRE);

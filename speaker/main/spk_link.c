@@ -14,6 +14,7 @@
 #include "alac_decoder.h"
 #include "airplay_log.h"
 #include "amp_control.h"
+#include "audio_eq.h"
 #include "sound_engine.h"
 #include "cal_chirp.h"
 #include "cal_playback.h"
@@ -74,6 +75,19 @@ static int32_t s_lowpass_hz = SURROUND_LOWPASS_DEFAULT_HZ;
 /* Subwoofer LFE gain for 5.1/7.1 (settings_get_lfe_gain), subwoofer role
  * only. */
 static int32_t s_lfe_gain_db = SURROUND_LFE_GAIN_DEFAULT_DB;
+#if defined(SURROUND_PROTO_MEASURE)
+/* REW measuring mode from the Gateway (SET_MEASURE). RAM only: a lost link
+ * or a restart ends it. */
+static surround_measure_t s_measure;
+#endif
+
+static bool measure_active(void) {
+#if defined(SURROUND_PROTO_MEASURE)
+  return s_measure.active != 0U;
+#else
+  return false;
+#endif
+}
 
 static bool lowpass_valid(int32_t hz) {
   return hz == SURROUND_LOWPASS_OFF ||
@@ -205,6 +219,10 @@ static void apply_stereo_route(void) {
       route = SOUND_STEREO_ROUTE_MONO;
       break;
   }
+  /* REW mode: every speaker takes the sum, so choosing the one that plays
+   * (an output mute after the FIFO) is heard at once. */
+  const bool measure = measure_active();
+  if (measure) route = SOUND_STEREO_ROUTE_SUM;
   sound_engine_set_stereo_route(route);
   /* The subwoofer plays below its crossover only, stereo mix and LFE
    * channel alike; every other role plays its full range. */
@@ -212,10 +230,10 @@ static void apply_stereo_route(void) {
       role == AAC_SPEAKER_LFE ? (uint32_t)s_lowpass_hz : 0U;
   sound_engine_set_lfe_lowpass_hz(lowpass);
   const uint32_t lfe_gain =
-      role == AAC_SPEAKER_LFE ? (uint32_t)s_lfe_gain_db : 0U;
+      role == AAC_SPEAKER_LFE && !measure ? (uint32_t)s_lfe_gain_db : 0U;
   sound_engine_set_lfe_gain_db(lfe_gain);
   static const char *const names[] = {"stereo", "left", "right", "mono mix",
-                                      "silent"};
+                                      "silent", "L+R (REW mode)"};
   if (role == AAC_SPEAKER_LFE) {
     char hz[16];
     AP_LOGI(TAG, "stereo sources: %s (role %s), crossover %s, LFE gain +%" PRIu32
@@ -232,6 +250,43 @@ static void apply_volume(void) {
   const double gain = pow(10.0, (double)s_trim_db10 / 200.0);
   sound_engine_set_volume_q15((int32_t)lround(s_sender_volume_q15 * gain));
 }
+
+#if defined(SURROUND_PROTO_MEASURE)
+/* REW mode as s_measure says: who plays, which driver, the EQ and the
+ * tweeter's polarity; (all off) brings everything back. */
+static void apply_measure(const char *why) {
+  const surround_measure_t *m = &s_measure;
+  const int tweeter = audio_eq_tweeter_output();
+  uint32_t mute = 0U;
+  if (m->active) {
+    if (!m->play) {
+      mute = 3U;
+    } else if (tweeter >= 0 && m->way == SURROUND_MEASURE_WAY_WOOFER) {
+      mute = 1U << tweeter;
+    } else if (tweeter >= 0 && m->way == SURROUND_MEASURE_WAY_TWEETER) {
+      mute = 3U & ~(1U << tweeter);
+    }
+  }
+  sound_engine_set_measure(m->active != 0U, mute);
+  audio_eq_set_measure(m->active && !m->eq_on,
+                       m->active && m->invert_tweeter && tweeter >= 0);
+  apply_stereo_route();
+  if (!m->active) {
+    AP_LOGI(TAG, "REW mode off (%s): roles, EQ, polarity, loudness and LFE gain as before",
+            why);
+    return;
+  }
+  static const char *const ways[] = {"whole speaker", "woofer", "tweeter"};
+  const bool biamp = tweeter >= 0;
+  AP_LOGI(TAG, "REW mode (%s): %s%s, EQ %s%s", why,
+          m->play ? "plays " : "silent",
+          m->play ? (biamp ? ways[m->way] : "whole speaker") : "",
+          m->eq_on ? "on" : "off",
+          m->invert_tweeter && biamp ? ", tweeter inverted" : "");
+  if (m->play && !biamp && m->way != SURROUND_MEASURE_WAY_FULL)
+    AP_LOGW(TAG, "REW mode: %s asked, but the outputs are not bi-amp", ways[m->way]);
+}
+#endif
 
 static void send_config(int fd) {
   const surround_config_t c = {
@@ -361,6 +416,17 @@ static void send_status(int fd) {
   uint32_t rms_ns = 0;
   if (spk_time_status(&rms_ns)) st.flags |= SURROUND_STATUS_TIME;
   st.tsf_rms_ns10 = (uint16_t)(rms_ns / 10U > 0xffffU ? 0xffffU : rms_ns / 10U);
+#if defined(SURROUND_PROTO_MEASURE)
+  float peak = 0.0f;
+  const uint32_t clips = sound_engine_take_measure_clips(&peak);
+  if (clips) {
+    const float db = 20.0f * log10f(peak);
+    st.measure_clips = (uint16_t)(clips > 0xffffU ? 0xffffU : clips);
+    st.measure_peak_db10 = (uint16_t)lroundf(db > 0.0f ? db * 10.0f : 0.0f);
+    AP_LOGW(TAG, "REW mode: %" PRIu32 " samples clipped, peak +%.1f dBFS: turn the level down",
+            clips, (double)db);
+  }
+#endif
   (void)send_msg(fd, SURROUND_MSG_STATUS, &st, sizeof(st));
 }
 
@@ -573,6 +639,20 @@ static void dispatch(int fd, uint8_t type, const uint8_t *p, size_t len) {
       (void)send_msg(fd, SURROUND_MSG_CAL_RESULT, &r, sizeof(r));
       break;
     }
+#if defined(SURROUND_PROTO_MEASURE)
+    case SURROUND_MSG_SET_MEASURE: {
+      PAYLOAD(surround_measure_t, m);
+      if (m.way > SURROUND_MEASURE_WAY_TWEETER) {
+        AP_LOGW(TAG, "CMD set_measure: way %u out of range", (unsigned)m.way);
+        break;
+      }
+      if (!m.active) memset(&m, 0, sizeof(m));
+      if (memcmp(&m, &s_measure, sizeof(m)) == 0) break;
+      s_measure = m;
+      apply_measure("Gateway");
+      break;
+    }
+#endif
     case SURROUND_MSG_FW_UPDATE: {
       PAYLOAD(surround_fw_update_t, m);
       AP_LOGI(TAG, "CMD fw_update: %u bytes from the Gateway", (unsigned)m.size);
@@ -786,6 +866,12 @@ static void link_task(void *arg) {
     s_link_fd = -1;
     close(fd);
     spk_time_reset();
+#if defined(SURROUND_PROTO_MEASURE)
+    if (s_measure.active) {
+      memset(&s_measure, 0, sizeof(s_measure));
+      apply_measure("link lost");
+    }
+#endif
 
     /* Without the Gateway the stream cannot go on: stop it, so the next
      * link starts from a clean receiver like a new AirPlay session. */

@@ -18,6 +18,7 @@
 #include "gw_mic.h"
 #include "gw_local_src.h"
 #include "gw_radio.h"
+#include "gw_rew.h"
 #include "gw_speakers.h"
 #include "nvs.h"
 #include "rtsp_server.h"
@@ -1108,6 +1109,7 @@ static esp_err_t start_mode(cal_mode_t mode) {
   return ESP_ERR_NOT_SUPPORTED;
 #else
   const bool mic_test_only = mode == CAL_MODE_TEST;
+  if (gw_rew_active()) return ESP_ERR_INVALID_STATE; /* the REW mode has the speakers */
   if (!init_once()) return ESP_ERR_NO_MEM;
   gw_local_src_stop(); /* the chirps need the speakers free */
   xSemaphoreTake(s_lock, portMAX_DELAY);
