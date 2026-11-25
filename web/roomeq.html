@@ -114,6 +114,7 @@ svg.graph .cur .box{fill:var(--panel);stroke:var(--line2)}
 .keys span{display:flex;align-items:center;gap:6px}
 .keys i{display:inline-block;width:18px;height:0;border-top:2px solid}
 .out{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.out.warn{border-top-color:rgba(245,165,36,.55)}
 table.ftab{width:100%;max-width:560px;border-collapse:collapse;margin-top:8px;font-size:13px;font-variant-numeric:tabular-nums}
 table.ftab th{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1.2px;font-weight:500;text-align:right;padding:4px 8px}
 table.ftab td{border-top:1px solid var(--line);padding:5px 8px;text-align:right}
@@ -139,7 +140,7 @@ table.ftab input{width:16px;height:16px;accent-color:#8b7bff}
  <div class='now'><div class='stat'><label>Microphone</label><span id='st-mic'>&mdash;</span></div><div class='stat'><label>Measurements</label><span id='st-count'>0</span></div></div>
 </div>
 <div class='steps' id='steps' role='tablist' aria-label='Room EQ steps'>
- <button type='button' data-s='1' class='on'><b>1</b>Speaker</button><button type='button' data-s='2'><b>2</b>Settings</button><button type='button' data-s='3'><b>3</b>Measurement</button><button type='button' data-s='4'><b>4</b>EQ</button><button type='button' data-s='5'><b>5</b>Alignment</button><button type='button' data-s='6' disabled title='Comes with the check step'><b>6</b>Check</button>
+ <button type='button' data-s='1' class='on'><b>1</b>Speaker</button><button type='button' data-s='2'><b>2</b>Settings</button><button type='button' data-s='3'><b>3</b>Measurement</button><button type='button' data-s='4'><b>4</b>EQ</button><button type='button' data-s='5'><b>5</b>Alignment</button><button type='button' data-s='6'><b>6</b>Check</button>
 </div>
 <div class='pane' id='pane1'><div class='side'>
  <div class='panel'><div class='ptitle'>Click a speaker</div>
@@ -240,6 +241,18 @@ table.ftab input{width:16px;height:16px;accent-color:#8b7bff}
   <div class='actions'><button class='btn sec' id='a-apply'>Apply</button><button class='btn' id='a-save'>Apply &amp; Save</button><button class='btn sec' id='a-both'>Measure both together</button><span class='msg' id='a-amsg'></span></div>
  </div>
  <p class='help'>For a bi-amp speaker: the delay and polarity of its outputs that make woofer and tweeter add up in phase around the crossover. It measures each driver as the speaker plays it now (its EQ, crossover, polarity and delay on), both on one time base, then tries every delay of the earlier driver from 0 to 2 ms (0.01 ms steps) and both polarities of the tweeter, and keeps the one whose sum is flattest from half to twice the crossover frequency, in the direct sound (a window of 8 periods of the crossover frequency). The proposal is a change from the speaker's current delay and polarity. Nothing changes until you apply it. <b>Measure both together</b> then draws the measured sum over the expected one. The check after Apply &amp; Save above measures the drivers the same way, so it gives a proposal too.</p>
+</div>
+<div class='pane' id='pane6'>
+<div class='panel' id='kpanel'>
+ <div class='ptitle'>Check</div>
+ <p class='help' style='margin-top:0' id='k-hint'>After <b>Apply &amp; Save</b> in the EQ step the speaker is measured again, with its new EQ, at the same position and with the same settings; the result shows here, over the curve before and the expected one.</p>
+ <div class='actions'><button class='btn' id='k-go' type='button'>Measure the check</button><span class='msg' id='k-msg'></span></div>
+ <div id='k-out' style='display:none'>
+  <svg class='graph' id='k-graph' viewBox='0 0 1000 440' preserveAspectRatio='xMidYMid meet' style='margin-top:14px'></svg>
+  <div class='keys' id='k-keys'></div>
+  <div id='k-res'></div>
+ </div>
+</div>
 </div>
 </div><script>
 const TITLE={'-1':'Mono mix',0:'Front Left',1:'Front Right',2:'Centre',3:'Subwoofer',4:'Side Left',5:'Side Right',6:'Rear Left',7:'Rear Right'};
@@ -386,9 +399,8 @@ async function importSweep(s){
   showCheck();
   /* Bi-amp: each driver first, then both together, which is what is
    * heard: only that shows a dip or a peak at the crossover. */
-  if(check.biamp&&check.stage==='ways'){check.stage='both';
-   const am=document.getElementById('c-amsg');am.className='msg';am.textContent='Each driver checked; now both together…';
-   if(!await startSweep(s.mac,false,false))check.stage='done';}
+  /* A bi-amp speaker's check is one run: each driver and both together. */
+  check.stage='done';
  }
 }
 
@@ -836,6 +848,12 @@ document.getElementById('a-apply').onclick=()=>applyAlign('apply');
 document.getElementById('a-save').onclick=()=>applyAlign('both');
 let alignWanted=null;
 
+document.getElementById('k-go').onclick=async()=>{const c=cur,m=document.getElementById('k-msg');
+ if(!c){m.className='msg err';m.textContent='Calculate a correction first (EQ step).';return;}
+ check={mac:c.mac,since:Date.now(),biamp:c.biamp,stage:'ways'};
+ if(!await startSweep(c.mac,false,c.biamp,c.biamp)){check=null;return;}
+ m.className='msg';m.textContent='Measuring with the speaker\'s EQ…';};
+
 /* ==== Correction ====
  * Per driver: the measurements of one speaker averaged (power), smoothed
  * more at high frequencies (1/12 octave below 200 Hz, 1/3 above 1 kHz), a
@@ -1126,6 +1144,30 @@ function calcState(st){
 }
 /* Before and after: the check measured with the new EQ drawn over the
  * curve it was calculated from; nothing is recalculated. */
+/* Step 6: the check, measured with the new EQ, against the target and
+ * against what was expected; more than 1 dB apart means the calculation and
+ * the measurement disagree (a moved microphone, noise, or a setting
+ * changed since). */
+function showCheckPane(){
+ const c=cur;if(!c)return;const series=[],rows=[];
+ const nm={woofer:'Woofer',tweeter:'Tweeter',sub:'Subwoofer',full:'Speaker'};
+ c.ways.forEach(w=>{const before=[],tg=[],pr=[],af=[];
+  for(let g=0;g<GCOUNT;g++){const f=gridF(g);if(f<w.lo||f>w.hi||w.xo[g]<-30)continue;before.push([f,w.S[g]]);pr.push([f,w.P[g]+c.X]);if(w.chk)af.push([f,w.chk[g]+c.X]);if(f>=w.range[0]&&f<=w.range[1])tg.push([f,w.T[g]]);}
+  series.push({pts:before,color:WAYCOL[w.role],width:0.9,op:0.35,name:nm[w.role]+' before'},{pts:tg,color:'#ffffff',width:1,dash:'6 5',op:0.7,name:'Target'},{pts:pr,color:WAYCOL[w.role],width:1.2,dash:'3 3',op:0.9,name:nm[w.role]+' expected'});
+  if(w.chk)series.push({pts:af,color:WAYCOL[w.role],width:2,op:1,name:nm[w.role]+' after'});
+  let st=0,sp=0,n=0,mt=0;if(w.chk)for(let g=gi(w.range[0]);g<=gi(w.range[1]);g++){const a=w.chk[g]+c.X,et=a-w.T[g],ep=a-(w.P[g]+c.X);st+=et*et;sp+=ep*ep;n++;mt=Math.max(mt,Math.abs(et));}
+  rows.push({w,n,t:n?Math.sqrt(st/n):null,p:n?Math.sqrt(sp/n):null,mt});});
+ if(c.sum){const lo=Math.min(...c.ways.map(w=>w.lo)),hi=Math.max(...c.ways.map(w=>w.hi)),lw=c.ways[0],sp=[],st=[];
+  for(let g=0;g<GCOUNT;g++){const f=gridF(g);if(f<lo||f>hi)continue;sp.push([f,c.sum[g]+c.X]);st.push([f,lw.T[g]-lw.xo[g]]);}
+  series.push({pts:st,color:'#7ee2a0',width:0.9,dash:'4 6',op:0.6,name:'Target both'},{pts:sp,color:'#7ee2a0',width:2,op:1,name:'Both together after'});}
+ document.getElementById('k-out').style.display='';document.getElementById('k-msg').textContent='';
+ rgDraw('k-graph',series,{span:40});
+ document.getElementById('k-keys').innerHTML="<span><i style='border-color:rgba(255,255,255,.4)'></i>before</span><span><i style='border-color:#fff;border-top-style:dashed'></i>target</span><span><i style='border-color:#fff;border-top-style:dotted'></i>expected</span><span><i style='border-color:#fff;border-top-width:3px'></i>after: measured with the new EQ</span>"+(c.sum?"<span><i style='border-color:#7ee2a0;border-top-width:3px'></i>both drivers together</span>":'');
+ const any=rows.some(r=>r.n);
+ document.getElementById('k-res').innerHTML=any?rows.map(r=>{if(!r.n)return "<div class='out'><h3>"+nm[r.w.role]+"<small>not measured in the check</small></h3></div>";
+  const off=r.p>1;return "<div class='out"+(off?' warn':'')+"'><h3>"+nm[r.w.role]+"<small>measured <b>&plusmn;"+r.t.toFixed(1)+" dB</b> from the target (at most "+r.mt.toFixed(1)+"), expected &plusmn;"+(r.w.dev?r.w.dev.rms.toFixed(1):'?')+" dB &middot; "+r.p.toFixed(1)+" dB from what was expected</small></h3>"+
+   (off?"<p class='help' style='color:#f7c46c'>More than 1 dB from what was expected: the microphone may have moved, the room was noisier, or a setting changed since the calculation. Measure again at the same position.</p>":"<p class='help'>Within 1 dB of what was expected: the calculation matches the measurement.</p>")+"</div>";}).join(''):'';
+}
 function showCheck(){
  const c=cur;if(!c||!check)return;
  const after=m=>m.mac===c.mac&&!m.raw&&m.on&&m.t>=check.since;
@@ -1134,6 +1176,7 @@ function showCheck(){
  const both=c.biamp?meas.filter(m=>after(m)&&m.way==='both'):[];
  c.sum=both.length?smoothDb(c.blend(both),'var'):null;
  showCorrection();
+ showCheckPane();if(c.ways.some(w=>w.chk))goStep(6);
  const am=document.getElementById('c-amsg');am.className='msg ok';
  am.textContent=!c.ways.some(w=>w.chk)&&!c.sum?'The check measured no driver of this correction.':
   'Before and after: the dotted curve is the speaker measured with its new EQ'+(c.sum?'; the green one both drivers together, against the dashed green target.':'.');
@@ -1212,7 +1255,7 @@ async function applyCorrection(action){
  if(!confirm('Saved. Measure this speaker now with its new EQ, to compare it with before? Keep the microphone at position '+pos+'.'))return;
  check={mac:c.mac,since:Date.now(),biamp:c.biamp,stage:'ways'};
  document.getElementById('spk').value=c.mac;buttons();
- if(!await startSweep(c.mac,false,c.biamp))check=null;
+ if(!await startSweep(c.mac,false,c.biamp,c.biamp))check=null;
  else{m.className='msg';m.textContent='Measuring with the new EQ…';}
 }
 document.getElementById('c-calc').onclick=calculate;
