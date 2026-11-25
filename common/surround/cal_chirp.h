@@ -17,6 +17,9 @@ typedef enum {
   CAL_CHIRP_LOW = 1,  /* subwoofer: 30 - 150 Hz, 200 ms */
   CAL_SWEEP_WIDE = 2, /* full-range speakers: 30 Hz - 21 kHz, 2.5 s */
   CAL_SWEEP_LOW = 3,  /* subwoofer: 15 - 400 Hz, 2.5 s */
+  /* Room EQ's Check levels, as REW's: pink noise for CAL_NOISE_S, at the
+   * RMS level asked (protocol 14). */
+  CAL_NOISE_PINK = 4,
   CAL_CHIRP_KIND_COUNT
 } cal_chirp_kind_t;
 
@@ -42,9 +45,34 @@ float cal_chirp_value(cal_chirp_kind_t kind, double t);
  * L = length / ln(f1 / f0), raised-cosine fades at both ends. */
 typedef struct {
   double f0_hz, f1_hz, length_s, fade_in_s, fade_out_s;
+  double period_s; /* from one sweep's start to the next one's */
 } cal_sweep_def_t;
 /* False for a chirp. */
 bool cal_sweep_def(cal_chirp_kind_t kind, cal_sweep_def_t *out);
+
+/* Room EQ's sweep as REW plays it (protocol 14): to measure lo_hz .. hi_hz
+ * it sweeps from half of lo_hz to twice hi_hz (at least 10 Hz, at most
+ * 21 kHz, under the Nyquist frequency at 44.1 kHz), length_ms long. The
+ * fades stay outside what is measured: the first quarter octave and the last
+ * eighth. CAL_SWEEP_TAIL_S of silence follows each sweep (the room's decay,
+ * as REW's silence after the sweep). False for values out of range. */
+#define CAL_SWEEP_MIN_MS 1000U
+#define CAL_SWEEP_MAX_MS 12000U
+#define CAL_SWEEP_TAIL_S 1.0
+bool cal_sweep_custom(uint32_t length_ms, uint32_t lo_hz, uint32_t hi_hz,
+                      cal_sweep_def_t *out);
+/* As cal_sweep_fill(), for any sweep definition. */
+void cal_sweep_fill_def(const cal_sweep_def_t *def, uint32_t start, uint32_t rate,
+                        float gain, float *dst, size_t frames, size_t stride);
+
+/* Pink noise for Check levels: unit RMS (1.0 = full scale), peaks held to
+ * 4x RMS (12 dB crest factor). The state starts zeroed. */
+#define CAL_NOISE_S 3.0
+typedef struct {
+  uint32_t seed;
+  float b[7];
+} cal_pink_t;
+float cal_pink_next(cal_pink_t *p);
 
 /* frames samples of a sweep from sample `start` on (its own sample count at
  * `rate`), times gain, into dst[i * stride]; zero outside the sweep. Single

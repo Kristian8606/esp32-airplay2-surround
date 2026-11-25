@@ -19,6 +19,7 @@
 #include "gw_local_src.h"
 #include "gw_radio.h"
 #include "gw_speakers.h"
+#include "nvs.h"
 #include "rtsp_server.h"
 
 static const char *TAG = "gw_calib";
@@ -103,10 +104,11 @@ static bool s_waiting;
 static surround_cal_result_t s_result;
 static uint8_t s_seq;
 
-typedef enum { CAL_MODE_TEST, CAL_MODE_FULL, CAL_MODE_SWEEP } cal_mode_t;
+typedef enum { CAL_MODE_TEST, CAL_MODE_FULL, CAL_MODE_SWEEP, CAL_MODE_LEVELS } cal_mode_t;
 static struct {
   uint8_t mac[6];
   bool raw, per_way;
+  gw_cal_sweep_opts_t opts;
 } s_sweep_req;
 static uint32_t s_sweep_id;
 static int s_sweep_readers; /* downloads of the sweep under way (s_lock) */
@@ -356,24 +358,33 @@ static double median(double *v, int n) {
 
 /* Ask one speaker for its chirps and wait until it has played them; the
  * answer is in s_result. False (with a note) when it did not play. */
+/* opts: a Room EQ sweep or noise as REW plays it (NULL: the fixed chirp or
+ * sweep of the kind); play_ms: how long it plays, beyond the chirps' time. */
 static bool request_play(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
-                         int8_t level_db, uint8_t bursts, uint8_t flags) {
+                         int8_t level_db, uint8_t bursts, uint8_t flags,
+                         const gw_cal_sweep_opts_t *opts, uint32_t play_ms) {
   if (++s_seq == 0U) ++s_seq;
-  const surround_cal_play_t m = {.seq = s_seq,
-                                 .kind = (uint8_t)kind,
-                                 .level_db = level_db,
-                                 .bursts = bursts,
-                                 .flags = flags};
+  surround_cal_play_t m = {.seq = s_seq,
+                           .kind = (uint8_t)kind,
+                           .level_db = level_db,
+                           .bursts = bursts,
+                           .flags = flags};
+  if (opts) {
+    m.sweep_ms = opts->sweep_ms;
+    m.lo_hz = opts->lo_hz;
+    m.hi_hz = opts->hi_hz;
+    m.level_rms_db10 = opts->level_db10;
+  }
   xSemaphoreTake(s_lock, portMAX_DELAY);
   (void)xSemaphoreTake(s_result_sem, 0);
   memcpy(s_wait_mac, o->mac, sizeof(s_wait_mac));
   s_wait_seq = s_seq;
   s_waiting = true;
   xSemaphoreGive(s_lock);
-  const esp_err_t send_err = gw_speakers_cal_play(o->mac, &m);
+  const esp_err_t send_err = gw_speakers_cal_play(o->mac, play_ms, &m);
   const bool answered =
       send_err == ESP_OK &&
-      xSemaphoreTake(s_result_sem, pdMS_TO_TICKS(CAL_RESULT_WAIT_MS)) == pdTRUE;
+      xSemaphoreTake(s_result_sem, pdMS_TO_TICKS(CAL_RESULT_WAIT_MS + play_ms)) == pdTRUE;
   xSemaphoreTake(s_lock, portMAX_DELAY);
   s_waiting = false;
   xSemaphoreGive(s_lock);
@@ -396,7 +407,7 @@ static bool request_play(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
 
 static bool request_chirps(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
                            int8_t level_db) {
-  return request_play(o, kind, level_db, CAL_CHIRP_BURSTS, 0U);
+  return request_play(o, kind, level_db, CAL_CHIRP_BURSTS, 0U, NULL, 0U);
 }
 
 /* Without a microphone: the speaker still plays, so the chirps can be heard,
@@ -757,18 +768,35 @@ static void run_speakers(bool mic_ok, const char *mic_why, const cal_noise_t *no
 
 typedef enum { SWEEP_OK, SWEEP_QUIET, SWEEP_CLIPPED, SWEEP_FAILED } sweep_run_t;
 
-/* One run of sweeps at one level into *sw (the recording stays in gw_mic). */
+/* How the speaker plays opts: the sweep's definition and the time the
+ * whole run takes (all its sweeps), as the speaker computes them. */
+static bool sweep_plan(const gw_cal_sweep_opts_t *opts, int sweeps, cal_sweep_def_t *def,
+                       uint32_t *play_ms) {
+  if (!cal_sweep_custom(opts->sweep_ms, opts->lo_hz, opts->hi_hz, def)) return false;
+  *play_ms = (uint32_t)ceil(((double)sweeps * def->period_s + 1.0) * 1000.0);
+  return true;
+}
+
+/* The sweeps of one run into *sw at the level asked, as REW: no level steps.
+ * The recording stays in gw_mic. */
 static sweep_run_t sweep_once(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
-                              int8_t level_db, uint8_t flags, double noise_ms,
-                              gw_cal_sweep_t *sw) {
+                              const gw_cal_sweep_opts_t *opts, int sweeps,
+                              uint8_t flags, double noise_ms, gw_cal_sweep_t *sw) {
   const bool low = cal_chirp_is_low(kind);
-  const esp_err_t mic_err = gw_mic_start(CAL_RECORD_MAX_S, CAL_RECORD_MAX_S);
+  cal_sweep_def_t def;
+  uint32_t play_ms = 0;
+  if (!sweep_plan(opts, sweeps, &def, &play_ms)) {
+    snprintf(o->note, sizeof(o->note), "That sweep is not possible");
+    return SWEEP_FAILED;
+  }
+  const uint32_t rec_s = (play_ms + 1999U) / 1000U;
+  const esp_err_t mic_err = gw_mic_start(rec_s, rec_s);
   if (mic_err != ESP_OK) {
     mic_note(o->note, sizeof(o->note), mic_err);
     return SWEEP_FAILED;
   }
   vTaskDelay(pdMS_TO_TICKS(50));
-  const bool played = request_play(o, kind, level_db, 1U, flags);
+  const bool played = request_play(o, kind, 0, opts->repeats, flags, opts, play_ms);
   vTaskDelay(pdMS_TO_TICKS(100));
   gw_mic_stop();
   if (!played) return SWEEP_FAILED;
@@ -776,8 +804,8 @@ static sweep_run_t sweep_once(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
   uint32_t n = 0;
   const int16_t *x = gw_mic_samples(&n);
   const uint32_t rate = GW_MIC_RATE_HZ;
-  const uint32_t len = (uint32_t)ceil(cal_chirp_length_s(kind) * rate);
-  const uint32_t period = (uint32_t)ceil(cal_chirp_period_s(kind) * rate);
+  const uint32_t len = (uint32_t)ceil(def.length_s * rate);
+  const uint32_t period = (uint32_t)ceil(def.period_s * rate);
   const uint32_t pre = (uint32_t)(CAL_SWEEP_PRE_S * rate);
   memset(sw, 0, sizeof(*sw));
   sw->n = s_result.n;
@@ -790,15 +818,13 @@ static sweep_run_t sweep_once(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
         idx + (double)period > (double)n) {
       snprintf(o->note, sizeof(o->note), "Sweep %d of %d not placed in the recording",
                k + 1, s_result.n);
-      AP_LOGI(TAG, "%s at %d dBFS: %s", o->name, level_db, o->note);
+      AP_LOGI(TAG, "%s: %s", o->name, o->note);
       return SWEEP_FAILED;
     }
     if (k == 0) first = idx;
     last = idx;
     sw->start[k] = idx;
     sw->way[k] = s_result.way[k];
-    /* From just before the sweep: the high-pass settles in the silence
-     * there (the S3 runs double precision in software). */
     const uint32_t from = (uint32_t)idx - pre;
     const double ms = band_mean_square16(x + from, n - from, pre, len, rate,
                                          low ? 0.0 : CAL_LEVEL_HP_HZ) - noise_ms;
@@ -815,7 +841,12 @@ static sweep_run_t sweep_once(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
   for (int k = 0; k < sw->n; ++k) sw->start[k] -= (double)sw->from;
   sw->peak_dbfs = to_db(peak);
   sw->scale = peak > 1e-7f ? 0.98f / peak : 1.0f;
-  sw->level_db = level_db;
+  sw->level_rms_db = (float)opts->level_db10 / 10.0f;
+  sw->level_db = sw->level_rms_db + 3.01f; /* a sine sweep's peak */
+  sw->def = def;
+  sw->lo_hz = opts->lo_hz;
+  sw->hi_hz = opts->hi_hz;
+  sw->repeats = opts->repeats;
   float snr = sw->snr_db[0];
   for (int k = 1; k < sw->n; ++k) {
     if (sw->snr_db[k] < snr) snr = sw->snr_db[k];
@@ -826,11 +857,12 @@ static sweep_run_t sweep_once(gw_cal_speaker_t *o, cal_chirp_kind_t kind,
   } else if (snr < CAL_SWEEP_MIN_SNR_DB) {
     run = SWEEP_QUIET;
   }
-  AP_LOGI(TAG, "%s %s at %d dBFS: %d sweeps (way 0x%02x 0x%02x), %.1f dB above noise, "
-               "peak %.1f dBFS: %s",
-          o->name, cal_chirp_name(kind), level_db, sw->n, (unsigned)sw->way[0],
+  AP_LOGI(TAG, "%s %s %.1f s %u-%u Hz at %.1f dBFS RMS: %d sweeps (way 0x%02x 0x%02x), "
+               "%.1f dB above noise, peak %.1f dBFS: %s",
+          o->name, cal_chirp_name(kind), def.length_s, (unsigned)opts->lo_hz,
+          (unsigned)opts->hi_hz, (double)sw->level_rms_db, sw->n, (unsigned)sw->way[0],
           (unsigned)(sw->n > 1 ? sw->way[1] : 0U), (double)snr, (double)sw->peak_dbfs,
-          run == SWEEP_OK ? "measured" : run == SWEEP_CLIPPED ? "clipped" : "too quiet");
+          run == SWEEP_OK ? "measured" : run == SWEEP_CLIPPED ? "clipped" : "quiet");
   return run;
 }
 
@@ -846,76 +878,59 @@ static void way_names(const gw_cal_sweep_t *sw, char *out, size_t size) {
   }
 }
 
+/* The speaker the request names, from the list: false if not connected. */
+static bool find_request_speaker(gw_cal_speaker_t *o) {
+  gw_speaker_info_t *list = s_list;
+  const size_t count = gw_speakers_list(s_list);
+  memset(o, 0, sizeof(*o));
+  for (size_t i = 0; i < count; ++i) {
+    if (!list[i].config_valid || memcmp(list[i].mac, s_sweep_req.mac, 6) != 0) continue;
+    memcpy(o->mac, list[i].mac, sizeof(o->mac));
+    strlcpy(o->name, list[i].name[0] ? list[i].name : list[i].ip, sizeof(o->name));
+    o->channel = list[i].config.channel;
+    return true;
+  }
+  return false;
+}
+
 static void run_sweep(bool mic_ok, const char *mic_why, const cal_noise_t *noise,
                       float noise_dbfs) {
   if (!mic_ok) {
     set_message(GW_CAL_FAILED, "%s", mic_why ? mic_why : "No microphone");
     return;
   }
-  gw_speaker_info_t *list = s_list;
-  const size_t count = gw_speakers_list(s_list);
-  gw_cal_speaker_t o = {0};
-  bool found = false;
-  for (size_t i = 0; i < count && !found; ++i) {
-    if (!list[i].config_valid || memcmp(list[i].mac, s_sweep_req.mac, 6) != 0) continue;
-    memcpy(o.mac, list[i].mac, sizeof(o.mac));
-    strlcpy(o.name, list[i].name[0] ? list[i].name : list[i].ip, sizeof(o.name));
-    o.channel = list[i].config.channel;
-    found = true;
-  }
-  if (!found) {
+  gw_cal_speaker_t o;
+  if (!find_request_speaker(&o)) {
     set_message(GW_CAL_FAILED, "The speaker is not connected");
     return;
   }
+  /* The subwoofer's sweep is low and never per driver; the kind still
+   * tells the speaker which (its fixed sweeps stay for older pages). */
   const cal_chirp_kind_t kind =
       o.channel == CAL_AAC_SPEAKER_LFE ? CAL_SWEEP_LOW : CAL_SWEEP_WIDE;
+  const bool per_way = s_sweep_req.per_way && kind == CAL_SWEEP_WIDE;
   const uint8_t flags = (s_sweep_req.raw ? SURROUND_CAL_RAW : 0U) |
-                        (s_sweep_req.per_way ? SURROUND_CAL_PER_WAY : 0U);
-  /* The subwoofer's sweep is low: its noise is the whole band's. */
+                        (per_way ? SURROUND_CAL_PER_WAY : 0U);
   const double noise_ms = cal_chirp_is_low(kind)
                               ? pow(10.0, (double)noise_dbfs / 10.0)
                               : noise->wide_ms;
-  const size_t levels = sizeof(k_levels_db);
-  gw_cal_sweep_t sw = {0};
-  sweep_run_t run = SWEEP_FAILED;
-  char note[96] = "";
+  const gw_cal_sweep_opts_t *opts = &s_sweep_req.opts;
+  /* Per driver: each driver plays every repeat (the speaker alternates). */
+  const int sweeps = (per_way ? 2 : 1) * (int)opts->repeats;
   xSemaphoreTake(s_lock, portMAX_DELAY);
-  s_status.steps = (uint8_t)levels;
+  s_status.steps = 1;
+  s_status.step = 1;
   xSemaphoreGive(s_lock);
-  for (size_t l = 0; l < levels; ++l) {
-    xSemaphoreTake(s_lock, portMAX_DELAY);
-    s_status.step = (uint8_t)(l + 1U);
-    xSemaphoreGive(s_lock);
-    set_message(GW_CAL_BUSY, "Measuring %s at %d dBFS", o.name, k_levels_db[l]);
-    run = sweep_once(&o, kind, k_levels_db[l], flags, noise_ms, &sw);
-    if (run == SWEEP_CLIPPED && l > 0) {
-      /* The level before was too quiet for the target, but it did not
-       * clip: the best there is. */
-      set_message(GW_CAL_BUSY, "Measuring %s at %d dBFS again", o.name, k_levels_db[l - 1]);
-      run = sweep_once(&o, kind, k_levels_db[l - 1], flags, noise_ms, &sw);
-      if (run == SWEEP_QUIET) {
-        run = SWEEP_OK;
-        snprintf(note, sizeof(note), " Louder clipped: measured at %d dBFS.",
-                 k_levels_db[l - 1]);
-      }
-      break;
-    }
-    if (run != SWEEP_QUIET) break;
-    if (l + 1U == levels) {
-      run = SWEEP_OK;
-      snprintf(note, sizeof(note),
-               " Quiet even at %d dBFS: turn its amplifier up or measure in quiet.",
-               k_levels_db[l]);
-      break;
-    }
-    if (!sound_engine_is_idle()) break; /* a stream started */
-  }
+  set_message(GW_CAL_BUSY, "Measuring %s: %d sweep%s of %.1f s at %.1f dBFS RMS", o.name,
+              sweeps, sweeps > 1 ? "s" : "", opts->sweep_ms / 1000.0, opts->level_db10 / 10.0);
+  gw_cal_sweep_t sw = {0};
+  const sweep_run_t run = sweep_once(&o, kind, opts, sweeps, flags, noise_ms, &sw);
   if (run == SWEEP_CLIPPED) {
-    set_message(GW_CAL_FAILED, "Clipped at %d dBFS: move the microphone away from %s",
-                sw.level_db, o.name);
+    set_message(GW_CAL_FAILED, "Clipped (%.1f dBFS at the microphone): turn the level down "
+                "or move the microphone away from %s", (double)sw.peak_dbfs, o.name);
     return;
   }
-  if (run != SWEEP_OK) {
+  if (run == SWEEP_FAILED) {
     set_message(GW_CAL_FAILED, "%s: %s", o.name, o.note[0] ? o.note : "not measured");
     return;
   }
@@ -935,8 +950,83 @@ static void run_sweep(bool mic_ok, const char *mic_why, const cal_noise_t *noise
   xSemaphoreTake(s_lock, portMAX_DELAY);
   s_status.sweep = sw;
   xSemaphoreGive(s_lock);
-  set_message(GW_CAL_DONE, "Measured %s (%s) at %d dBFS, %.0f dB above the room noise.%s",
-              o.name, ways, sw.level_db, (double)snr, note);
+  set_message(GW_CAL_DONE, "Measured %s (%s) at %.1f dBFS RMS, %.0f dB above the room noise.%s",
+              o.name, ways, (double)sw.level_rms_db, (double)snr,
+              run == SWEEP_QUIET ? " Quiet: a longer sweep, more repeats or a higher level "
+                                   "(up to the speaker's limit) help." : "");
+}
+
+/* Check levels, as REW's: pink noise for CAL_NOISE_S at the level of the
+ * next measurement; the microphone's RMS and peak over its middle. */
+static void run_levels(bool mic_ok, const char *mic_why, float noise_dbfs) {
+  if (!mic_ok) {
+    set_message(GW_CAL_FAILED, "%s", mic_why ? mic_why : "No microphone");
+    return;
+  }
+  gw_cal_speaker_t o;
+  if (!find_request_speaker(&o)) {
+    set_message(GW_CAL_FAILED, "The speaker is not connected");
+    return;
+  }
+  const gw_cal_sweep_opts_t *opts = &s_sweep_req.opts;
+  set_message(GW_CAL_BUSY, "Check levels: pink noise from %s at %.1f dBFS RMS", o.name,
+              opts->level_db10 / 10.0);
+  const uint32_t play_ms = (uint32_t)(CAL_NOISE_S * 1000.0) + 1000U;
+  const uint32_t rec_s = (play_ms + 1999U) / 1000U;
+  const esp_err_t mic_err = gw_mic_start(rec_s, rec_s);
+  if (mic_err != ESP_OK) {
+    mic_note(o.note, sizeof(o.note), mic_err);
+    set_message(GW_CAL_FAILED, "%s", o.note);
+    return;
+  }
+  vTaskDelay(pdMS_TO_TICKS(50));
+  const bool played = request_play(&o, CAL_NOISE_PINK, 0, 1U, SURROUND_CAL_RAW, opts, play_ms);
+  vTaskDelay(pdMS_TO_TICKS(100));
+  gw_mic_stop();
+  uint32_t n = 0;
+  const int16_t *x = gw_mic_samples(&n);
+  int64_t emit_local = 0;
+  double idx = 0.0;
+  const uint32_t rate = GW_MIC_RATE_HZ;
+  if (!played || !x || s_result.n == 0U ||
+      !gw_speakers_tsf_to_local(s_result.emit_tsf_ns[0], &emit_local) ||
+      !gw_mic_sample_at(emit_local, &idx) || idx < 0.0 ||
+      idx + CAL_NOISE_S * rate > (double)n) {
+    gw_mic_release();
+    set_message(GW_CAL_FAILED, "%s: %s", o.name, o.note[0] ? o.note : "the noise was not heard");
+    return;
+  }
+  /* The middle of it: past the room's build-up, before the end. */
+  const uint32_t from = (uint32_t)idx + rate / 2U, to = (uint32_t)idx + (uint32_t)(CAL_NOISE_S * rate) - rate / 4U;
+  double mean = 0.0;
+  for (uint32_t i = from; i < to; ++i) mean += x[i] * MIC_K;
+  mean /= (double)(to - from);
+  double sq = 0.0, peak = 0.0;
+  for (uint32_t i = from; i < to; ++i) {
+    const double v = x[i] * MIC_K - mean;
+    sq += v * v;
+    if (fabs(v) > peak) peak = fabs(v);
+  }
+  gw_mic_release();
+  gw_cal_levels_t lv = {.valid = true,
+                        .level_rms_db = (float)opts->level_db10 / 10.0f,
+                        .rms_dbfs = to_db(sqrt(sq / (double)(to - from))),
+                        .peak_dbfs = to_db(peak),
+                        .noise_dbfs = noise_dbfs};
+  lv.clipped = lv.peak_dbfs >= CAL_CLIP_DBFS;
+  memcpy(lv.mac, o.mac, sizeof(lv.mac));
+  strlcpy(lv.name, o.name, sizeof(lv.name));
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  s_status.levels = lv;
+  xSemaphoreGive(s_lock);
+  AP_LOGI(TAG, "Check levels %s at %.1f dBFS RMS: microphone %.1f dBFS RMS, peak %.1f, "
+               "room noise %.1f dBFS%s",
+          o.name, (double)lv.level_rms_db, (double)lv.rms_dbfs, (double)lv.peak_dbfs,
+          (double)noise_dbfs, lv.clipped ? ", clipped" : "");
+  set_message(lv.clipped ? GW_CAL_FAILED : GW_CAL_DONE,
+              "%s: %.1f dBFS RMS at the microphone, %.0f dB above the room noise%s", o.name,
+              (double)lv.rms_dbfs, (double)(lv.rms_dbfs - noise_dbfs),
+              lv.clipped ? "; clipped: turn the level down" : "");
 }
 
 static void calib_task(void *arg) {
@@ -975,6 +1065,8 @@ static void calib_task(void *arg) {
       store_noise(mic_ok, rms, peak);
       if (mode == CAL_MODE_SWEEP) {
         run_sweep(mic_ok, why, &noise, rms);
+      } else if (mode == CAL_MODE_LEVELS) {
+        run_levels(mic_ok, why, rms);
       } else {
         run_speakers(mic_ok, why, &noise);
       }
@@ -1027,6 +1119,7 @@ static esp_err_t start_mode(cal_mode_t mode) {
   s_status.mic_built = true;
   s_status.mic_test = mic_test_only;
   s_status.sweep_run = mode == CAL_MODE_SWEEP;
+  s_status.levels_run = mode == CAL_MODE_LEVELS;
   s_status.state = GW_CAL_BUSY;
   xSemaphoreGive(s_lock);
   if (xTaskCreatePinnedToCore(calib_task, "gw_calib", CAL_TASK_STACK,
@@ -1046,23 +1139,99 @@ esp_err_t gw_calib_start(bool mic_test_only) {
   return start_mode(mic_test_only ? CAL_MODE_TEST : CAL_MODE_FULL);
 }
 
-esp_err_t gw_calib_sweep_start(const uint8_t mac[6], bool raw, bool per_way) {
-  if (!mac) return ESP_ERR_INVALID_ARG;
+/* A connected speaker's role, false if it is not connected. */
+static bool connected_role(const uint8_t mac[6], int8_t *channel) {
   gw_speaker_info_t *list = malloc(sizeof(gw_speaker_info_t) * SURROUND_MAX_SPEAKERS);
-  if (!list) return ESP_ERR_NO_MEM;
+  if (!list) return false;
   const size_t n = gw_speakers_list(list);
   bool found = false;
   for (size_t i = 0; i < n && !found; ++i) {
     found = list[i].config_valid && memcmp(list[i].mac, mac, 6) == 0;
+    if (found && channel) *channel = list[i].config.channel;
   }
   free(list);
-  if (!found) return ESP_ERR_NOT_FOUND;
+  return found;
+}
+
+/* ---- The level limit of each speaker, in the Gateway's NVS ---- */
+#define CAL_CAP_NS "gw_calib"
+
+static void cap_key(const uint8_t mac[6], char key[16]) {
+  snprintf(key, 16, "c%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
+
+int16_t gw_calib_cap_get(const uint8_t mac[6]) {
+  int16_t v = GW_CAL_CAP_DEFAULT_DB10;
+  nvs_handle_t h;
+  if (mac && nvs_open(CAL_CAP_NS, NVS_READONLY, &h) == ESP_OK) {
+    char key[16];
+    cap_key(mac, key);
+    int16_t got = 0;
+    if (nvs_get_i16(h, key, &got) == ESP_OK && got >= GW_CAL_LEVEL_MIN_DB10 &&
+        got <= GW_CAL_LEVEL_MAX_DB10)
+      v = got;
+    nvs_close(h);
+  }
+  return v;
+}
+
+esp_err_t gw_calib_cap_set(const uint8_t mac[6], int16_t cap_db10) {
+  if (!mac || cap_db10 < GW_CAL_LEVEL_MIN_DB10 || cap_db10 > GW_CAL_LEVEL_MAX_DB10)
+    return ESP_ERR_INVALID_ARG;
+  nvs_handle_t h;
+  esp_err_t err = nvs_open(CAL_CAP_NS, NVS_READWRITE, &h);
+  if (err != ESP_OK) return err;
+  char key[16];
+  cap_key(mac, key);
+  err = nvs_set_i16(h, key, cap_db10);
+  if (err == ESP_OK) err = nvs_commit(h);
+  nvs_close(h);
+  AP_LOGI(TAG, "Room EQ level limit of %02x:%02x:%02x:%02x:%02x:%02x: %.1f dBFS RMS (%s)",
+          mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], cap_db10 / 10.0, esp_err_to_name(err));
+  return err;
+}
+
+/* The level asked against the range and the speaker's limit. */
+static esp_err_t level_allowed(const uint8_t mac[6], int16_t level_db10) {
+  if (level_db10 < GW_CAL_LEVEL_MIN_DB10 || level_db10 > GW_CAL_LEVEL_MAX_DB10)
+    return ESP_ERR_INVALID_ARG;
+  return level_db10 > gw_calib_cap_get(mac) ? ESP_ERR_INVALID_SIZE : ESP_OK;
+}
+
+esp_err_t gw_calib_sweep_start(const uint8_t mac[6], bool raw, bool per_way,
+                               const gw_cal_sweep_opts_t *opts) {
+  if (!mac || !opts || opts->repeats < 1U || opts->repeats > GW_CAL_REPEATS_MAX)
+    return ESP_ERR_INVALID_ARG;
+  int8_t channel = -1;
+  if (!connected_role(mac, &channel)) return ESP_ERR_NOT_FOUND;
+  const esp_err_t lv = level_allowed(mac, opts->level_db10);
+  if (lv != ESP_OK) return lv;
+  const bool ways = per_way && channel != CAL_AAC_SPEAKER_LFE;
+  const int sweeps = (ways ? 2 : 1) * (int)opts->repeats;
+  cal_sweep_def_t def;
+  uint32_t play_ms = 0;
+  if (sweeps > SURROUND_CAL_BURSTS_MAX || !sweep_plan(opts, sweeps, &def, &play_ms))
+    return ESP_ERR_INVALID_ARG;
+  if (play_ms + 2000U > GW_CAL_RECORD_MAX_S * 1000U) return ESP_ERR_INVALID_SIZE;
   if (gw_calib_running()) return ESP_ERR_INVALID_STATE;
   /* Read by the task this start creates, after it. */
   memcpy(s_sweep_req.mac, mac, sizeof(s_sweep_req.mac));
   s_sweep_req.raw = raw;
   s_sweep_req.per_way = per_way;
+  s_sweep_req.opts = *opts;
   return start_mode(CAL_MODE_SWEEP);
+}
+
+esp_err_t gw_calib_levels_start(const uint8_t mac[6], int16_t level_db10) {
+  if (!mac) return ESP_ERR_INVALID_ARG;
+  if (!connected_role(mac, NULL)) return ESP_ERR_NOT_FOUND;
+  const esp_err_t lv = level_allowed(mac, level_db10);
+  if (lv != ESP_OK) return lv;
+  if (gw_calib_running()) return ESP_ERR_INVALID_STATE;
+  memcpy(s_sweep_req.mac, mac, sizeof(s_sweep_req.mac));
+  memset(&s_sweep_req.opts, 0, sizeof(s_sweep_req.opts));
+  s_sweep_req.opts.level_db10 = level_db10;
+  return start_mode(CAL_MODE_LEVELS);
 }
 
 bool gw_calib_sweep_samples(uint32_t id, const int16_t **samples, gw_cal_sweep_t *info) {

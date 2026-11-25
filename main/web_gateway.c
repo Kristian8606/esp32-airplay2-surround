@@ -343,15 +343,18 @@ static void add_sweep_json(cJSON *r, const gw_cal_sweep_t *sw) {
   if (!j) return;
   char mac[18];
   mac_str(sw->mac, mac);
-  cal_sweep_def_t d = {0};
-  (void)cal_sweep_def((cal_chirp_kind_t)sw->kind, &d);
+  const cal_sweep_def_t d = sw->def; /* as played */
   cJSON_AddNumberToObject(j, "id", sw->id);
   cJSON_AddStringToObject(j, "mac", mac);
   cJSON_AddStringToObject(j, "name", sw->name);
   cJSON_AddNumberToObject(j, "channel", sw->channel);
   cJSON_AddStringToObject(j, "kind", cal_chirp_name((cal_chirp_kind_t)sw->kind));
   cJSON_AddBoolToObject(j, "raw", sw->raw);
-  cJSON_AddNumberToObject(j, "level_db", sw->level_db);
+  cJSON_AddNumberToObject(j, "level_db", roundf(sw->level_db * 100.0f) / 100.0f);
+  cJSON_AddNumberToObject(j, "level_rms_db", roundf(sw->level_rms_db * 10.0f) / 10.0f);
+  cJSON_AddNumberToObject(j, "lo_hz", sw->lo_hz);
+  cJSON_AddNumberToObject(j, "hi_hz", sw->hi_hz);
+  cJSON_AddNumberToObject(j, "repeats", sw->repeats);
   cJSON_AddNumberToObject(j, "rate", GW_MIC_RATE_HZ);
   cJSON_AddNumberToObject(j, "count", sw->count);
   cJSON_AddNumberToObject(j, "scale", sw->scale);
@@ -361,7 +364,7 @@ static void add_sweep_json(cJSON *r, const gw_cal_sweep_t *sw) {
   cJSON_AddNumberToObject(j, "length_s", d.length_s);
   cJSON_AddNumberToObject(j, "fade_in_s", d.fade_in_s);
   cJSON_AddNumberToObject(j, "fade_out_s", d.fade_out_s);
-  cJSON_AddNumberToObject(j, "period_s", cal_chirp_period_s((cal_chirp_kind_t)sw->kind));
+  cJSON_AddNumberToObject(j, "period_s", d.period_s);
   cJSON *arr = cJSON_AddArrayToObject(j, "bursts");
   for (int k = 0; arr && k < sw->n; ++k) {
     cJSON *b = cJSON_CreateObject();
@@ -431,6 +434,32 @@ static esp_err_t calibration_get_handler(httpd_req_t *req) {
     cJSON_AddNumberToObject(r, "peak_dbfs", roundf(st.peak_dbfs * 10.0f) / 10.0f);
   }
   if (st.sweep_run) cJSON_AddBoolToObject(r, "sweep_run", true);
+  if (st.levels_run && st.levels.valid) {
+    cJSON *l = cJSON_AddObjectToObject(r, "levels");
+    if (l) {
+      char m[18];
+      mac_str(st.levels.mac, m);
+      cJSON_AddStringToObject(l, "mac", m);
+      cJSON_AddStringToObject(l, "name", st.levels.name);
+      cJSON_AddNumberToObject(l, "level_rms_db", roundf(st.levels.level_rms_db * 10.0f) / 10.0f);
+      cJSON_AddNumberToObject(l, "rms_dbfs", roundf(st.levels.rms_dbfs * 10.0f) / 10.0f);
+      cJSON_AddNumberToObject(l, "peak_dbfs", roundf(st.levels.peak_dbfs * 10.0f) / 10.0f);
+      cJSON_AddNumberToObject(l, "noise_dbfs", roundf(st.levels.noise_dbfs * 10.0f) / 10.0f);
+      cJSON_AddBoolToObject(l, "clipped", st.levels.clipped);
+    }
+  }
+  /* Room EQ's level limit of every connected speaker (RMS, dBFS). */
+  {
+    gw_speaker_info_t *list = malloc(sizeof(gw_speaker_info_t) * SURROUND_MAX_SPEAKERS);
+    cJSON *caps = list ? cJSON_AddObjectToObject(r, "caps") : NULL;
+    const size_t n = list ? gw_speakers_list(list) : 0U;
+    for (size_t i = 0; caps && i < n; ++i) {
+      char m[18];
+      mac_str(list[i].mac, m);
+      cJSON_AddNumberToObject(caps, m, gw_calib_cap_get(list[i].mac) / 10.0);
+    }
+    free(list);
+  }
   if (st.sweep_run && st.sweep.valid) add_sweep_json(r, &st.sweep);
   cJSON *arr = cJSON_AddArrayToObject(r, "speakers");
   for (int i = 0; arr && i < st.count; ++i) {
@@ -467,7 +496,7 @@ static esp_err_t calibration_get_handler(httpd_req_t *req) {
 
 static esp_err_t calibration_post_handler(httpd_req_t *req) {
   if (!web_admin_ok(req)) return ESP_OK;
-  char b[160];
+  char b[256];
   if (web_recv_json(req, b, sizeof(b)) != ESP_OK) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid body");
     return ESP_FAIL;
@@ -490,10 +519,45 @@ static esp_err_t calibration_post_handler(httpd_req_t *req) {
     if (!cJSON_IsString(m) || !parse_mac(m->valuestring, mac)) {
       error = "mac: the speaker's MAC";
     } else {
-      e = gw_calib_sweep_start(mac, !cJSON_IsFalse(raw), !cJSON_IsFalse(per_way));
+      /* As REW: length, range, RMS level and repeats; its defaults. */
+      gw_cal_sweep_opts_t o = {.sweep_ms = 5461, .lo_hz = 20, .hi_hz = 20000,
+                               .level_db10 = GW_CAL_LEVEL_DEFAULT_DB10, .repeats = 1};
+      const cJSON *v;
+      if (cJSON_IsNumber(v = cJSON_GetObjectItem(j, "length_ms"))) o.sweep_ms = (uint16_t)v->valuedouble;
+      if (cJSON_IsNumber(v = cJSON_GetObjectItem(j, "lo_hz"))) o.lo_hz = (uint16_t)v->valuedouble;
+      if (cJSON_IsNumber(v = cJSON_GetObjectItem(j, "hi_hz"))) o.hi_hz = (uint16_t)v->valuedouble;
+      if (cJSON_IsNumber(v = cJSON_GetObjectItem(j, "level_db"))) o.level_db10 = (int16_t)lround(v->valuedouble * 10.0);
+      if (cJSON_IsNumber(v = cJSON_GetObjectItem(j, "repeats"))) o.repeats = (uint8_t)v->valuedouble;
+      e = gw_calib_sweep_start(mac, !cJSON_IsFalse(raw), !cJSON_IsFalse(per_way), &o);
       if (e == ESP_ERR_NOT_SUPPORTED) error = "built without the calibration microphone";
       else if (e == ESP_ERR_INVALID_STATE) error = "a measurement is already running";
       else if (e == ESP_ERR_NOT_FOUND) error = "the speaker is not connected";
+      else if (e == ESP_ERR_INVALID_SIZE) error = "louder than the speaker's limit, or longer than 30 s: lower the level, or use a shorter sweep or fewer repeats";
+      else if (e == ESP_ERR_INVALID_ARG) error = "length 1-12 s, range 10 Hz - 20 kHz (an octave at least), level -40 to -3 dBFS RMS, repeats 1-4 (3 per driver at most)";
+    }
+  } else if (strcmp(action, "levels") == 0) {
+    const cJSON *m = cJSON_GetObjectItem(j, "mac");
+    const cJSON *lv = cJSON_GetObjectItem(j, "level_db");
+    uint8_t mac[6];
+    if (!cJSON_IsString(m) || !parse_mac(m->valuestring, mac) || !cJSON_IsNumber(lv)) {
+      error = "mac and level_db (RMS)";
+    } else {
+      e = gw_calib_levels_start(mac, (int16_t)lround(lv->valuedouble * 10.0));
+      if (e == ESP_ERR_NOT_SUPPORTED) error = "built without the calibration microphone";
+      else if (e == ESP_ERR_INVALID_STATE) error = "a measurement is already running";
+      else if (e == ESP_ERR_NOT_FOUND) error = "the speaker is not connected";
+      else if (e == ESP_ERR_INVALID_SIZE) error = "louder than the speaker's limit";
+      else if (e == ESP_ERR_INVALID_ARG) error = "level -40 to -3 dBFS RMS";
+    }
+  } else if (strcmp(action, "cap") == 0) {
+    const cJSON *m = cJSON_GetObjectItem(j, "mac");
+    const cJSON *cp = cJSON_GetObjectItem(j, "cap_db");
+    uint8_t mac[6];
+    if (!cJSON_IsString(m) || !parse_mac(m->valuestring, mac) || !cJSON_IsNumber(cp)) {
+      error = "mac and cap_db (RMS)";
+    } else {
+      e = gw_calib_cap_set(mac, (int16_t)lround(cp->valuedouble * 10.0));
+      if (e == ESP_ERR_INVALID_ARG) error = "limit -40 to -3 dBFS RMS";
     }
   } else if (strcmp(action, "apply") == 0) {
     e = gw_calib_apply(&applied);
@@ -503,7 +567,7 @@ static esp_err_t calibration_post_handler(httpd_req_t *req) {
     gw_calib_discard();
     e = ESP_OK;
   } else {
-    error = "action: test, start, sweep, apply or discard";
+    error = "action: test, start, sweep, levels, cap, apply or discard";
   }
   if (j) cJSON_Delete(j);
   cJSON *r = cJSON_CreateObject();

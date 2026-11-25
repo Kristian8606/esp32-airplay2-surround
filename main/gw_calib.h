@@ -1,5 +1,7 @@
 #pragma once
 
+#include "cal_chirp.h"
+
 /* Gateway: room calibration with the microphone (gw_mic.c) at the listening
  * seat. Each speaker in turn plays test chirps (CAL_PLAY) and says when they
  * left it on the access point's TSF; the Gateway finds them in its recording
@@ -56,7 +58,11 @@ typedef struct {
   int8_t channel;     /* role, aac_speaker_t */
   uint8_t kind;       /* cal_chirp_kind_t: a sweep */
   bool raw;           /* played without the speaker's EQ */
-  int8_t level_db;    /* sweep peak, dBFS */
+  float level_db;     /* sweep peak, dBFS */
+  float level_rms_db; /* its RMS level, as REW states it */
+  cal_sweep_def_t def; /* the sweep as played */
+  uint16_t lo_hz, hi_hz; /* what it measures */
+  uint8_t repeats;    /* sweeps per driver, to average */
   uint8_t n;          /* sweeps */
   uint8_t way[SURROUND_CAL_BURSTS_MAX];   /* SURROUND_CAL_WAY_* */
   double start[SURROUND_CAL_BURSTS_MAX];  /* sample of the served recording
@@ -69,6 +75,19 @@ typedef struct {
   float scale;        /* served int16 = sample * scale * 32767 */
   uint32_t id;        /* a new one for every recording */
 } gw_cal_sweep_t;
+
+/* Room EQ's Check levels, as REW's: what the microphone heard of 3 s of
+ * pink noise at the level asked. */
+typedef struct {
+  bool valid;
+  uint8_t mac[6];
+  char name[24];
+  float level_rms_db; /* played, RMS */
+  float rms_dbfs;     /* at the microphone */
+  float peak_dbfs;
+  float noise_dbfs;   /* the room without it */
+  bool clipped;
+} gw_cal_levels_t;
 
 typedef struct {
   gw_cal_state_t state;
@@ -84,6 +103,8 @@ typedef struct {
   gw_cal_speaker_t spk[SURROUND_MAX_SPEAKERS];
   bool sweep_run;     /* the last run was a Room EQ sweep */
   gw_cal_sweep_t sweep;
+  bool levels_run;    /* the last run was Room EQ's Check levels */
+  gw_cal_levels_t levels;
 } gw_cal_status_t;
 
 /* Start in the background: the microphone test alone, or the full run.
@@ -95,7 +116,31 @@ esp_err_t gw_calib_start(bool mic_test_only);
  * session ends for it, the level goes up from -30 dBFS until the sweep is
  * clear of the room noise. raw: without the speaker's EQ; per_way: one sweep
  * per driver of a bi-amp speaker. ESP_ERR_NOT_FOUND for no such speaker. */
-esp_err_t gw_calib_sweep_start(const uint8_t mac[6], bool raw, bool per_way);
+/* Room EQ's measurement as REW's (protocol 14): the sweep's length, range,
+ * RMS level and repeats. The level never goes above the speaker's cap. */
+typedef struct {
+  uint16_t sweep_ms; /* CAL_SWEEP_MIN_MS .. CAL_SWEEP_MAX_MS */
+  uint16_t lo_hz, hi_hz;
+  int16_t level_db10; /* RMS, tenths of a dB below full scale */
+  uint8_t repeats;    /* 1 .. GW_CAL_REPEATS_MAX */
+} gw_cal_sweep_opts_t;
+#define GW_CAL_LEVEL_MIN_DB10 (-400)
+#define GW_CAL_LEVEL_MAX_DB10 (-30)  /* REW: -3 dBFS RMS at most */
+#define GW_CAL_CAP_DEFAULT_DB10 (-120) /* REW's default level: never louder */
+#define GW_CAL_LEVEL_DEFAULT_DB10 (-180) /* 6 dB below it: quieter to start */
+#define GW_CAL_REPEATS_MAX 4U
+#define GW_CAL_RECORD_MAX_S 30U
+/* ESP_ERR_INVALID_SIZE: the level is above the speaker's cap, or the
+ * recording would be longer than GW_CAL_RECORD_MAX_S. */
+esp_err_t gw_calib_sweep_start(const uint8_t mac[6], bool raw, bool per_way,
+                               const gw_cal_sweep_opts_t *opts);
+/* Check levels: 3 s of pink noise from the speaker at level_db10 (RMS, not
+ * above its cap), what the microphone hears in status.levels. */
+esp_err_t gw_calib_levels_start(const uint8_t mac[6], int16_t level_db10);
+/* The most a speaker may play for Room EQ (RMS, tenths of a dB), kept in
+ * the Gateway's NVS; GW_CAL_CAP_DEFAULT_DB10 until set. */
+int16_t gw_calib_cap_get(const uint8_t mac[6]);
+esp_err_t gw_calib_cap_set(const uint8_t mac[6], int16_t cap_db10);
 /* The sweep recording with that id while no run is under way: the
  * microphone's samples (gw_mic.h: full scale GW_MIC_FULL_SCALE) from
  * sweep.from on, sweep.count of them. Only for the HTTP task, which also

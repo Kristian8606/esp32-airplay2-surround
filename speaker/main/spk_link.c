@@ -524,12 +524,38 @@ static void dispatch(int fd, uint8_t type, const uint8_t *p, size_t len) {
               (unsigned)m.flags);
       /* The link task plays them itself (a few seconds): forwarded calls
        * and TIME wait in the socket meanwhile. Never during a stream. */
+      cal_play_spec_t spec = {0};
+#if defined(SURROUND_PROTO_ROOMEQ)
+      /* Room EQ as REW: a sweep of the length, range and RMS level asked
+       * (its peak 3 dB above), or the pink noise of Check levels. */
+      const cal_chirp_kind_t ck = cal_chirp_kind(m.kind);
+      const float rms = powf(10.0f, (float)m.level_rms_db10 / 200.0f);
+      if (ck == CAL_NOISE_PINK) {
+        spec.custom = m.level_rms_db10 <= 0;
+        spec.gain = rms;
+      } else if (cal_chirp_is_sweep(ck) && m.sweep_ms) {
+        spec.custom = m.level_rms_db10 <= 0 &&
+                      cal_sweep_custom(m.sweep_ms, m.lo_hz, m.hi_hz, &spec.def);
+        spec.gain = rms * (float)M_SQRT2;
+        if (!spec.custom) {
+          AP_LOGW(TAG, "CMD cal_play: sweep %u ms, %u-%u Hz, %.1f dBFS RMS not possible",
+                  (unsigned)m.sweep_ms, (unsigned)m.lo_hz, (unsigned)m.hi_hz,
+                  m.level_rms_db10 / 10.0);
+        }
+      }
+      if (spec.custom) {
+        AP_LOGI(TAG, "CMD cal_play: Room EQ %s, %u ms, %u-%u Hz, %.1f dBFS RMS, %d x",
+                cal_chirp_name(ck), (unsigned)m.sweep_ms, (unsigned)m.lo_hz,
+                (unsigned)m.hi_hz, m.level_rms_db10 / 10.0, bursts);
+      }
+#endif
       if (!s_stream_started) {
         int64_t emit_us[SURROUND_CAL_BURSTS_MAX] = {0};
         int n = 0;
         esp_err_t err = sound_engine_play_cal_chirps(m.kind, m.level_db,
-                                                       bursts, m.flags, emit_us,
-                                                       r.way, &n);
+                                                       bursts, m.flags,
+                                                       spec.custom ? &spec : NULL,
+                                                       emit_us, r.way, &n);
         /* The sound leaves the speaker the output latency later. */
         const int64_t out_ns =
             (int64_t)sound_engine_get_output_latency_us() * 1000LL;

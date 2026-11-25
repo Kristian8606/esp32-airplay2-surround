@@ -65,9 +65,10 @@ esp_err_t gw_speakers_set_config(const uint8_t mac[6],
                                  const surround_set_config_t *cfg);
 
 /* Room calibration: ask the speaker with this MAC to play test chirps; its
- * CAL_RESULT goes to gw_calib_on_result(). ESP_ERR_NOT_FOUND when not
- * connected. */
-esp_err_t gw_speakers_cal_play(const uint8_t mac[6],
+ * CAL_RESULT goes to gw_calib_on_result(). The link waits play_ms longer for
+ * it than for chirps (it plays instead of answering). ESP_ERR_NOT_FOUND when
+ * not connected. */
+esp_err_t gw_speakers_cal_play(const uint8_t mac[6], uint32_t play_ms,
                                const surround_cal_play_t *m);
 
 /* The access point's TSF to this ESP's clock (esp_timer, ns), through the

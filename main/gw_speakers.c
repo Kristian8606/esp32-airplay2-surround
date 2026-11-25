@@ -961,7 +961,7 @@ esp_err_t gw_speakers_set_config(const uint8_t mac[6],
   return err;
 }
 
-esp_err_t gw_speakers_cal_play(const uint8_t mac[6],
+esp_err_t gw_speakers_cal_play(const uint8_t mac[6], uint32_t play_ms,
                                const surround_cal_play_t *m) {
   if (!s_lock || !m) return ESP_ERR_INVALID_STATE;
   esp_err_t err = ESP_ERR_NOT_FOUND;
@@ -972,7 +972,7 @@ esp_err_t gw_speakers_cal_play(const uint8_t mac[6],
         memcmp(sp->hello.mac, mac, sizeof(sp->hello.mac)) != 0)
       continue;
     send_frame(sp, SURROUND_MSG_CAL_PLAY, m, sizeof(*m));
-    sp->cal_until_us = esp_timer_get_time() + GW_CAL_LINK_GRACE_US;
+    sp->cal_until_us = esp_timer_get_time() + GW_CAL_LINK_GRACE_US + (int64_t)play_ms * 1000LL;
     err = sp->dead ? ESP_FAIL : ESP_OK;
     break;
   }

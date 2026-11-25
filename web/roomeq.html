@@ -101,12 +101,21 @@ svg.graph text{font-size:11px;fill:var(--muted);font-family:inherit}
   <div class='fg'><label for='pos'>Microphone position</label><select id='pos'><option value='1'>1 &middot; main seat</option><option value='2'>2</option><option value='3'>3</option><option value='4'>4</option><option value='5'>5</option></select></div>
   <div class='fg'><label for='mic'>Microphone</label><select id='mic'><option value='inmp441'>INMP441 &middot; to 16 kHz</option><option value='flat'>Calibrated, flat &middot; to 20 kHz</option></select></div>
  </div>
+ <div class='ctl5' style='margin-top:10px'>
+  <div class='fg'><label for='m-lo'>Start (Hz)</label><div class='lvl'><input id='m-lo' type='number' min='10' max='10000' step='1' value='20' inputmode='numeric'></div></div>
+  <div class='fg'><label for='m-hi'>End (Hz)</label><div class='lvl'><input id='m-hi' type='number' min='20' max='20000' step='1' value='20000' inputmode='numeric'></div></div>
+  <div class='fg'><label for='m-len'>Length</label><select id='m-len'><option value='2731'>128k &middot; 2.7 s</option><option value='5461' selected>256k &middot; 5.5 s</option><option value='10923'>512k &middot; 10.9 s</option></select></div>
+  <div class='fg'><label for='m-lvl'>Level (dBFS RMS)</label><div class='lvl'><input id='m-lvl' type='number' min='-40' max='-3' step='0.5' value='-18' inputmode='decimal'></div></div>
+  <div class='fg'><label for='m-rep'>Repetitions</label><select id='m-rep'><option value='1' selected>1</option><option value='2'>2</option><option value='4'>4</option></select></div>
+  <div class='fg'><label for='m-cap'>Speaker's limit (dBFS RMS)</label><div class='lvl'><input id='m-cap' type='number' min='-40' max='-3' step='0.5' inputmode='decimal'><button class='btn sec' id='m-capset' type='button'>Set</button></div></div>
+ </div>
  <div class='opts' style='align-items:center'>
   <label id='perway-l'><input type='checkbox' id='perway' checked>Bi-amp: each driver on its own</label>
  </div>
- <div class='actions'><button class='btn' id='go'>Measure</button><span class='msg' id='msg'></span></div>
+ <div class='actions'><button class='btn sec' id='lv'>Check levels</button><button class='btn' id='go'>Measure</button><button class='btn sec' id='exp' disabled>Export for REW</button><span class='msg' id='msg'></span></div>
+ <div class='lvl-hint' id='lvres' style='font-size:12px;margin-top:8px'></div>
  <div class='cal-bar'><div id='bar'></div></div>
- <p class='help'>Put the Gateway at the seat with the microphone at ear height, and keep the room quiet. The speaker plays a 2.5 s sweep (one per driver when it is bi-amped, the other output silent), from &minus;30 dBFS up until it is clear of the room noise. It measures the speaker as it is in the room, for the correction: its filters, level, polarity and delay are left out, only a bi-amp crossover and the subwoofer's low-pass stay (they protect the drivers). After <b>Apply &amp; Save</b> the page offers a check: the same speaker measured as it now plays, with its new EQ, drawn over the one before. Measure every speaker from two or three positions 40&ndash;60 cm apart. A subwoofer is always measured mono. Nothing changes on the speakers.</p>
+ <p class='help'>Put the Gateway at the seat with the microphone at ear height, and keep the room quiet. As in REW: the speaker plays an exponential sweep (one per driver when it is bi-amped, the other output silent) at the <b>Level</b> you set, its RMS (the peak is 3 dB higher); <b>Length</b> and <b>Repetitions</b> (averaged) each give almost 3 dB less noise per doubling, a longer sweep better than more of them. It sweeps from half the start to twice the end frequency. <b>Check levels</b> first plays 3 s of pink noise at that level: as REW asks, the microphone should be between &minus;30 and &minus;12 dBFS RMS, with at least 6 dB headroom to full scale. The <b>speaker's limit</b> is kept on the Gateway: neither the sweep nor the noise is ever louder. <b>Export for REW</b> saves the last measurement's impulse responses as WAV (REW: File &rarr; Import &rarr; Import impulse response). It measures the speaker as it is in the room, for the correction: its filters, level, polarity and delay are left out, only a bi-amp crossover and the subwoofer's low-pass stay (they protect the drivers). After <b>Apply &amp; Save</b> the page offers a check: the same speaker measured as it now plays, with its new EQ, drawn over the one before. Measure every speaker from two or three positions 40&ndash;60 cm apart. A subwoofer is always measured mono. Nothing changes on the speakers.</p>
 </div>
 <div class='panel'>
  <div class='prow'><div class='ptitle'>Response</div>
@@ -213,24 +222,42 @@ const FDW_CYCLES=8,FDW_W=Array.from({length:21},(_,k)=>0.5*Math.pow(2,-k/2));
 /* One sweep in the recording: the impulse response by deconvolution, its
  * direct sound, then the response in each time window on the grid (dB re
  * the level played); mags[4] is the frequency-dependent one. */
-function analyse(s,x,b,ref,R,P,eps){
- const rate=s.rate,M=R[0].length,pre=Math.round(0.05*rate);
- const s0=Math.round(b.start)-pre,re=new Float64Array(M),im=new Float64Array(M);
+/* One burst's impulse response with its emission exactly at index pre: the
+ * recording from the whole sample before it, deconvolved, then moved by the
+ * fraction of a sample left (the Gateway places each burst to 0.01 sample;
+ * rounding it would cost up to 10 us). Spectrum in re/im (deconvolved). */
+function burstSpec(s,x,b,R,P,eps){
+ const rate=s.rate,M=R[0].length,pre=Math.round(0.05*rate),i0=Math.floor(b.start),frac=b.start-i0;
+ const s0=i0-pre,re=new Float64Array(M),im=new Float64Array(M);
  const n=Math.min(Math.ceil(s.period_s*rate)+pre,M);
  for(let i=0;i<n;i++){const k=s0+i;re[i]=k>=0&&k<x.length?x[k]:0;}
  fft(re,im,false);
- for(let i=0;i<M;i++){const yr=re[i],yi=im[i],rr=R[0][i],ri=R[1][i],d=P[i]+eps;re[i]=(yr*rr+yi*ri)/d;im[i]=(yi*rr-yr*ri)/d;}
+ for(let i=0;i<M;i++){const yr=re[i],yi=im[i],rr=R[0][i],ri=R[1][i],d=P[i]+eps;
+  const hr=(yr*rr+yi*ri)/d,hi=(yi*rr-yr*ri)/d,kk=i<=M/2?i:i-M,ph=2*Math.PI*kk*frac/M,c=Math.cos(ph),sn=Math.sin(ph);
+  re[i]=hr*c-hi*sn;im[i]=hr*sn+hi*c;}
+ return [re,im];
+}
+/* Several bursts of one driver (repetitions): their responses averaged, as
+ * REW's synchronous averaging; then the impulse response. */
+function averagedIR(s,x,bs,R,P,eps){
+ const M=R[0].length,re=new Float64Array(M),im=new Float64Array(M);
+ bs.forEach(b=>{const [r,i]=burstSpec(s,x,b,R,P,eps);for(let k=0;k<M;k++){re[k]+=r[k]/bs.length;im[k]+=i[k]/bs.length;}});
  fft(re,im,true);
+ return re;
+}
+function analyse(s,x,bs,ref,R,P,eps){
+ const rate=s.rate,M=R[0].length,pre=Math.round(0.05*rate);
+ const re=averagedIR(s,x,bs,R,P,eps);
  /* The direct sound: the strongest peak within 0.2 s of the start. */
  let p=0,pk=0;const lim=Math.min(M,pre+Math.round(0.2*rate));
  for(let i=0;i<lim;i++){const v=Math.abs(re[i]);if(v>pk){pk=v;p=i;}}
- const arrival=(p+s0-b.start)/rate*1000;
+ const arrival=(p-pre)/rate*1000;
  const gain=-s.level_db,mags=WINDOWS.map(W=>windowMag(re,p,M,W,rate,gain));
  const fm=FDW_W.map((W,k)=>k===0?mags[0]:windowMag(re,p,M,W,rate,gain)),fdw=new Array(GCOUNT);
  for(let g=0;g<GCOUNT;g++){const W=Math.max(FDW_W[20],Math.min(FDW_W[0],FDW_CYCLES/gridF(g))),x=-2*Math.log2(W/FDW_W[0]),k=Math.min(19,Math.floor(x)),t=x-k;
   fdw[g]=Math.round((fm[k][g]*(1-t)+fm[k+1][g]*t)*100)/100;}
  mags.push(fdw);
- return {arrival_ms:Math.round(arrival*100)/100,mags};
+ return {arrival_ms:Math.round(arrival*100)/100,mags,ir:re,p};
 }
 
 async function importSweep(s){
@@ -247,11 +274,21 @@ async function importSweep(s){
  const P=new Float64Array(M);let maxP=0;for(let i=0;i<M;i++){P[i]=rr[i]*rr[i]+ri[i]*ri[i];if(P[i]>maxP)maxP=P[i];}
  const eps=maxP*1e-6,low=s.kind==='low sweep';
  const pos=pendingPos||document.getElementById('pos').value,mic=document.getElementById('mic').value;
- s.bursts.forEach((b,i)=>{
-  const a=analyse(s,x,b,ref,[rr,ri],P,eps);
-  meas.push({key:s.id+'.'+i,id:s.id,t:Date.now(),mac:s.mac,name:s.name,channel:s.channel,way:b.way,outputs:b.outputs,pos:+pos,raw:s.raw,level_db:s.level_db,snr_db:b.snr_db,mic,
-   lo:low?Math.max(20,s.f0_hz*1.4):Math.max(20,s.f0_hz*1.07),hi:low?Math.min(350,s.f1_hz*0.875):Math.min(mic==='flat'?20000:16000,s.f1_hz),arrival_ms:a.arrival_ms,mags:a.mags,on:true,color:COLORS[meas.length%COLORS.length]});
+ /* The repetitions of a driver averaged into one measurement, as REW. */
+ const groups=[];s.bursts.forEach(b=>{let g=groups.find(g=>g.way===b.way);if(!g)groups.push(g={way:b.way,outputs:b.outputs,bs:[]});g.bs.push(b);});
+ lastIR={name:s.name,channel:s.channel,rate:s.rate,level_db:s.level_db,ways:[]};
+ groups.forEach((g,i)=>{
+  const a=analyse(s,x,g.bs,ref,[rr,ri],P,eps),snr=Math.min(...g.bs.map(b=>b.snr_db));
+  /* The range it measures: what was asked (REW's start and end), within
+   * what the sweep and the microphone reach. */
+  const lo=s.lo_hz?Math.max(15,s.lo_hz):low?Math.max(20,s.f0_hz*1.4):Math.max(20,s.f0_hz*1.07);
+  const hi=Math.min(mic==='flat'?20000:16000,s.hi_hz?s.hi_hz:low?Math.min(350,s.f1_hz*0.875):s.f1_hz);
+  meas.push({key:s.id+'.'+i,id:s.id,t:Date.now(),mac:s.mac,name:s.name,channel:s.channel,way:g.way,outputs:g.outputs,pos:+pos,raw:s.raw,level_db:s.level_db,snr_db:snr,mic,
+   lo,hi,arrival_ms:a.arrival_ms,mags:a.mags,on:true,color:COLORS[meas.length%COLORS.length],
+   len_s:s.length_s,reps:g.bs.length,rms_db:s.level_rms_db});
+  lastIR.ways.push({way:g.way,ir:a.ir,p:a.p});
  });
+ document.getElementById('exp').disabled=false;
  pendingPos=null;save();render();
  if(s.raw)calcState('');
  else if(check&&check.mac===s.mac&&cur&&cur.mac===s.mac){
@@ -319,10 +356,13 @@ async function loadSpeakers(){
  buttons();
 }
 const isSub=mac=>{const s=speakers.find(x=>x.mac===mac);return !!s&&s.channel===3;};
-function buttons(){document.getElementById('go').disabled=busy||!speakers.length;['spk','pos','mic','perway'].forEach(id=>document.getElementById(id).disabled=busy);
+function buttons(){document.getElementById('go').disabled=busy||!speakers.length;document.getElementById('lv').disabled=busy||!speakers.length;['spk','pos','mic','perway','m-lo','m-hi','m-len','m-lvl','m-rep','m-cap','m-capset'].forEach(id=>document.getElementById(id).disabled=busy);
  /* A subwoofer plays mono: no drivers to measure on their own. */
  document.getElementById('perway-l').style.display=isSub(document.getElementById('spk').value)?'none':'';}
-document.getElementById('spk').onchange=buttons;
+/* A new speaker: its limit, and the range REW would start from for it (a
+ * subwoofer 15-300 Hz). */
+document.getElementById('spk').onchange=()=>{buttons();showCap();
+ const sub=isSub(document.getElementById('spk').value);document.getElementById('m-lo').value=sub?15:20;document.getElementById('m-hi').value=sub?300:20000;};
 try{const v=localStorage.getItem('roomeq.mic');if(v)document.getElementById('mic').value=v;}catch(e){}
 document.getElementById('mic').onchange=()=>{try{localStorage.setItem('roomeq.mic',document.getElementById('mic').value);}catch(e){}};
 async function poll(){
@@ -331,10 +371,12 @@ async function poll(){
  if(!c.mic_built){setMsg('This Gateway is built without the calibration microphone.','err');document.getElementById('st-mic').textContent='none';busy=true;buttons();return;}
  if(c.noise_dbfs!==undefined)document.getElementById('st-mic').textContent='noise '+c.noise_dbfs.toFixed(0)+' dBFS';
  const was=busy;busy=c.state==='busy';stream=c.stream_active;
+ if(c.caps){caps=c.caps;showCap();}
  document.getElementById('mpanel').classList.toggle('busy',busy);
  document.getElementById('bar').style.width=busy?(c.steps?Math.max(5,100*(c.step-0.5)/c.steps):5)+'%':'0';
  buttons();
  if(busy){setMsg(c.message||'Measuring…');}
+ else if(lvWanted&&!busy){lvWanted=false;showLevels(c.levels);setMsg(c.message||'',c.state==='failed'?'err':'ok');}
  else if(c.sweep_run&&c.sweep&&(was||pendingPos)){
   try{await importSweep(c.sweep);setMsg((c.message||'Measured.')+(c.sender_stopped?' The Apple TV was disconnected: pick the Gateway again as its audio output.':''),'ok');}
   catch(e){setMsg('The measurement could not be read: '+e.message,'err');}
@@ -343,15 +385,52 @@ async function poll(){
 }
 /* One sweep of a speaker: raw (EQ off) for the correction, or as it plays
  * (its EQ on) for the check after Apply & Save. */
+/* The measurement settings, as REW's measurement dialog. */
+function sweepOpts(){return {length_ms:+document.getElementById('m-len').value,lo_hz:Math.round(+document.getElementById('m-lo').value),
+ hi_hz:Math.round(+document.getElementById('m-hi').value),level_db:+document.getElementById('m-lvl').value,repeats:+document.getElementById('m-rep').value};}
 async function startSweep(mac,raw,perWay){
  if(stream&&!confirm('The Apple TV is connected to the Gateway. The measurement disconnects it; afterwards pick the Gateway again as its audio output. Continue?'))return false;
- try{const r=await fetch('/api/calibration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'sweep',mac,raw,per_way:perWay&&!isSub(mac)})});
+ try{const r=await fetch('/api/calibration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'sweep',mac,raw,per_way:perWay&&!isSub(mac),...sweepOpts()})});
   const d=await r.json();if(!d.success){setMsg(d.error||'Error','err');return false;}
   pendingPos=document.getElementById('pos').value;busy=true;buttons();setMsg('Starting…');
  }catch(e){setMsg('Error','err');return false;}
  setTimeout(poll,500);return true;
 }
 document.getElementById('go').onclick=()=>{const mac=document.getElementById('spk').value;if(mac)startSweep(mac,true,document.getElementById('perway').checked);};
+/* ---- Check levels, the speaker's limit, Export for REW ---- */
+let caps={},lvWanted=false,lastIR=null;
+document.getElementById('lv').onclick=async()=>{const mac=document.getElementById('spk').value;if(!mac)return;
+ if(stream&&!confirm('The Apple TV is connected to the Gateway. Check levels disconnects it; afterwards pick the Gateway again as its audio output. Continue?'))return;
+ try{const r=await fetch('/api/calibration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'levels',mac,level_db:+document.getElementById('m-lvl').value})});
+  const d=await r.json();if(!d.success){setMsg(d.error||'Error','err');return;}
+  lvWanted=true;busy=true;buttons();setMsg('Check levels…');document.getElementById('lvres').textContent='';
+ }catch(e){setMsg('Error','err');return;}
+ setTimeout(poll,500);};
+/* As REW shows it: the microphone's RMS against -30..-12 dBFS, the headroom
+ * to full scale (red under 6 dB) and the room noise below it. */
+function showLevels(l){const el=document.getElementById('lvres');if(!l){el.textContent='';return;}
+ const head=-l.peak_dbfs,snr=l.rms_dbfs-l.noise_dbfs,mic=document.getElementById('mic').value;
+ const range=l.rms_dbfs<-30?'below −30: raise the level (or move the microphone closer)':l.rms_dbfs>-12?'above −12: lower the level':'within −30…−12, as REW asks';
+ const col=v=>"<b style='color:"+v+"'>";
+ el.innerHTML='Check levels '+esc(l.name)+' at '+l.level_rms_db.toFixed(1)+' dBFS RMS: microphone '+col(l.rms_dbfs<-30||l.rms_dbfs>-12?'#f7c46c':'#7ee2a0')+l.rms_dbfs.toFixed(1)+' dBFS RMS</b> ('+range+'), headroom '+
+  col(head<6?'#ff8a80':'#7ee2a0')+head.toFixed(1)+' dB</b>'+(l.clipped?' — clipped':'')+', '+snr.toFixed(0)+' dB above the room noise'+(mic==='inmp441'?', about '+Math.round(l.rms_dbfs+120)+' dB SPL (REW: about 75)':'')+'.';}
+function showCap(){const mac=document.getElementById('spk').value,c=caps[mac];const el=document.getElementById('m-cap');
+ if(c!==undefined&&document.activeElement!==el)el.value=c;document.getElementById('m-lvl').max=c!==undefined?c:-3;}
+document.getElementById('m-capset').onclick=async()=>{const mac=document.getElementById('spk').value,v=+document.getElementById('m-cap').value;if(!mac||!isFinite(v))return;
+ try{const r=await fetch('/api/calibration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'cap',mac,cap_db:v})});
+  const d=await r.json();if(!d.success){setMsg(d.error||'Error','err');return;}caps[mac]=v;
+  if(+document.getElementById('m-lvl').value>v)document.getElementById('m-lvl').value=v;showCap();setMsg('The limit of this speaker is now '+v.toFixed(1)+' dBFS RMS.','ok');
+ }catch(e){setMsg('Error','err');}};
+document.getElementById('m-lvl').onchange=()=>{const e=document.getElementById('m-lvl'),c=caps[document.getElementById('spk').value];if(c!==undefined&&+e.value>c){e.value=c;setMsg('Not louder than the speaker\'s limit ('+c.toFixed(1)+' dBFS RMS).','err');}};
+/* REW imports an impulse response as a WAV file: 32-bit float, mono, from
+ * 50 ms before the direct sound, 1 s long, scaled to the level played. */
+document.getElementById('exp').onclick=()=>{if(!lastIR)return;
+ lastIR.ways.forEach(w=>{const rate=lastIR.rate,from=Math.max(0,w.p-Math.round(0.05*rate)),n=Math.min(w.ir.length-from,rate+Math.round(0.05*rate)),g=Math.pow(10,-lastIR.level_db/20);
+  const buf=new ArrayBuffer(44+n*4),v=new DataView(buf),str=(o,t)=>{for(let i=0;i<t.length;i++)v.setUint8(o+i,t.charCodeAt(i));};
+  str(0,'RIFF');v.setUint32(4,36+n*4,true);str(8,'WAVE');str(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,3,true);v.setUint16(22,1,true);v.setUint32(24,rate,true);v.setUint32(28,rate*4,true);v.setUint16(32,4,true);v.setUint16(34,32,true);str(36,'data');v.setUint32(40,n*4,true);
+  for(let i=0;i<n;i++)v.setFloat32(44+i*4,w.ir[from+i]*g,true);
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([buf],{type:'audio/wav'}));
+  a.download=(TITLE[lastIR.channel]||lastIR.name).replace(/\s+/g,'-')+'-'+w.way+'.wav';document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1000);});};
 document.getElementById('smooth').onchange=drawGraph;
 document.getElementById('clear').onclick=()=>{if(meas.length&&confirm('Delete all measurements kept in this browser?')){meas=[];save();render();}};
 /* ==== Correction ====

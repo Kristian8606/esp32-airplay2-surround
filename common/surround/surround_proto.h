@@ -26,8 +26,12 @@
 /* 13: USB player lanes (surround_player_formats.h) and SET_ALAC_CONFIG. Only
  * with the experimental option, on both sides: a speaker that cannot play
  * the player's lanes does not join a Gateway that sends them, and gets the
- * Gateway's firmware through FW_UPDATE as for any version change. */
-#define SURROUND_PROTO_VERSION   13
+ * Gateway's firmware through FW_UPDATE as for any version change.
+ * 14: Room EQ's sweeps as REW's (ROADMAP_ROOM_EQ.md): CAL_PLAY carries the
+ * sweep's length, range and RMS level, and pink noise for Check levels.
+ * Built on 13, so with the same option. */
+#define SURROUND_PROTO_VERSION   14
+#define SURROUND_PROTO_ROOMEQ    1
 #else
 #define SURROUND_PROTO_VERSION   SURROUND_PROTO_VERSION_SWEEPS
 #endif
@@ -318,6 +322,18 @@ typedef struct __attribute__((packed)) {
   int8_t level_db;  /* chirp peak, dB below full scale */
   uint8_t bursts;   /* 1 .. SURROUND_CAL_BURSTS_MAX (per way: ignored) */
   uint8_t flags;    /* SURROUND_CAL_* */
+#if defined(SURROUND_PROTO_ROOMEQ)
+  /* Version 14, Room EQ as REW: a sweep of sweep_ms (cal_sweep_custom) for
+   * lo_hz .. hi_hz, or with kind CAL_NOISE_PINK the pink noise; both at
+   * level_rms_db10 (RMS, tenths of a dB below full scale; a sine sweep's
+   * peak is 3 dB above it) instead of level_db. Repeats: bursts sweeps (or,
+   * per way, bursts per driver, the drivers taking turns). sweep_ms = 0
+   * with a sweep kind: its fixed sweep, as before. */
+  uint16_t sweep_ms;
+  uint16_t lo_hz;
+  uint16_t hi_hz;
+  int16_t level_rms_db10;
+#endif
 } surround_cal_play_t;
 
 /* way[] of CAL_RESULT: the outputs that played (left, right) and, with
