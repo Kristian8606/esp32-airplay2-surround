@@ -6,7 +6,38 @@
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,'SF Pro Display','Helvetica Neue',system-ui,sans-serif;-webkit-font-smoothing:antialiased;background:var(--bg) radial-gradient(1200px 500px at 50% -200px,var(--halo,rgba(110,90,255,.16)),transparent 70%) no-repeat;min-height:100vh;padding:20px 16px 40px;color:var(--text)}
 a{color:var(--accent);text-decoration:none}
-.wrap{max-width:1180px;margin:0 auto}
+.wrap{max-width:1440px;margin:0 auto}
+/* Steps, as a window: one at a time. */
+.steps{display:flex;gap:4px;flex-wrap:wrap;padding:4px;border-radius:14px;background:var(--panel);border:1px solid var(--line);margin-bottom:14px;position:sticky;top:8px;z-index:20;box-shadow:0 8px 24px rgba(0,0,0,.45)}
+.pane{scroll-margin-top:90px}
+.steps button{flex:1;min-width:120px;white-space:nowrap;border:0;border-radius:10px;padding:10px 12px;font:inherit;font-size:14px;font-weight:600;color:var(--muted);background:transparent;cursor:pointer;text-align:left}
+.steps button b{display:inline-block;width:22px;height:22px;line-height:22px;text-align:center;border-radius:50%;border:1px solid var(--line2);font-size:12px;margin-right:8px}
+.steps button.on{background:var(--accent-soft,rgba(139,123,255,.14));color:var(--text)}
+.steps button.on b{background:var(--accent);border-color:var(--accent);color:var(--accent-ink,#fff)}
+.steps button:disabled{opacity:.4;cursor:not-allowed}
+.pane[hidden]{display:none}
+.side{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(280px,1fr);gap:14px;align-items:start}
+@media(max-width:900px){.side{grid-template-columns:1fr}}
+/* The room map, as on the speakers page. */
+.room{position:relative;width:100%;max-width:620px;margin:0 auto;aspect-ratio:1/1}
+.room .floor{position:absolute;inset:2%;border:1px solid var(--line);border-radius:28px;background:radial-gradient(circle at 50% 58%,var(--room-glow,rgba(139,123,255,.10)),transparent 55%)}
+.room .screen{position:absolute;left:32%;right:32%;top:1.5%;height:5px;border-radius:3px;background:var(--glow)}
+.room .ring{position:absolute;left:50%;top:56%;width:56%;aspect-ratio:1/1;transform:translate(-50%,-50%);border-radius:50%;border:1px solid var(--line);background:rgba(0,0,0,.18)}
+.room .seat{position:absolute;left:50%;top:58%;transform:translate(-50%,-50%);color:var(--muted);font-size:11px}
+.node{position:absolute;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:5px;width:110px}
+.node .dot{width:54px;height:48px;border-radius:14px;border:1px dashed rgba(255,255,255,.22);color:#5d5d63;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;background:#08080a;transition:all .2s}
+.node .who{font-size:11px;color:var(--muted);max-width:110px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:13px;text-align:center}
+.node.on{cursor:pointer}.node.on .dot{border:1px solid rgba(255,255,255,.75);color:#fff}
+.node.sel .dot{border:2px solid var(--accent);background:var(--accent-soft,rgba(139,123,255,.14));color:var(--text);box-shadow:0 0 18px var(--accent-glow,rgba(139,92,255,.5))}
+.node .done{color:#7ee2a0}
+.mixrow{display:flex;justify-content:center;gap:6px;flex-wrap:wrap;margin-top:8px}
+.pick{display:flex;gap:4px;flex-wrap:wrap;padding:3px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);width:max-content;max-width:100%}
+.pick button{border:0;border-radius:9px;padding:8px 14px;font:inherit;font-size:13px;font-weight:600;color:var(--muted);background:transparent;cursor:pointer}
+.pick button.on{background:var(--accent-soft,rgba(139,123,255,.14));color:var(--text)}
+.spkcard h2{font-size:22px;font-weight:700;margin-bottom:2px}
+.spkcard .meta{font-size:13px;color:var(--muted);margin-bottom:14px}
+.spkcard .fg{margin-top:12px}
+@media(max-width:560px){.node{width:76px}.node .dot{width:40px;height:38px;font-size:11px}.node .who{font-size:9px;max-width:76px}.steps button{min-width:44%}}
 .header{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;padding:18px 0 22px}
 .header h1{font-size:30px;font-weight:300;letter-spacing:.5px}
 .header h1 b{font-weight:600}
@@ -100,11 +131,25 @@ svg.graph .cur .box{fill:var(--panel);stroke:var(--line2)}
  <div><h1><b>Room</b> EQ</h1><div class='bar'></div><p>Each speaker's frequency response at your seat, from the Gateway's microphone. <a href='/speakers'>&larr; Speakers</a></p></div>
  <div class='now'><div class='stat'><label>Microphone</label><span id='st-mic'>&mdash;</span></div><div class='stat'><label>Measurements</label><span id='st-count'>0</span></div></div>
 </div>
+<div class='steps' id='steps' role='tablist' aria-label='Room EQ steps'>
+ <button type='button' data-s='1' class='on'><b>1</b>Speaker</button><button type='button' data-s='2'><b>2</b>Settings</button><button type='button' data-s='3'><b>3</b>Measurement</button><button type='button' data-s='4'><b>4</b>EQ</button><button type='button' data-s='5' disabled title='Comes with the bi-amp step'><b>5</b>Alignment</button><button type='button' data-s='6' disabled title='Comes with the check step'><b>6</b>Check</button>
+</div>
+<div class='pane' id='pane1'><div class='side'>
+ <div class='panel'><div class='ptitle'>Click a speaker</div>
+  <div class='room' id='eqroom'><div class='floor'></div><div class='ring'></div><div class='screen'></div><div class='seat'>you</div></div>
+  <div class='mixrow' id='eqmix'></div></div>
+ <div class='panel spkcard'><div class='ptitle'>Speaker</div><h2 id='sc-name'>&mdash;</h2><div class='meta' id='sc-meta'>Click one on the map.</div>
+  <div class='fg' id='sc-what-l'><label>What to measure</label><div class='pick' id='sc-what'><button type='button' data-w='ways' class='on'>Each driver</button><button type='button' data-w='both'>Both together</button><button type='button' data-w='all'>All three</button></div></div>
+  <div class='fg'><label>Microphone position</label><div class='pick' id='sc-pos'><button type='button' data-p='1' class='on'>1 &middot; main seat</button><button type='button' data-p='2'>2</button><button type='button' data-p='3'>3</button><button type='button' data-p='4'>4</button><button type='button' data-p='5'>5</button></div></div>
+  <div class='actions'><button class='btn' type='button' id='sc-next'>Next: settings</button></div>
+  <p class='help'>Measure each speaker from two or three positions 40&ndash;60 cm apart around your seat; Room EQ averages them. A bi-amp speaker is measured driver by driver, both drivers together, or all three in a row.</p></div>
+</div></div>
+<div class='pane' id='pane2'>
 <div class='panel' id='mpanel'>
- <div class='ptitle'>Measure</div>
+ <div class='ptitle'>Measurement settings</div>
  <div class='ctl'>
-  <div class='fg'><label for='spk'>Speaker</label><select id='spk'><option>Loading&hellip;</option></select></div>
-  <div class='fg'><label for='pos'>Microphone position</label><select id='pos'><option value='1'>1 &middot; main seat</option><option value='2'>2</option><option value='3'>3</option><option value='4'>4</option><option value='5'>5</option></select></div>
+  <div class='fg' style='display:none'><label for='spk'>Speaker</label><select id='spk'><option>Loading&hellip;</option></select></div>
+  <div class='fg' style='display:none'><label for='pos'>Microphone position</label><select id='pos'><option value='1'>1 &middot; main seat</option><option value='2'>2</option><option value='3'>3</option><option value='4'>4</option><option value='5'>5</option></select></div>
   <div class='fg'><label for='mic'>Microphone</label><select id='mic'><option value='inmp441'>INMP441 &middot; to 16 kHz</option><option value='flat'>Calibrated, flat &middot; to 20 kHz</option></select></div>
  </div>
  <div class='ctl5' style='margin-top:10px'>
@@ -116,13 +161,16 @@ svg.graph .cur .box{fill:var(--panel);stroke:var(--line2)}
   <div class='fg'><label for='m-cap'>Speaker's limit (dBFS RMS)</label><div class='lvl'><input id='m-cap' type='number' min='-40' max='-3' step='0.5' inputmode='decimal'><button class='btn sec' id='m-capset' type='button'>Set</button></div></div>
  </div>
  <div class='opts' style='align-items:center'>
-  <label id='perway-l'><input type='checkbox' id='perway' checked>Bi-amp: each driver on its own</label>
+  <label id='perway-l' style='display:none'><input type='checkbox' id='perway' checked>Bi-amp: each driver on its own</label>
+  <span class='lvl-hint' id='m-for'></span>
  </div>
  <div class='actions'><button class='btn sec' id='lv'>Check levels</button><button class='btn' id='go'>Measure</button><button class='btn sec' id='exp' disabled>Export for REW</button><span class='msg' id='msg'></span></div>
  <div class='lvl-hint' id='lvres' style='font-size:12px;margin-top:8px'></div>
  <div class='cal-bar'><div id='bar'></div></div>
  <p class='help'>Put the Gateway at the seat with the microphone at ear height, and keep the room quiet. As in REW: the speaker plays an exponential sweep (one per driver when it is bi-amped, the other output silent) at the <b>Level</b> you set, its RMS (the peak is 3 dB higher); <b>Length</b> and <b>Repetitions</b> (averaged) each give almost 3 dB less noise per doubling, a longer sweep better than more of them. It sweeps from half the start to twice the end frequency. <b>Check levels</b> first plays 3 s of pink noise at that level: as REW asks, the microphone should be between &minus;30 and &minus;12 dBFS RMS, with at least 6 dB headroom to full scale. The <b>speaker's limit</b> is kept on the Gateway: neither the sweep nor the noise is ever louder. <b>Export for REW</b> saves the last measurement's impulse responses as WAV (REW: File &rarr; Import &rarr; Import impulse response). It measures the speaker as it is in the room, for the correction: its filters, level, polarity and delay are left out, only a bi-amp crossover and the subwoofer's low-pass stay (they protect the drivers). After <b>Apply &amp; Save</b> the page offers a check: the same speaker measured as it now plays, with its new EQ, drawn over the one before. Measure every speaker from two or three positions 40&ndash;60 cm apart. A subwoofer is always measured mono. Nothing changes on the speakers.</p>
 </div>
+</div>
+<div class='pane' id='pane3'>
 <div class='panel'>
  <div class='prow'><div class='ptitle'>Response</div>
   <div class='sel'>
@@ -137,6 +185,9 @@ svg.graph .cur .box{fill:var(--panel);stroke:var(--line2)}
  <div class='actions'><button class='btn sec' id='clear'>Delete all</button></div>
  <p class='help'>The levels are relative to the level played, so speakers, drivers and positions compare directly. The tick boxes choose what the graph shows, and the correction below uses the ones shown. The graph shows what reaches the seat in the 500 ms after the direct sound: the speaker with the room. Measurements with the speaker's EQ on are drawn dashed. The INMP441 is not calibrated and is specified from 60 Hz to 15 kHz, so with it the curves end at 16 kHz. The measurements are kept in this browser only.</p>
 </div>
+ <div class='actions' style='margin-top:-4px;margin-bottom:14px'><button class='btn' type='button' id='to-eq'>Next: EQ</button></div>
+</div>
+<div class='pane' id='pane4'>
 <div class='panel' id='cpanel'>
  <div class='ptitle'>Correction</div>
  <div class='ctl5'>
@@ -163,6 +214,7 @@ svg.graph .cur .box{fill:var(--panel);stroke:var(--line2)}
   <div class='actions'><button class='btn sec' id='c-apply'>Apply</button><button class='btn' id='c-save'>Apply &amp; Save</button><span class='msg' id='c-amsg'></span></div>
  </div>
  <p class='help'>From the measurements of that speaker shown above with its EQ off (several positions are averaged). Below about 500 Hz it works on what you hear in the room and cuts its peaks precisely. As in REW, everything above the target line is cut down to it; below it, a dip no deeper than <b>Individual max boost</b> is raised towards the line, and a deeper one is left as it is, because a deep dip from a reflection does not fill in with more power. No single filter raises more than <b>Individual max boost</b> (0 dB: cuts only), and all filters together raise no frequency by more than <b>Overall max boost</b>: with a high individual limit (say +12 dB) and a low overall one (say +3 dB) deeper dips are raised too, but only partly. A narrow dip is never raised. How narrow a filter may be is set as in REW: <b>Allow narrow filters below 200 Hz</b> allows Q up to 10 there, for a room's resonances (with averaged positions); above 200 Hz Q is 5 at most, or, with <b>Vary max Q above 200 Hz</b>, from 10 at 200 Hz down to 3 at 10 kHz and above. Without narrow filters, Q is 5 at most everywhere. A boost is never narrower than Q 3. <b>Allow low shelf</b> and <b>Allow high shelf</b> (off by default) add a shelf at that end of the range, as REW does, only where the curve stays above or below the line for at least half an octave there; the number beside each is the largest shelf gain either way (a boost still within the max boost limits). <b>Match range</b> is where filters may go at all (REW's match range); inside it, the curve's own crossings of the line still decide where correction starts and ends. It may use all 24 bands of an output (but for its own high- and low-pass bands, which it keeps; a bi-amp crossover is apart from them). Above the filters it says how much quieter (or louder) the speaker plays than before the correction, measured as <b>Calibrate</b> measures level. <b>Flatness target</b> is how close it goes: it stops once nothing is further than that from the line, and drops a filter of less than half of it; a wider one (up to &plusmn;6 dB) gives fewer, broader filters that depend less on where the microphone was. Above about 500 Hz it works on the speaker's own sound (the frequency-dependent window), since the room's reflections there change with every move of your head. It corrects only from where the curve first reaches the target line up to where it last does (as REW does), so a speaker's own roll-off is never boosted, and never above the microphone's range. <b>Target level</b> is where the target line sits at 1 kHz, on the graph's scale (dB re the level played): by default the speaker's own level between 200 Hz and 2 kHz (its woofer's with bi-amp), smoothed over one octave as REW does; type another one to move the line, as in REW, and everything above it is cut, below it raised within the max boost limits. It is kept for each speaker in this browser; <b>Auto</b> goes back to the default. The graph shows the target and the expected curve on the measurement's scale; the level of each output below includes the cut that keeps headroom for the boosts. A subwoofer is corrected up to 300 Hz at most, through the Gateway's crossover. With <b>bi-amp</b> each driver gets its own filters, and the tweeter's level is matched to the woofer's, raised by at most <b>Overall max boost</b> (filters and level together). <b>Apply</b> sends the result to the speaker now, <b>Apply &amp; Save</b> also keeps it after a restart. On the speaker it replaces the EQ bands and levels of its outputs and keeps their high- and low-pass bands; its outputs, crossover, polarity and delay stay as they are. After <b>Apply &amp; Save</b> it asks to check: the speaker is measured again with its new EQ (keep the microphone where it was), and the graph draws that curve over the one before, without calculating anything again; a bi-amp speaker is measured driver by driver and then with both together, drawn green against the target they should add up to, which shows a dip or a peak at the crossover; <b>Calculate</b> and the apply buttons rest until a setting or a measurement changes. Afterwards run <b>Calibrate</b> on the <a href='/speakers'>Speakers</a> page, as the correction changes the speaker's level.</p>
+</div>
 </div>
 </div><script>
 const TITLE={'-1':'Mono mix',0:'Front Left',1:'Front Right',2:'Centre',3:'Subwoofer',4:'Side Left',5:'Side Right',6:'Rear Left',7:'Rear Right'};
@@ -298,7 +350,9 @@ async function importSweep(s){
   lastIR.ways.push({way:g.way,ir:a.ir,p:a.p});
  });
  document.getElementById('exp').disabled=false;
- pendingPos=null;save();render();
+ pendingPos=null;save();render();drawMap();
+ if(chainBoth===s.mac&&s.raw&&s.bursts.some(b=>b.way==='woofer')){chainBoth=null;setMsg('Each driver measured; now both together…');if(await startSweep(s.mac,true,false))return;}
+ if(s.raw&&!(check&&check.mac===s.mac))goStep(3);
  if(s.raw)calcState('');
  else if(check&&check.mac===s.mac&&cur&&cur.mac===s.mac){
   showCheck();
@@ -412,7 +466,8 @@ function rgReset(id){const st=RG[id];if(!st)return;st.lo=20;st.hi=20000;rgDraw(i
 
 function drawGraph(){
  const kind=document.getElementById('smooth').value,win=+document.getElementById('gwin').value,span=+document.getElementById('gspan').value;
- const series=meas.filter(m=>m.on).map(m=>{const w=win===4&&!m.mags[4]?0:win,lo=Math.max(m.lo,w===4?0:1.5/WINDOWS[w]),v=smoothDb(m.mags[w],kind),pts=[];
+ const only=selMac();
+ const series=meas.filter(m=>m.on&&(!only||m.mac===only)).map(m=>{const w=win===4&&!m.mags[4]?0:win,lo=Math.max(m.lo,w===4?0:1.5/WINDOWS[w]),v=smoothDb(m.mags[w],kind),pts=[];
   for(let g=0;g<GCOUNT;g++){const f=gridF(g);if(f>=lo&&f<=m.hi)pts.push([f,v[g]]);}
   return {pts,color:m.color,width:1.5,dash:m.raw?'':'7 4',name:(TITLE[m.channel]||m.name)+' · '+m.way+' · p'+m.pos};});
  rgDraw('graph',series,{span,empty:'No measurement shown'});
@@ -427,7 +482,8 @@ function render(){
  document.getElementById('st-count').textContent=meas.length;
  cSpeakers();
  const lg=document.getElementById('legend');
- lg.innerHTML=meas.length?meas.map((m,i)=>{const d=new Date(m.t);
+ const only=selMac();
+ lg.innerHTML=meas.some(m=>!only||m.mac===only)?meas.map((m,i)=>{if(only&&m.mac!==only)return '';const d=new Date(m.t);
   return "<div class='li'><input type='checkbox' data-i='"+i+"'"+(m.on?' checked':'')+"><span class='sw' style='background:"+m.color+"'></span><div class='tx'><b>"+esc(TITLE[m.channel]||m.name)+"</b> &middot; "+esc(wayText(m))+" &middot; position "+m.pos+(m.raw?' &middot; EQ off':' &middot; <b>EQ on</b>')+
    "<div class='sub'>"+esc(m.name)+" &middot; "+m.level_db+" dBFS &middot; "+m.snr_db.toFixed(0)+" dB above noise &middot; direct sound after "+m.arrival_ms.toFixed(1)+" ms &middot; "+d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})+"</div></div><button class='x' data-del='"+i+"' title='Delete'>&times;</button></div>";}).join(''):"<div class='empty'>No measurements yet.</div>";
  lg.querySelectorAll('input[data-i]').forEach(e=>e.onchange=()=>{meas[+e.dataset.i].on=e.checked;save();drawGraph();calcState('');});
@@ -442,13 +498,14 @@ async function loadSpeakers(){
   const sel=document.getElementById('spk'),was=sel.value;
   sel.innerHTML=speakers.length?speakers.map(s=>"<option value='"+esc(s.mac)+"'>"+esc((TITLE[s.channel]||'Speaker')+' — '+s.name)+"</option>").join(''):'<option value="">No speaker connected</option>';
   if(speakers.some(s=>s.mac===was))sel.value=was;
+  else{let keep=null;try{keep=localStorage.getItem('roomeq.spk');}catch(e){}if(keep&&speakers.some(s=>s.mac===keep))pickSpeaker(keep);}
  }catch(e){}
- buttons();
+ buttons();drawMap();
 }
 const isSub=mac=>{const s=speakers.find(x=>x.mac===mac);return !!s&&s.channel===3;};
 function buttons(){document.getElementById('go').disabled=busy||!speakers.length;document.getElementById('lv').disabled=busy||!speakers.length;['spk','pos','mic','perway','m-lo','m-hi','m-len','m-lvl','m-rep','m-cap','m-capset'].forEach(id=>document.getElementById(id).disabled=busy);
  /* A subwoofer plays mono: no drivers to measure on their own. */
- document.getElementById('perway-l').style.display=isSub(document.getElementById('spk').value)?'none':'';}
+ document.getElementById('perway-l').style.display='none';}
 /* A new speaker: its limit, and the range REW would start from for it (a
  * subwoofer 15-300 Hz). */
 document.getElementById('spk').onchange=()=>{buttons();showCap();
@@ -486,7 +543,59 @@ async function startSweep(mac,raw,perWay){
  }catch(e){setMsg('Error','err');return false;}
  setTimeout(poll,500);return true;
 }
-document.getElementById('go').onclick=()=>{const mac=document.getElementById('spk').value;if(mac)startSweep(mac,true,document.getElementById('perway').checked);};
+/* ==== The window: steps, the room map, the speaker ==== */
+const SHORT={'-1':'MIX',0:'FL',1:'FR',2:'C',3:'SUB',4:'SL',5:'SR',6:'RL',7:'RR'};
+const SPOTS=[[0,30,15],[2,50,13],[1,70,15],[3,11,17],[4,8,56],[5,92,56],[6,24,90],[7,76,90]];
+const eqNodes={};let what='ways',chainBoth=null,biampOf={};
+/* One page that scrolls: a step scrolls to its part, and the part in view
+ * lights its step. */
+function markStep(n){document.querySelectorAll('#steps button').forEach(b=>{const on=+b.dataset.s===n;b.classList.toggle('on',on);b.setAttribute('aria-current',on?'step':'false');});}
+function goStep(n){markStep(n);const p=document.getElementById('pane'+n);if(p)p.scrollIntoView({behavior:'smooth',block:'start'});
+ if(n===3)drawGraph();
+ /* The correction for the speaker chosen, once it has measurements. */
+ if(n===4){const c=document.getElementById('c-spk'),mac=selMac();if(mac&&c.value!==mac&&[...c.options].some(o=>o.value===mac)){c.value=mac;c.dispatchEvent(new Event('change'));}}
+}
+(function(){const seen={};const io=new IntersectionObserver(es=>{es.forEach(e=>{seen[e.target.id]=e.isIntersecting?e.intersectionRatio:0;});
+ let best=null,v=0;for(const k in seen)if(seen[k]>v){v=seen[k];best=k;}if(best)markStep(+best.slice(4));},{threshold:[0,0.25,0.5,0.75,1],rootMargin:'-90px 0px -40% 0px'});
+ for(let i=1;i<=6;i++){const p=document.getElementById('pane'+i);if(p)io.observe(p);}})();
+document.querySelectorAll('#steps button').forEach(b=>b.onclick=()=>goStep(+b.dataset.s));
+document.getElementById('sc-next').onclick=()=>goStep(2);
+document.getElementById('to-eq').onclick=()=>goStep(4);
+(function(){const room=document.getElementById('eqroom');
+ SPOTS.forEach(([ch,x,y])=>{const n=document.createElement('div');n.className='node';n.style.left=x+'%';n.style.top=y+'%';
+  n.innerHTML="<div class='dot'>"+SHORT[ch]+"</div><div class='who'></div>";room.appendChild(n);
+  eqNodes[ch]={el:n,who:n.querySelector('.who'),macs:[]};
+  n.onclick=()=>{const m=eqNodes[ch].macs;if(!m.length)return;const i=m.indexOf(selMac());pickSpeaker(m[(i+1)%m.length]);};});})();
+const selMac=()=>{const v=document.getElementById('spk').value;return /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i.test(v)?v:'';};
+/* Choosing a speaker sets the measurement's and the correction's speaker. */
+function pickSpeaker(mac){
+ const sel=document.getElementById('spk');if(!speakers.some(s=>s.mac===mac))return;sel.value=mac;sel.dispatchEvent(new Event('change'));
+ const c=document.getElementById('c-spk');if([...c.options].some(o=>o.value===mac)){c.value=mac;c.dispatchEvent(new Event('change'));}
+ try{localStorage.setItem('roomeq.spk',mac);}catch(e){}
+ if(biampOf[mac]===undefined){biampOf[mac]=null;speakerEq(mac,'get').then(e=>{biampOf[mac]=e.output_mode==='biamp';drawMap();}).catch(()=>{delete biampOf[mac];});}
+ drawMap();render();}
+function drawMap(){
+ const mac=selMac(),mix=[];for(const ch in eqNodes)eqNodes[ch].macs=[];
+ speakers.forEach(s=>{if(s.channel===-1)mix.push(s);else if(eqNodes[s.channel])eqNodes[s.channel].macs.push(s.mac);});
+ for(const ch in eqNodes){const n=eqNodes[ch],on=n.macs.length>0,sel=n.macs.includes(mac);
+  n.el.className='node'+(on?' on':'')+(sel?' sel':'');
+  const sm=sel?mac:n.macs[0],cnt=sm?meas.filter(m=>m.mac===sm).length:0;
+  n.who.innerHTML=on?esc((speakers.find(s=>s.mac===sm)||{}).name||'')+(cnt?" <span class='done'>&middot; "+cnt+"</span>":''):'';}
+ document.getElementById('eqmix').innerHTML=mix.map(s=>"<button type='button' class='btn sec' data-m='"+esc(s.mac)+"'"+(s.mac===mac?" style='border-color:var(--accent)'":'')+">Mono mix: "+esc(s.name)+"</button>").join('');
+ document.querySelectorAll('#eqmix button').forEach(b=>b.onclick=()=>pickSpeaker(b.dataset.m));
+ const s=speakers.find(x=>x.mac===mac),bi=!!(s&&biampOf[mac]),sub=s&&s.channel===3;
+ document.getElementById('sc-name').textContent=s?(TITLE[s.channel]||'Speaker'):'—';
+ document.getElementById('sc-meta').textContent=s?s.name+' · '+s.ip+(bi?' · bi-amp':sub?' · subwoofer':'')+' · '+meas.filter(m=>m.mac===mac).length+' measurements in this browser':'Click one on the map.';
+ document.getElementById('sc-what-l').style.display=bi?'':'none';
+ document.getElementById('m-for').textContent=s?'For '+(TITLE[s.channel]||s.name)+' · '+s.name+(bi?' · '+({ways:'each driver',both:'both drivers together',all:'each driver, then both together'})[what]:'')+' · position '+document.getElementById('pos').value:'';
+}
+document.querySelectorAll('#sc-what button').forEach(b=>b.onclick=()=>{what=b.dataset.w;document.querySelectorAll('#sc-what button').forEach(x=>x.classList.toggle('on',x===b));
+ document.getElementById('perway').checked=what!=='both';drawMap();});
+document.querySelectorAll('#sc-pos button').forEach(b=>b.onclick=()=>{document.getElementById('pos').value=b.dataset.p;document.querySelectorAll('#sc-pos button').forEach(x=>x.classList.toggle('on',x===b));drawMap();});
+document.getElementById('go').onclick=()=>{const mac=selMac();if(!mac)return;
+ /* All three: each driver, then (in importSweep) both together. */
+ chainBoth=what==='all'&&biampOf[mac]?mac:null;
+ startSweep(mac,true,what!=='both');};
 /* ---- Check levels, the speaker's limit, Export for REW ---- */
 let caps={},lvWanted=false,lastIR=null;
 document.getElementById('lv').onclick=async()=>{const mac=document.getElementById('spk').value;if(!mac)return;
