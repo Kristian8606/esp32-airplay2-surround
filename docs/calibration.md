@@ -296,7 +296,7 @@ REW's filters then go to the marked speaker from the same window:
 
 - In REW's EQ window choose **Equaliser: Generic**, then **Export filter
   settings as text**. An Equalizer APO file (`Preamp:` and `Filter:`
-  lines) works too.
+  lines) works too, and so do numbers with a decimal comma (`180,5 Hz`).
 - Paste the text or load the `.txt` file. The window shows the filters as
   REW wrote them, what the speaker will compute, and their curve, before
   anything is applied.
@@ -322,7 +322,7 @@ imported filters on matches REW's prediction within 0.5 dB):
 | `PK`, `Modal`, `PEQ` (Q or BW Oct) | peaking filter. REW's Q is converted to the speaker's: same curve. |
 | `LP`, `HP`, `LPQ`, `HPQ` | low- and high-pass, 12 dB/octave |
 | `NO`, `BP` (with Q) | notch, band-pass |
-| `LS`, `HS`, `LSC`/`HSC` at 12 dB/octave or Q 0.707, `LS 12dB`, `HS 12dB` | low and high shelf, 12 dB/octave |
+| `LS`, `HS`, `LSC`/`HSC` at 12 dB/octave or Q 0.707, `LS 12dB`, `HS 12dB` | low and high shelf, 12 dB/octave. REW's centre frequency is converted to the speaker's corner: the same curve at 48 kHz (`node tools/test_rew_parse.js` checks it within 0.01 dB). |
 | other shelves (6 dB/octave, another Q), `AP`, `IIR` and the rest | not supported: an error on that line |
 
 An output takes 24 bands at most, the high- and low-pass bands it keeps
