@@ -246,8 +246,10 @@ The bar at the top stays while the mode is on, also with the window closed.*
 - **REW → Preferences → Soundcard:** the output is the Gateway (or the
   default output, now the Gateway); the input is your measurement
   microphone, with its calibration file in **Preferences → Cal files**.
-- **Channel:** L, R or L+R, any of them. Every speaker plays the stereo
-  source as L+R, not halved, so L+R is 6 dB louder than one channel.
+- **Channel:** L or R. Every speaker plays the stereo source as L+R, not
+  halved, so REW's L+R plays 6 dB louder than one channel and clips from
+  about −6 dBFS in REW (the window's clipping warning shows it). Use L+R
+  only at a lower level.
 - **Level:** REW's usual sweep level is fine. If the window warns about
   clipping, turn the level down in REW or on the Mac.
 - **Timing reference:** none needed. AirPlay delays the sound as it does

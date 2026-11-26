@@ -210,7 +210,7 @@ function buildWin(){
  ov=document.createElement('div');ov.className='rew-ov';ov.hidden=true;
  ov.innerHTML="<div class='rew-dlg' role='dialog' aria-modal='true' aria-labelledby='rew-t'>"+
   "<div class='rew-h'><h2 id='rew-t'>Set up with REW</h2><button type='button' class='rew-x' aria-label='Close'>&times;</button></div>"+
-  "<p class='rew-hint'>In REW: output <b>AirPlay to <span class='rew-gw'></span></b>. Channel L, R or L+R, any of them. No timing reference is needed. Only the speaker you click plays; the others stay silent.</p>"+
+  "<p class='rew-hint'>In REW: output <b>AirPlay to <span class='rew-gw'></span></b>. Channel L or R (L+R plays 6 dB louder and clips from about -6 dBFS). No timing reference is needed. Only the speaker you click plays; the others stay silent.</p>"+
   "<div class='rew-warn rew-mc' hidden>A 5.1 or 7.1 stream is playing: the marked speaker plays its own channel, not L+R. Play stereo from REW.</div>"+
   "<div class='rew-warn rew-clip' hidden></div>"+
   "<div class='room rew-room'><div class='floor'></div><div class='ring'></div><div class='screen'></div><div class='seat' title='You'>"+SEAT+"</div></div>"+
