@@ -3,6 +3,7 @@
 /* The helpers of web_server_internal.h, used by the shared handlers and by
  * each firmware's own pages and APIs. */
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -82,6 +83,14 @@ esp_err_t web_serve_page(httpd_req_t *req, const uint8_t *start,
     off += n;
   }
   return httpd_resp_send_chunk(req, NULL, 0);
+}
+
+bool web_json_int(const cJSON *v, double scale, long min, long max, long *out) {
+  if (!cJSON_IsNumber(v) || !isfinite(v->valuedouble)) return false;
+  const double d = round(v->valuedouble * scale);
+  if (!(d >= (double)min && d <= (double)max)) return false;
+  *out = (long)d;
+  return true;
 }
 
 esp_err_t web_recv_json(httpd_req_t *req, char *buf, size_t cap) {

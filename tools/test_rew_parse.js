@@ -4,7 +4,7 @@
  * rew.js runs in a stub page; its parser turns REW's (RBJ Cookbook) filters
  * into the speaker's biquads. For every shelf and peak below, the speaker's
  * biquad (spkBq) must match RBJ's own over 20 Hz - 20 kHz at 48 kHz within
- * 0.01 dB. Also: unknown types and empty slots. */
+ * 0.01 dB. Also: the decimal comma, unknown types and empty slots. */
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -89,6 +89,17 @@ for (const g of [3, -3, 12, -12])
       const d = maxDiff(spkBq('PK', f.frequency_hz, f.gain_db, f.q, FS), rbj('PK', fc, g, q, FS));
       check(`PK ${fc} Hz ${g} dB Q ${q}`, d <= 0.01, d.toFixed(4) + ' dB');
     }
+
+/* The decimal comma (a European REW export), next to the point. */
+const comma = parseRew('Preamp: -6,5 dB\nFilter  1: ON  PK  Fc  180,5 Hz  Gain  -3,40 dB  Q  4,905');
+check('decimal comma: one filter', comma.filters.length === 1 && comma.errors.length === 0, JSON.stringify(comma.errors));
+check('decimal comma: values', comma.filters[0] && comma.filters[0].src.fc === 180.5 && comma.filters[0].src.g === -3.4 &&
+      comma.filters[0].src.q === 4.905 && comma.preamp === -6.5, JSON.stringify(comma.filters[0] && comma.filters[0].src));
+const point = parseRew('Filter 1: ON PK Fc 180.5 Hz Gain -3.40 dB Q 4.905');
+check('decimal point still works', point.filters.length === 1 && point.filters[0].src.fc === 180.5);
+/* A comma that is not between digits is left alone. */
+const notes = parseRew('Notes: speaker 1, position 2\nFilter 1: ON PK Fc 100 Hz Gain -3 dB Q 2');
+check('a comma in a note', notes.filters.length === 1 && notes.errors.length === 0);
 
 /* Unknown types and empty slots. */
 const misc = parseRew('Filter 1: ON AP Fc 900 Hz Q 0.707\nFilter 2: ON None\nFilter 3: OFF PK Fc 100 Hz Gain 3 dB Q 1');

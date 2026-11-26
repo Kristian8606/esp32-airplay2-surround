@@ -67,7 +67,9 @@ static esp_err_t latency_post_handler(httpd_req_t *req) {
     if (e == ESP_OK)
       e = sound_engine_set_output_latency_us(CONFIG_AIRPLAY_OUTPUT_LATENCY_US, false);
   } else if (v && cJSON_IsNumber(v)) {
-    e = sound_engine_set_output_latency_us((int32_t)v->valuedouble, true);
+    long us;
+    if (web_json_int(v, 1.0, INT32_MIN, INT32_MAX, &us))
+      e = sound_engine_set_output_latency_us((int32_t)us, true);
   }
   cJSON_AddBoolToObject(r, "success", e == ESP_OK);
   if (e != ESP_OK)
@@ -121,8 +123,9 @@ static esp_err_t loudness_post_handler(httpd_req_t *req) {
   cJSON *en = j ? cJSON_GetObjectItem(j, "enabled") : NULL;
   cJSON *ref = j ? cJSON_GetObjectItem(j, "reference_db") : NULL;
   esp_err_t e = ESP_ERR_INVALID_ARG;
-  if (cJSON_IsBool(en) && cJSON_IsNumber(ref)) {
-    e = audio_loudness_set(cJSON_IsTrue(en), (int32_t)lround(ref->valuedouble), true);
+  long ref_db;
+  if (cJSON_IsBool(en) && web_json_int(ref, 1.0, INT32_MIN, INT32_MAX, &ref_db)) {
+    e = audio_loudness_set(cJSON_IsTrue(en), (int32_t)ref_db, true);
   }
   if (j) cJSON_Delete(j);
   cJSON *r = cJSON_CreateObject();

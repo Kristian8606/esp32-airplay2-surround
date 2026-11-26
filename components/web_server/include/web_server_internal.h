@@ -21,6 +21,11 @@ esp_err_t web_serve_page(httpd_req_t *req, const uint8_t *start,
 esp_err_t web_recv_json(httpd_req_t *req, char *buf, size_t cap);
 /* Sends r and frees it. */
 void web_send_json(httpd_req_t *req, cJSON *r);
+/* A JSON number as an integer: round(value * scale) into *out when the
+ * value is a finite number and the result is within min..max; false (and
+ * *out untouched) otherwise. Casting an out-of-range double straight to an
+ * integer type is undefined in C; this is the checked way. */
+bool web_json_int(const cJSON *v, double scale, long min, long max, long *out);
 /* The admin password check (menuconfig); on false a 401 has been sent. */
 bool web_admin_ok(httpd_req_t *req);
 void web_log_memory(const char *where);

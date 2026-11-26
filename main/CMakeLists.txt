@@ -63,7 +63,8 @@ airplay_embed_web_pages(index logs speedtest speakers roomeq)
 target_add_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_LIST_DIR}/../web/radio.js"
     BINARY RENAME_TO "web_radio_js")
 if(CONFIG_AIRPLAY_SURROUND_PLAYER_STREAMS)
-    # The REW mode (gw_rew.c) comes with protocol 14, which needs this option.
+    # The REW mode (gw_rew.c) comes with protocol 15 (SURROUND_PROTO_MEASURE),
+    # which needs this option.
     target_add_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_LIST_DIR}/../web/rew.js"
         BINARY RENAME_TO "web_rew_js")
 endif()

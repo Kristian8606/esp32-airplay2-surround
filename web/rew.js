@@ -131,7 +131,9 @@ function rewFilter(type,fc,g,q,bw){
 function parseRew(text){
  const out={filters:[],preamp:null,errors:[]};
  String(text||'').split(/\r?\n/).forEach((raw,i)=>{
-  const line=raw.trim(),n=i+1;if(!line)return;
+  /* A decimal comma (a European REW export) becomes a point, only between
+   * digits: "180,5 Hz", "-3,40 dB"; "Nov 24, 2026" stays. */
+  const line=raw.trim().replace(/(\d),(\d)/g,'$1.$2'),n=i+1;if(!line)return;
   const pre=line.match(/^Preamp\s*:\s*([-+]?[\d.]+)\s*dB/i);
   if(pre){const v=parseFloat(pre[1]);
    if(!(v>=-24&&v<=0))out.errors.push({n,line,msg:'Preamp '+v+' dB: the speaker takes -24 to 0 dB'});
@@ -366,7 +368,8 @@ async function openWin(){
 function closeWin(){if(ov)ov.hidden=true;poll();}
 
 if(page){
- opens.forEach(b=>b.onclick=openWin);
+ opens.forEach(b=>{b.onclick=openWin;b.hidden=false;});
+ document.querySelectorAll('.rew-only').forEach(e=>e.hidden=false);
  window.addEventListener('gw-speakers',ev=>{speakers=ev.detail||[];if(ov&&!ov.hidden)drawWin();});
 }
 get();poll();

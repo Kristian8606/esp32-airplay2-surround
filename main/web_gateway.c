@@ -499,6 +499,14 @@ static esp_err_t calibration_get_handler(httpd_req_t *req) {
   return ESP_OK;
 }
 
+/* An optional integer field: absent leaves *out; present must pass
+ * web_json_int(). */
+static bool opt_int(const cJSON *j, const char *name, double scale, long min,
+                    long max, long *out) {
+  const cJSON *v = cJSON_GetObjectItem(j, name);
+  return !v || web_json_int(v, scale, min, max, out);
+}
+
 static esp_err_t calibration_post_handler(httpd_req_t *req) {
   if (!web_admin_ok(req)) return ESP_OK;
   char b[256];
@@ -532,14 +540,22 @@ static esp_err_t calibration_post_handler(httpd_req_t *req) {
       /* As REW: length, range, RMS level and repeats; its defaults. */
       gw_cal_sweep_opts_t o = {.sweep_ms = 5461, .lo_hz = 20, .hi_hz = 20000,
                                .level_db10 = GW_CAL_LEVEL_DEFAULT_DB10, .repeats = 1};
-      const cJSON *v;
-      if (cJSON_IsNumber(v = cJSON_GetObjectItem(j, "length_ms"))) o.sweep_ms = (uint16_t)v->valuedouble;
-      if (cJSON_IsNumber(v = cJSON_GetObjectItem(j, "lo_hz"))) o.lo_hz = (uint16_t)v->valuedouble;
-      if (cJSON_IsNumber(v = cJSON_GetObjectItem(j, "hi_hz"))) o.hi_hz = (uint16_t)v->valuedouble;
-      if (cJSON_IsNumber(v = cJSON_GetObjectItem(j, "level_db"))) o.level_db10 = (int16_t)lround(v->valuedouble * 10.0);
-      if (cJSON_IsNumber(v = cJSON_GetObjectItem(j, "repeats"))) o.repeats = (uint8_t)v->valuedouble;
+      /* Absent = REW's default; present = a number in its type's range, or
+       * the range error below (gw_calib_sweep_start checks the real ranges). */
+      long len = o.sweep_ms, lo = o.lo_hz, hi = o.hi_hz, lvl = o.level_db10, rep = o.repeats;
+      const bool ok = opt_int(j, "length_ms", 1.0, 0, UINT16_MAX, &len) &&
+                      opt_int(j, "lo_hz", 1.0, 0, UINT16_MAX, &lo) &&
+                      opt_int(j, "hi_hz", 1.0, 0, UINT16_MAX, &hi) &&
+                      opt_int(j, "level_db", 10.0, INT16_MIN, INT16_MAX, &lvl) &&
+                      opt_int(j, "repeats", 1.0, 0, UINT8_MAX, &rep);
+      o.sweep_ms = (uint16_t)len;
+      o.lo_hz = (uint16_t)lo;
+      o.hi_hz = (uint16_t)hi;
+      o.level_db10 = (int16_t)lvl;
+      o.repeats = (uint8_t)rep;
       o.all_ways = cJSON_IsTrue(cJSON_GetObjectItem(j, "all_ways"));
-      e = gw_calib_sweep_start(mac, !cJSON_IsFalse(raw), !cJSON_IsFalse(per_way), &o);
+      e = ok ? gw_calib_sweep_start(mac, !cJSON_IsFalse(raw), !cJSON_IsFalse(per_way), &o)
+             : ESP_ERR_INVALID_ARG;
       if (e == ESP_ERR_NOT_SUPPORTED) error = "built without the calibration microphone";
       else if (e == ESP_ERR_INVALID_STATE) error = "a measurement is already running";
       else if (e == ESP_ERR_NOT_FOUND) error = "the speaker is not connected";
@@ -550,10 +566,12 @@ static esp_err_t calibration_post_handler(httpd_req_t *req) {
     const cJSON *m = cJSON_GetObjectItem(j, "mac");
     const cJSON *lv = cJSON_GetObjectItem(j, "level_db");
     uint8_t mac[6];
+    long n;
     if (!cJSON_IsString(m) || !parse_mac(m->valuestring, mac) || !cJSON_IsNumber(lv)) {
       error = "mac and level_db (RMS)";
     } else {
-      e = gw_calib_levels_start(mac, (int16_t)lround(lv->valuedouble * 10.0));
+      e = web_json_int(lv, 10.0, INT16_MIN, INT16_MAX, &n)
+              ? gw_calib_levels_start(mac, (int16_t)n) : ESP_ERR_INVALID_ARG;
       if (e == ESP_ERR_NOT_SUPPORTED) error = "built without the calibration microphone";
       else if (e == ESP_ERR_INVALID_STATE) error = "a measurement is already running";
       else if (e == ESP_ERR_NOT_FOUND) error = "the speaker is not connected";
@@ -564,10 +582,12 @@ static esp_err_t calibration_post_handler(httpd_req_t *req) {
     const cJSON *m = cJSON_GetObjectItem(j, "mac");
     const cJSON *cp = cJSON_GetObjectItem(j, "cap_db");
     uint8_t mac[6];
+    long n;
     if (!cJSON_IsString(m) || !parse_mac(m->valuestring, mac) || !cJSON_IsNumber(cp)) {
       error = "mac and cap_db (RMS)";
     } else {
-      e = gw_calib_cap_set(mac, (int16_t)lround(cp->valuedouble * 10.0));
+      e = web_json_int(cp, 10.0, INT16_MIN, INT16_MAX, &n)
+              ? gw_calib_cap_set(mac, (int16_t)n) : ESP_ERR_INVALID_ARG;
       if (e == ESP_ERR_INVALID_ARG) error = "limit -40 to -3 dBFS RMS";
     }
   } else if (strcmp(action, "apply") == 0) {
