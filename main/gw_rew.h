@@ -1,6 +1,6 @@
 #pragma once
 
-/* REW measuring mode (ROADMAP_REW_AND_ALIGNMENT.md, phase 1): REW on a Mac
+/* REW measuring mode (docs/calibration.md, Set up with REW): REW on a Mac
  * measures through AirPlay to the Gateway as usual, and only the marked
  * speaker (or one of its drivers) plays the source's L+R; every other
  * speaker is silent but stays in the stream and in sync.

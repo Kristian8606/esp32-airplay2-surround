@@ -1,4 +1,4 @@
-/* REW measuring mode (ROADMAP_REW_AND_ALIGNMENT.md, phase 2), served by the
+/* REW measuring mode (docs/calibration.md, Set up with REW), served by the
  * Gateway as /rew.js.
  *  - Every page that loads it: while the mode is on, a bar at the top
  *    ("REW: only <name> plays") with Exit.

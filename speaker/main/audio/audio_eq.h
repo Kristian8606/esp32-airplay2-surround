@@ -134,7 +134,7 @@ void audio_eq_process_raw(float *pcm, size_t frames, int channels,
  * sees silence rather than being asynchronously reset. */
 void audio_eq_reset_state(void);
 
-/* REW measuring mode (spk_link.c, ROADMAP_REW_AND_ALIGNMENT.md), on top of
+/* REW measuring mode (spk_link.c; docs/calibration.md, Set up with REW), on top of
  * the configuration and never part of it: audio_eq_get_active_config()
  * does not show it and nothing is saved.
  *   eq_off:         no preamp and no filters, as with the EQ disabled (the

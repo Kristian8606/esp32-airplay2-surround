@@ -681,7 +681,7 @@ document.getElementById('exp').onclick=()=>{if(!lastIR)return;
  e.onchange=()=>{try{localStorage.setItem('roomeq.'+id,e.value);}catch(x){}drawGraph();};});
 document.getElementById('clear').onclick=()=>{if(meas.length&&confirm('Delete all measurements kept in this browser?')){meas=[];save();render();}};
 /* ==== Driver alignment (bi-amp) ====
- * docs/rew-alignment-design.md, points 5-7: from a sweep with each driver
+ * docs/calibration.md, 5. Alignment (bi-amp): from a sweep with each driver
  * on its own and the speaker's EQ on (the check after Apply & Save, or
  * Measure for alignment), both impulse responses on the emission time
  * axis: each burst from its own FRACTIONAL start (the Gateway's emit time;

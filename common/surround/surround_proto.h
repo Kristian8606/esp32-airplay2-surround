@@ -29,7 +29,7 @@
  * Gateway's firmware through FW_UPDATE as for any version change.
  * 14: Room EQ's sweeps as REW's (ROADMAP_ROOM_EQ.md): CAL_PLAY carries the
  * sweep's length, range and RMS level, and pink noise for Check levels.
- * 15: REW measuring mode (ROADMAP_REW_AND_ALIGNMENT.md): SET_MEASURE and
+ * 15: REW measuring mode (docs/calibration.md, Set up with REW): SET_MEASURE and
  * STATUS.measure_*. Built on 13, so with the same option. */
 #define SURROUND_PROTO_VERSION   15
 #define SURROUND_PROTO_ROOMEQ    1

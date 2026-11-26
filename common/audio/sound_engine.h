@@ -164,8 +164,8 @@ typedef enum {
   SOUND_STEREO_ROUTE_SUM,        /* L+R, not halved, on both (REW mode) */
 } sound_stereo_route_t;
 void sound_engine_set_stereo_route(sound_stereo_route_t route);
-/* Surround speaker, REW measuring mode (spk_link.c,
- * ROADMAP_REW_AND_ALIGNMENT.md): mute_mask silences outputs after the PCM
+/* Surround speaker, REW measuring mode (spk_link.c;
+ * docs/calibration.md, Set up with REW): mute_mask silences outputs after the PCM
  * FIFO on top of sound_engine_set_output_muted() (bit 0 = left, 1 = right;
  * a change fades over one DMA block). While active, loudness and the LFE
  * limiter are skipped, and samples above full scale are counted instead of
