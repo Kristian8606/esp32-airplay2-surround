@@ -89,16 +89,18 @@ const e=t=>String(t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','
 let state={active:false},speakers=[],biamp={},timer=null,busy=false;
 const opens=document.querySelectorAll('.rew-open-btn'),page=opens.length>0; /* /speakers only */
 
-/* ---- REW filters (phase 3; docs/rew-alignment-design.md, points 3 and 4)
+/* ---- REW filters (docs/calibration.md, Filters from REW)
  * Two text formats, one parser: REW "Export filter settings as text" with
  * Equaliser Generic, and Equalizer APO ("Preamp: -6 dB", "Filter 1: ON PK Fc
  * 100 Hz Gain -3 dB Q 2"). A line is a filter only when it starts with
  * "Filter"; its number is not used (REW's restart at 1), "ON None" is an
  * empty slot. REW computes like the RBJ Cookbook, the speaker's biquads are
  * Zölzer's: a peak's Q becomes Q * 10^(|gain|/40) (exact), a 12 dB/octave
- * shelf at the centre frequency f0 becomes the speaker's corner shelf at
- * f0 * 10^(-|gain|/80) (low) or f0 * 10^(+|gain|/80) (high), within 0.02 dB. */
-const RBJ_SHELF_Q=Math.SQRT1_2;
+ * shelf at the centre frequency f0 becomes the speaker's corner shelf with
+ * its prewarped frequency tan(pi f0 / FS) moved by 10^(-|gain|/80) (low) or
+ * 10^(+|gain|/80) (high): exact at the page's FS (48 kHz). At 44.1 kHz the
+ * small difference is the one any filter has between the two rates. */
+const RBJ_SHELF_Q=Math.SQRT1_2,FS=48000;
 function rewFilter(type,fc,g,q,bw){
  const T=type.toUpperCase().replace(/\s+/g,' ').replace(/(\d) ?DB\b/,'$1dB');
  const need=(v,n)=>{if(v===null)throw new Error(n+' missing');return v;};
@@ -120,7 +122,8 @@ function rewFilter(type,fc,g,q,bw){
   if(!m[2]&&slope===12)return {type:m[1],frequency_hz:fc,gain_db:g,q:0.71};
   /* "LS", "LSC", "LSC 12 dB" or Q 0.707: 12 dB/octave at the centre. */
   if((slope===null||slope===12)&&(q===null||Math.abs(q-RBJ_SHELF_Q)<0.01))
-   return {type:m[1],frequency_hz:fc*Math.pow(10,(low?-1:1)*Math.abs(g)/80),gain_db:g,q:0.71};
+   {const k=Math.tan(Math.PI*fc/FS)*Math.pow(10,(low?-1:1)*Math.abs(g)/80);
+    return {type:m[1],frequency_hz:FS/Math.PI*Math.atan(k),gain_db:g,q:0.71};}
   throw new Error('a shelf of '+(slope!==null?slope+' dB/octave':'Q '+q)+' is not supported: the speaker\'s shelves are 12 dB/octave (Q 0.71)');
  }
  throw new Error('type '+type.trim()+' is not supported');
@@ -165,7 +168,8 @@ return[b0,b1,b2,a1,a2];}
 function bqDb(k,f,fs){const w=2*Math.PI*f/fs,c1=Math.cos(w),s1=Math.sin(w),c2=Math.cos(2*w),s2=Math.sin(2*w);
  const nr=k[0]+k[1]*c1+k[2]*c2,ni=-(k[1]*s1+k[2]*s2),dr=1+k[3]*c1+k[4]*c2,di=-(k[3]*s1+k[4]*s2);
  return 10*Math.log10((nr*nr+ni*ni)/(dr*dr+di*di));}
-window.rewParse=parseRew; /* tests */
+window.rewParse=parseRew; /* tests (tools/test_rew_parse.js) */
+window.rewTest={parseRew,spkBq,bqDb,FS};
 
 /* ---- the bar ---- */
 const bar=document.createElement('div');bar.className='rew-bar';bar.hidden=true;bar.setAttribute('role','status');
@@ -318,7 +322,7 @@ function drawImport(){
  tab.innerHTML='<tr><th>Type</th><th>Fc (Hz)</th><th>Gain (dB)</th><th>Q</th><th>Speaker</th></tr>'+parsed.filters.map(x=>'<tr><td>'+e(x.src.type)+'</td><td>'+fmt(x.src.fc,x.src.fc<1000?1:0)+'</td><td>'+fmt(x.src.g,2)+'</td><td>'+(x.src.q!==null?fmt(x.src.q,3):x.src.bw!==null?fmt(x.src.bw,3)+' oct':'—')+'</td><td><small>'+e(x.f.type)+' '+fmt(x.f.frequency_hz,x.f.frequency_hz<1000?1:0)+' Hz'+(x.f.type==='PK'||x.f.type==='LP'||x.f.type==='HP'||x.f.type==='BP'||x.f.type==='NOTCH'?' Q '+fmt(x.f.q,3):'')+'</small></td></tr>').join('')+
   (parsed.preamp!==null?'<tr><td>Preamp</td><td></td><td>'+fmt(parsed.preamp,1)+'</td><td></td><td></td></tr>':'');
  /* The curve: the filters (and the preamp) as the speaker computes them. */
- const FS=48000,W=600,H=190,L=34,R=8,T=8,B=22,N=240,pts=[];let lo=-6,hi=6;
+ const W=600,H=190,L=34,R=8,T=8,B=22,N=240,pts=[];let lo=-6,hi=6;
  const ks=parsed.filters.map(x=>spkBq(x.f.type,x.f.frequency_hz,x.f.gain_db,x.f.q,FS));
  for(let i=0;i<=N;i++){const f=20*Math.pow(1000,i/N);let d=parsed.preamp||0;ks.forEach(k=>d+=bqDb(k,f,FS));pts.push([f,d]);lo=Math.min(lo,d);hi=Math.max(hi,d);}
  lo=Math.floor(lo/6)*6;hi=Math.ceil(hi/6)*6;
