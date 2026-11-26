@@ -3246,7 +3246,12 @@ bool gw_player_lane_status(int role, int *channels, int *output_channel, char *l
 
 esp_err_t gw_player_seek(double position_s) {
   if (!atomic_load(&s_running) || !atomic_load(&s_owns)) return ESP_ERR_INVALID_STATE;
+  /* From JSON: a NaN or a huge value cast to long long is undefined.
+   * do_seek() clamps a position past the end of the track; 24 h is past
+   * every track. */
+  if (!isfinite(position_s)) return ESP_ERR_INVALID_ARG;
   if (position_s < 0) position_s = 0;
+  if (position_s > 24.0 * 3600.0) position_s = 24.0 * 3600.0;
   atomic_store(&s_seek_ms, (long long)(position_s * 1000.0));
   return ESP_OK;
 }
