@@ -128,7 +128,10 @@ The settings of REW's measurement dialog:
 does. It shows the microphone's RMS level against REW's range (−30 to
 −12 dBFS), the headroom to full scale (red under 6 dB), how far it is above
 the room noise and, with an INMP441, an approximate SPL (REW aims at about
-75 dB SPL at the seat). A measurement that clips stops with an error.
+75 dB SPL at the seat). Above −12 dBFS RMS the noise plays at −12 (louder,
+its peaks would clip at the speaker) and the result is scaled up to the
+level asked, marked "estimated". A measurement that clips stops with an
+error.
 
 **Export for REW** saves the last measurement's impulse responses as WAV
 files; REW opens them with **File → Import → Import impulse response**, to

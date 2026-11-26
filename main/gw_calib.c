@@ -970,9 +970,16 @@ static void run_levels(bool mic_ok, const char *mic_why, float noise_dbfs) {
     set_message(GW_CAL_FAILED, "The speaker is not connected");
     return;
   }
-  const gw_cal_sweep_opts_t *opts = &s_sweep_req.opts;
-  set_message(GW_CAL_BUSY, "Check levels: pink noise from %s at %.1f dBFS RMS", o.name,
-              opts->level_db10 / 10.0);
+  /* The noise never above GW_CAL_NOISE_MAX_DB10, where its 4x peaks reach
+   * full scale: louder, the speaker would clip it. The result is scaled up
+   * by the difference. */
+  gw_cal_sweep_opts_t play_opts = s_sweep_req.opts;
+  const int16_t asked_db10 = play_opts.level_db10;
+  if (play_opts.level_db10 > GW_CAL_NOISE_MAX_DB10) play_opts.level_db10 = GW_CAL_NOISE_MAX_DB10;
+  const gw_cal_sweep_opts_t *opts = &play_opts;
+  const float delta_db = (float)(asked_db10 - play_opts.level_db10) / 10.0f;
+  set_message(GW_CAL_BUSY, "Check levels: pink noise from %s at %.1f dBFS RMS%s", o.name,
+              opts->level_db10 / 10.0, delta_db > 0.0f ? " (scaled up to the level asked)" : "");
   const uint32_t play_ms = (uint32_t)(CAL_NOISE_S * 1000.0) + 1000U;
   const uint32_t rec_s = (play_ms + 1999U) / 1000U;
   const esp_err_t mic_err = gw_mic_start(rec_s, rec_s);
@@ -1010,21 +1017,26 @@ static void run_levels(bool mic_ok, const char *mic_why, float noise_dbfs) {
     if (fabs(v) > peak) peak = fabs(v);
   }
   gw_mic_release();
+  const float real_peak_dbfs = to_db(peak);
   gw_cal_levels_t lv = {.valid = true,
-                        .level_rms_db = (float)opts->level_db10 / 10.0f,
-                        .rms_dbfs = to_db(sqrt(sq / (double)(to - from))),
-                        .peak_dbfs = to_db(peak),
-                        .noise_dbfs = noise_dbfs};
-  lv.clipped = lv.peak_dbfs >= CAL_CLIP_DBFS;
+                        .level_rms_db = (float)asked_db10 / 10.0f,
+                        .rms_dbfs = to_db(sqrt(sq / (double)(to - from))) + delta_db,
+                        .peak_dbfs = real_peak_dbfs + delta_db,
+                        .noise_dbfs = noise_dbfs,
+                        .estimated = delta_db > 0.0f,
+                        .played_rms_db = (float)opts->level_db10 / 10.0f};
+  /* Clipping is what the microphone really recorded, not the estimate. */
+  lv.clipped = real_peak_dbfs >= CAL_CLIP_DBFS;
   memcpy(lv.mac, o.mac, sizeof(lv.mac));
   strlcpy(lv.name, o.name, sizeof(lv.name));
   xSemaphoreTake(s_lock, portMAX_DELAY);
   s_status.levels = lv;
   xSemaphoreGive(s_lock);
-  AP_LOGI(TAG, "Check levels %s at %.1f dBFS RMS: microphone %.1f dBFS RMS, peak %.1f, "
-               "room noise %.1f dBFS%s",
-          o.name, (double)lv.level_rms_db, (double)lv.rms_dbfs, (double)lv.peak_dbfs,
-          (double)noise_dbfs, lv.clipped ? ", clipped" : "");
+  AP_LOGI(TAG, "Check levels %s, asked %.1f, played %.1f dBFS RMS: microphone %.1f dBFS RMS, "
+               "peak %.1f%s, room noise %.1f dBFS%s",
+          o.name, (double)lv.level_rms_db, (double)lv.played_rms_db, (double)lv.rms_dbfs,
+          (double)lv.peak_dbfs, lv.estimated ? " (scaled)" : "", (double)noise_dbfs,
+          lv.clipped ? ", clipped" : "");
   set_message(lv.clipped ? GW_CAL_FAILED : GW_CAL_DONE,
               "%s: %.1f dBFS RMS at the microphone, %.0f dB above the room noise%s", o.name,
               (double)lv.rms_dbfs, (double)(lv.rms_dbfs - noise_dbfs),

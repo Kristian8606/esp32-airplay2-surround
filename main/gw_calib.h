@@ -86,7 +86,11 @@ typedef struct {
   float rms_dbfs;     /* at the microphone */
   float peak_dbfs;
   float noise_dbfs;   /* the room without it */
-  bool clipped;
+  bool clipped;       /* the microphone's real recording clipped */
+  /* The noise played at most at GW_CAL_NOISE_MAX_DB10: above it, rms_dbfs
+   * and peak_dbfs are scaled up from what was played (estimated). */
+  bool estimated;
+  float played_rms_db;
 } gw_cal_levels_t;
 
 typedef struct {
@@ -130,6 +134,11 @@ typedef struct {
 #define GW_CAL_CAP_DEFAULT_DB10 (-120) /* REW's default level: never louder */
 #define GW_CAL_LEVEL_DEFAULT_DB10 (-180) /* 6 dB below it: quieter to start */
 #define GW_CAL_REPEATS_MAX 4U
+/* The loudest RMS level the pink noise of Check levels is played at: its
+ * peaks are held to 4x RMS (cal_pink_next), so at -12 dBFS RMS they reach
+ * full scale and no further. A higher level asked is measured at this one
+ * and scaled (the chain is linear at these levels). */
+#define GW_CAL_NOISE_MAX_DB10 (-120)
 #define GW_CAL_RECORD_MAX_S 30U
 /* ESP_ERR_INVALID_SIZE: the level is above the speaker's cap, or the
  * recording would be longer than GW_CAL_RECORD_MAX_S. */

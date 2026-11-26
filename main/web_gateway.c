@@ -447,6 +447,10 @@ static esp_err_t calibration_get_handler(httpd_req_t *req) {
       cJSON_AddNumberToObject(l, "peak_dbfs", roundf(st.levels.peak_dbfs * 10.0f) / 10.0f);
       cJSON_AddNumberToObject(l, "noise_dbfs", roundf(st.levels.noise_dbfs * 10.0f) / 10.0f);
       cJSON_AddBoolToObject(l, "clipped", st.levels.clipped);
+      if (st.levels.estimated) {
+        cJSON_AddBoolToObject(l, "estimated", true);
+        cJSON_AddNumberToObject(l, "played_rms_db", roundf(st.levels.played_rms_db * 10.0f) / 10.0f);
+      }
     }
   }
   /* Room EQ's level limit of every connected speaker (RMS, dBFS). */

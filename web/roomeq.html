@@ -658,7 +658,7 @@ function showLevels(l){const el=document.getElementById('lvres');if(!l){el.textC
  const head=-l.peak_dbfs,snr=l.rms_dbfs-l.noise_dbfs,mic=document.getElementById('mic').value;
  const range=l.rms_dbfs<-30?'below −30: raise the level (or move the microphone closer)':l.rms_dbfs>-12?'above −12: lower the level':'within −30…−12, as REW asks';
  const col=v=>"<b style='color:"+v+"'>";
- el.innerHTML='Check levels '+esc(l.name)+' at '+l.level_rms_db.toFixed(1)+' dBFS RMS: microphone '+col(l.rms_dbfs<-30||l.rms_dbfs>-12?'#f7c46c':'#7ee2a0')+l.rms_dbfs.toFixed(1)+' dBFS RMS</b> ('+range+'), headroom '+
+ el.innerHTML='Check levels '+esc(l.name)+' at '+l.level_rms_db.toFixed(1)+' dBFS RMS'+(l.estimated?' (estimated from '+l.played_rms_db.toFixed(1)+' dBFS RMS)':'')+': microphone '+col(l.rms_dbfs<-30||l.rms_dbfs>-12?'#f7c46c':'#7ee2a0')+l.rms_dbfs.toFixed(1)+' dBFS RMS</b> ('+range+'), headroom '+
   col(head<6?'#ff8a80':'#7ee2a0')+head.toFixed(1)+' dB</b>'+(l.clipped?' — clipped':'')+', '+snr.toFixed(0)+' dB above the room noise'+(mic==='inmp441'?', about '+Math.round(l.rms_dbfs+120)+' dB SPL (REW: about 75)':'')+'.';}
 function showCap(){const mac=document.getElementById('spk').value,c=caps[mac];const el=document.getElementById('m-cap');
  if(c!==undefined&&document.activeElement!==el)el.value=c;document.getElementById('m-lvl').max=c!==undefined?c:-3;}
